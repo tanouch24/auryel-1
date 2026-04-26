@@ -68,8 +68,8 @@ footer{background:var(--void);border-top:1px solid var(--bdr);padding:100px 64px
 .bc-main .bc-img{height:380px}
 .bc-side .bc-img{height:188px}
 .bc-small .bc-img{height:180px}
-.bc-img img.bc-photo{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;opacity:.45;filter:saturate(.65)}
-.bc-bg{position:absolute;inset:0;transition:transform .6s}
+.bc-img img.bc-photo{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;opacity:.75;filter:saturate(.85) brightness(.8)}
+.bc-bg{position:absolute;inset:0;transition:transform .6s;opacity:.5}
 .bc:hover .bc-bg{transform:scale(1.05)}
 .bc-symbol{position:relative;z-index:1;font-family:Georgia,serif;color:rgba(200,169,110,0.18);line-height:1;pointer-events:none;user-select:none}
 .bc-main .bc-symbol{font-size:180px}
@@ -91,6 +91,21 @@ footer{background:var(--void);border-top:1px solid var(--bdr);padding:100px 64px
 .bc-read{font-family:var(--fb);font-size:10px;letter-spacing:.15em;text-transform:uppercase;color:var(--gold)}
 @media(max-width:1100px){.blog-featured{grid-template-columns:1fr;grid-template-rows:auto;padding:60px 32px 0}.bc-main{grid-row:auto}.bc-main .bc-img{height:260px}.blog-grid{grid-template-columns:repeat(2,1fr);padding:2px 32px 80px}.blog-sep{margin:0 32px}}
 @media(max-width:640px){.blog-hero{padding:140px 24px 60px}.blog-featured{padding:40px 16px 0}.blog-grid{grid-template-columns:1fr;padding:16px 16px 60px}.blog-sep{margin:0 16px}.blog-h1{font-size:44px}}
+
+/* ── FIX IMAGES CARTES BLOG ── */
+.bc-img{position:relative;overflow:hidden}
+.bc-img img.bc-photo{
+  position:absolute;inset:0;width:100%;height:100%;
+  object-fit:cover;object-position:center;
+  opacity:.75;
+  filter:saturate(.85) brightness(.75);
+  z-index:0;
+  transition:transform .6s, opacity .3s;
+}
+.bc:hover .bc-photo{opacity:.9;transform:scale(1.05)}
+.bc-bg{position:absolute!important;inset:0;opacity:.5;z-index:1!important;transition:transform .6s}
+.bc:hover .bc-bg{transform:scale(1.05)}
+.bc-circle,.bc-symbol,.bc-cat-pill{z-index:2!important;position:relative}
 </style>
 </head><body>
 <div class="cursor" id="cur"></div>
@@ -121,7 +136,7 @@ footer{background:var(--void);border-top:1px solid var(--bdr);padding:100px 64px
   <a href="numerologie-date-naissance-chemin-de-vie.html" class="bc bc-main" data-cat="numerologie">
     <div class="bc-img">
       <img src="https://images.unsplash.com/photo-1509228468518-180dd4864904?auto=format&fit=crop&w=900&h=400&q=75" alt="Numérologie chemin de vie" loading="eager" class="bc-photo">
-      <div class="bc-bg" style="background:radial-gradient(ellipse at 40% 60%,#3A1A6E 0%,rgba(5,4,10,.6) 100%);position:absolute;inset:0;mix-blend-mode:multiply"></div>
+      <div class="bc-bg" style="background:radial-gradient(ellipse at 40% 60%,#3A1A6E 0%,rgba(5,4,10,.45) 100%);position:absolute;inset:0"></div>
       <div class="bc-circle bc-c1"></div><div class="bc-circle bc-c2"></div>
       <div class="bc-symbol" style="font-size:180px">9</div>
       <div class="bc-cat-pill">Numérologie</div>
@@ -135,7 +150,7 @@ footer{background:var(--void);border-top:1px solid var(--bdr);padding:100px 64px
   <a href="tarot-amour-gratuit-en-ligne.html" class="bc bc-side" data-cat="tarot">
     <div class="bc-img">
       <img src="https://images.unsplash.com/photo-1604085792867-8f0de9f6bbd1?auto=format&fit=crop&w=600&h=200&q=70" alt="Tarot amour" loading="eager" class="bc-photo">
-      <div class="bc-bg" style="background:radial-gradient(ellipse at 40% 60%,#2A0A4E 0%,rgba(5,4,10,.6) 100%);position:absolute;inset:0;mix-blend-mode:multiply"></div>
+      <div class="bc-bg" style="background:radial-gradient(ellipse at 40% 60%,#2A0A4E 0%,rgba(5,4,10,.45) 100%);position:absolute;inset:0"></div>
       <div class="bc-circle bc-c1"></div><div class="bc-circle bc-c2"></div>
       <div class="bc-symbol" style="font-size:90px">&#9830;</div>
       <div class="bc-cat-pill">Tarot</div>
@@ -149,7 +164,7 @@ footer{background:var(--void);border-top:1px solid var(--bdr);padding:100px 64px
   <a href="mon-ex-va-t-il-revenir-voyance.html" class="bc bc-side" data-cat="amour">
     <div class="bc-img">
       <img src="https://images.unsplash.com/photo-1518199266791-5375a83190b7?auto=format&fit=crop&w=600&h=200&q=70" alt="Retour amoureux" loading="eager" class="bc-photo">
-      <div class="bc-bg" style="background:radial-gradient(ellipse at 40% 60%,#5A0D1A 0%,rgba(5,4,10,.6) 100%);position:absolute;inset:0;mix-blend-mode:multiply"></div>
+      <div class="bc-bg" style="background:radial-gradient(ellipse at 40% 60%,#5A0D1A 0%,rgba(5,4,10,.45) 100%);position:absolute;inset:0"></div>
       <div class="bc-circle bc-c1"></div><div class="bc-circle bc-c2"></div>
       <div class="bc-symbol" style="font-size:90px">&#9829;</div>
       <div class="bc-cat-pill">Amour</div>
@@ -170,7 +185,7 @@ footer{background:var(--void);border-top:1px solid var(--bdr);padding:100px 64px
   <a href="comment-choisir-son-voyant-en-ligne.html" class="bc bc-small" data-cat="guide">
     <div class="bc-img">
       <img src="https://images.unsplash.com/photo-1518611012118-696072aa579a?auto=format&fit=crop&w=400&h=180&q=65" alt="Voyant en ligne" loading="lazy" class="bc-photo">
-      <div class="bc-bg" style="background:radial-gradient(ellipse at 40% 60%,#0A1A3A 0%,rgba(5,4,10,.6) 100%);position:absolute;inset:0;mix-blend-mode:multiply"></div>
+      <div class="bc-bg" style="background:radial-gradient(ellipse at 40% 60%,#0A1A3A 0%,rgba(5,4,10,.45) 100%);position:absolute;inset:0"></div>
       <div class="bc-circle bc-c1"></div><div class="bc-circle bc-c2"></div>
       <div class="bc-symbol" style="font-size:90px">&#10022;</div><div class="bc-cat-pill">Guide</div>
     </div>
@@ -183,7 +198,7 @@ footer{background:var(--void);border-top:1px solid var(--bdr);padding:100px 64px
   <a href="compatibilite-amoureuse-signe-astrologique.html" class="bc bc-small" data-cat="astrologie">
     <div class="bc-img">
       <img src="https://images.unsplash.com/photo-1502134249126-9f3755a50d78?auto=format&fit=crop&w=400&h=180&q=65" alt="Compatibilité astrologique" loading="lazy" class="bc-photo">
-      <div class="bc-bg" style="background:radial-gradient(ellipse at 40% 60%,#3A0A2A 0%,rgba(5,4,10,.6) 100%);position:absolute;inset:0;mix-blend-mode:multiply"></div>
+      <div class="bc-bg" style="background:radial-gradient(ellipse at 40% 60%,#3A0A2A 0%,rgba(5,4,10,.45) 100%);position:absolute;inset:0"></div>
       <div class="bc-circle bc-c1"></div><div class="bc-circle bc-c2"></div>
       <div class="bc-symbol" style="font-size:90px">&#9812;</div><div class="bc-cat-pill">Astrologie</div>
     </div>
@@ -196,7 +211,7 @@ footer{background:var(--void);border-top:1px solid var(--bdr);padding:100px 64px
   <a href="signification-reves-voyance.html" class="bc bc-small" data-cat="spiritualite">
     <div class="bc-img">
       <img src="https://images.unsplash.com/photo-1518020382113-a7e8fc38eac9?auto=format&fit=crop&w=400&h=180&q=65" alt="Signification des rêves" loading="lazy" class="bc-photo">
-      <div class="bc-bg" style="background:radial-gradient(ellipse at 40% 60%,#0A0F2E 0%,rgba(5,4,10,.6) 100%);position:absolute;inset:0;mix-blend-mode:multiply"></div>
+      <div class="bc-bg" style="background:radial-gradient(ellipse at 40% 60%,#0A0F2E 0%,rgba(5,4,10,.45) 100%);position:absolute;inset:0"></div>
       <div class="bc-circle bc-c1"></div><div class="bc-circle bc-c2"></div>
       <div class="bc-symbol" style="font-size:90px">&#9790;</div><div class="bc-cat-pill">Spiritualité</div>
     </div>
@@ -209,7 +224,7 @@ footer{background:var(--void);border-top:1px solid var(--bdr);padding:100px 64px
   <a href="voyance-avenir-professionnel.html" class="bc bc-small" data-cat="carriere">
     <div class="bc-img">
       <img src="https://images.unsplash.com/photo-1611974789855-9c2a0a7236a3?auto=format&fit=crop&w=400&h=180&q=65" alt="Avenir professionnel" loading="lazy" class="bc-photo">
-      <div class="bc-bg" style="background:radial-gradient(ellipse at 40% 60%,#0A2A0A 0%,rgba(5,4,10,.6) 100%);position:absolute;inset:0;mix-blend-mode:multiply"></div>
+      <div class="bc-bg" style="background:radial-gradient(ellipse at 40% 60%,#0A2A0A 0%,rgba(5,4,10,.45) 100%);position:absolute;inset:0"></div>
       <div class="bc-circle bc-c1"></div><div class="bc-circle bc-c2"></div>
       <div class="bc-symbol" style="font-size:90px">&#9650;</div><div class="bc-cat-pill">Carrière</div>
     </div>
@@ -222,7 +237,7 @@ footer{background:var(--void);border-top:1px solid var(--bdr);padding:100px 64px
   <a href="tarot-oui-non-reponse-immediate.html" class="bc bc-small" data-cat="tarot">
     <div class="bc-img">
       <img src="https://images.unsplash.com/photo-1605648916361-9bc12ad6a569?auto=format&fit=crop&w=400&h=180&q=65" alt="Tarot oui non" loading="lazy" class="bc-photo">
-      <div class="bc-bg" style="background:radial-gradient(ellipse at 40% 60%,#1A0A3A 0%,rgba(5,4,10,.6) 100%);position:absolute;inset:0;mix-blend-mode:multiply"></div>
+      <div class="bc-bg" style="background:radial-gradient(ellipse at 40% 60%,#1A0A3A 0%,rgba(5,4,10,.45) 100%);position:absolute;inset:0"></div>
       <div class="bc-circle bc-c1"></div><div class="bc-circle bc-c2"></div>
       <div class="bc-symbol" style="font-size:90px">?</div><div class="bc-cat-pill">Tarot</div>
     </div>
@@ -238,8 +253,8 @@ footer{background:var(--void);border-top:1px solid var(--bdr);padding:100px 64px
   <div class="bc-img">
     <img src="https://images.unsplash.com/photo-1518611012118-696072aa579a?auto=format&fit=crop&w=600&h=180&q=70"
          alt="Voyance sérieuse en ligne : trouver un médium fiable" loading="lazy"
-         style="position:absolute;inset:0;width:100%;height:100%;object-fit:cover;opacity:.45;filter:saturate(.7)">
-    <div class="bc-bg" style="background:radial-gradient(ellipse at 40% 60%,#0A1A3A 0%,rgba(5,4,10,.7) 100%);position:absolute;inset:0;mix-blend-mode:multiply"></div>
+         style="position:absolute;inset:0;width:100%;height:100%;object-fit:cover;opacity:.75;filter:saturate(.85) brightness(.8)">
+    <div class="bc-bg" style="background:radial-gradient(ellipse at 40% 60%,#0A1A3A 0%,rgba(5,4,10,.4) 100%);position:absolute;inset:0"></div>
     <div class="bc-circle bc-c1"></div>
     <div class="bc-circle bc-c2"></div>
     <div class="bc-symbol" style="font-size:80px;position:relative;z-index:1">✦</div>
@@ -258,8 +273,8 @@ footer{background:var(--void);border-top:1px solid var(--bdr);padding:100px 64px
   <div class="bc-img">
     <img src="https://images.unsplash.com/photo-1518199266791-5375a83190b7?auto=format&fit=crop&w=600&h=180&q=70"
          alt="Retour affectif : ce que la voyance révèle" loading="lazy"
-         style="position:absolute;inset:0;width:100%;height:100%;object-fit:cover;opacity:.45;filter:saturate(.7)">
-    <div class="bc-bg" style="background:radial-gradient(ellipse at 40% 60%,#3A0A1A 0%,rgba(5,4,10,.7) 100%);position:absolute;inset:0;mix-blend-mode:multiply"></div>
+         style="position:absolute;inset:0;width:100%;height:100%;object-fit:cover;opacity:.75;filter:saturate(.85) brightness(.8)">
+    <div class="bc-bg" style="background:radial-gradient(ellipse at 40% 60%,#3A0A1A 0%,rgba(5,4,10,.4) 100%);position:absolute;inset:0"></div>
     <div class="bc-circle bc-c1"></div>
     <div class="bc-circle bc-c2"></div>
     <div class="bc-symbol" style="font-size:80px;position:relative;z-index:1">♥</div>
@@ -278,8 +293,8 @@ footer{background:var(--void);border-top:1px solid var(--bdr);padding:100px 64px
   <div class="bc-img">
     <img src="https://images.unsplash.com/photo-1604085792867-8f0de9f6bbd1?auto=format&fit=crop&w=600&h=180&q=70"
          alt="Oracle gratuit en ligne : bien interpréter votre tirage" loading="lazy"
-         style="position:absolute;inset:0;width:100%;height:100%;object-fit:cover;opacity:.45;filter:saturate(.7)">
-    <div class="bc-bg" style="background:radial-gradient(ellipse at 40% 60%,#2A0A4E 0%,rgba(5,4,10,.7) 100%);position:absolute;inset:0;mix-blend-mode:multiply"></div>
+         style="position:absolute;inset:0;width:100%;height:100%;object-fit:cover;opacity:.75;filter:saturate(.85) brightness(.8)">
+    <div class="bc-bg" style="background:radial-gradient(ellipse at 40% 60%,#2A0A4E 0%,rgba(5,4,10,.4) 100%);position:absolute;inset:0"></div>
     <div class="bc-circle bc-c1"></div>
     <div class="bc-circle bc-c2"></div>
     <div class="bc-symbol" style="font-size:80px;position:relative;z-index:1">♦</div>
@@ -298,8 +313,8 @@ footer{background:var(--void);border-top:1px solid var(--bdr);padding:100px 64px
   <div class="bc-img">
     <img src="https://images.unsplash.com/photo-1474552226712-ac0f0961a954?auto=format&fit=crop&w=600&h=180&q=70"
          alt="Avenir sentimental gratuit : que vous réserve l'amour ?" loading="lazy"
-         style="position:absolute;inset:0;width:100%;height:100%;object-fit:cover;opacity:.45;filter:saturate(.7)">
-    <div class="bc-bg" style="background:radial-gradient(ellipse at 40% 60%,#3A0A1A 0%,rgba(5,4,10,.7) 100%);position:absolute;inset:0;mix-blend-mode:multiply"></div>
+         style="position:absolute;inset:0;width:100%;height:100%;object-fit:cover;opacity:.75;filter:saturate(.85) brightness(.8)">
+    <div class="bc-bg" style="background:radial-gradient(ellipse at 40% 60%,#3A0A1A 0%,rgba(5,4,10,.4) 100%);position:absolute;inset:0"></div>
     <div class="bc-circle bc-c1"></div>
     <div class="bc-circle bc-c2"></div>
     <div class="bc-symbol" style="font-size:80px;position:relative;z-index:1">♥</div>
@@ -318,8 +333,8 @@ footer{background:var(--void);border-top:1px solid var(--bdr);padding:100px 64px
   <div class="bc-img">
     <img src="https://images.unsplash.com/photo-1611974789855-9c2a0a7236a3?auto=format&fit=crop&w=600&h=180&q=70"
          alt="Voyance argent et finances : les cartes et la prospérité" loading="lazy"
-         style="position:absolute;inset:0;width:100%;height:100%;object-fit:cover;opacity:.45;filter:saturate(.7)">
-    <div class="bc-bg" style="background:radial-gradient(ellipse at 40% 60%,#0A2A0A 0%,rgba(5,4,10,.7) 100%);position:absolute;inset:0;mix-blend-mode:multiply"></div>
+         style="position:absolute;inset:0;width:100%;height:100%;object-fit:cover;opacity:.75;filter:saturate(.85) brightness(.8)">
+    <div class="bc-bg" style="background:radial-gradient(ellipse at 40% 60%,#0A2A0A 0%,rgba(5,4,10,.4) 100%);position:absolute;inset:0"></div>
     <div class="bc-circle bc-c1"></div>
     <div class="bc-circle bc-c2"></div>
     <div class="bc-symbol" style="font-size:80px;position:relative;z-index:1">◆</div>
@@ -338,8 +353,8 @@ footer{background:var(--void);border-top:1px solid var(--bdr);padding:100px 64px
   <div class="bc-img">
     <img src="https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?auto=format&fit=crop&w=600&h=180&q=70"
          alt="Que signifie rêver de mort ? Interprétation complète" loading="lazy"
-         style="position:absolute;inset:0;width:100%;height:100%;object-fit:cover;opacity:.45;filter:saturate(.7)">
-    <div class="bc-bg" style="background:radial-gradient(ellipse at 40% 60%,#0A0F2E 0%,rgba(5,4,10,.7) 100%);position:absolute;inset:0;mix-blend-mode:multiply"></div>
+         style="position:absolute;inset:0;width:100%;height:100%;object-fit:cover;opacity:.75;filter:saturate(.85) brightness(.8)">
+    <div class="bc-bg" style="background:radial-gradient(ellipse at 40% 60%,#0A0F2E 0%,rgba(5,4,10,.4) 100%);position:absolute;inset:0"></div>
     <div class="bc-circle bc-c1"></div>
     <div class="bc-circle bc-c2"></div>
     <div class="bc-symbol" style="font-size:80px;position:relative;z-index:1">☽</div>
@@ -358,8 +373,8 @@ footer{background:var(--void);border-top:1px solid var(--bdr);padding:100px 64px
   <div class="bc-img">
     <img src="https://images.unsplash.com/photo-1572478570012-c4e6e5b3d7e2?auto=format&fit=crop&w=600&h=180&q=70"
          alt="Tarot de Marseille en ligne : les 22 arcanes" loading="lazy"
-         style="position:absolute;inset:0;width:100%;height:100%;object-fit:cover;opacity:.45;filter:saturate(.7)">
-    <div class="bc-bg" style="background:radial-gradient(ellipse at 40% 60%,#2A0A4E 0%,rgba(5,4,10,.7) 100%);position:absolute;inset:0;mix-blend-mode:multiply"></div>
+         style="position:absolute;inset:0;width:100%;height:100%;object-fit:cover;opacity:.75;filter:saturate(.85) brightness(.8)">
+    <div class="bc-bg" style="background:radial-gradient(ellipse at 40% 60%,#2A0A4E 0%,rgba(5,4,10,.4) 100%);position:absolute;inset:0"></div>
     <div class="bc-circle bc-c1"></div>
     <div class="bc-circle bc-c2"></div>
     <div class="bc-symbol" style="font-size:80px;position:relative;z-index:1">♦</div>
@@ -378,8 +393,8 @@ footer{background:var(--void);border-top:1px solid var(--bdr);padding:100px 64px
   <div class="bc-img">
     <img src="https://images.unsplash.com/photo-1518241353330-0f7941c2d9b5?auto=format&fit=crop&w=600&h=180&q=70"
          alt="Pierres de protection : choisir la bonne pierre" loading="lazy"
-         style="position:absolute;inset:0;width:100%;height:100%;object-fit:cover;opacity:.45;filter:saturate(.7)">
-    <div class="bc-bg" style="background:radial-gradient(ellipse at 40% 60%,#0A0F2E 0%,rgba(5,4,10,.7) 100%);position:absolute;inset:0;mix-blend-mode:multiply"></div>
+         style="position:absolute;inset:0;width:100%;height:100%;object-fit:cover;opacity:.75;filter:saturate(.85) brightness(.8)">
+    <div class="bc-bg" style="background:radial-gradient(ellipse at 40% 60%,#0A0F2E 0%,rgba(5,4,10,.4) 100%);position:absolute;inset:0"></div>
     <div class="bc-circle bc-c1"></div>
     <div class="bc-circle bc-c2"></div>
     <div class="bc-symbol" style="font-size:80px;position:relative;z-index:1">☽</div>
@@ -398,8 +413,8 @@ footer{background:var(--void);border-top:1px solid var(--bdr);padding:100px 64px
   <div class="bc-img">
     <img src="https://images.unsplash.com/photo-1516321318423-f06f85e504b3?auto=format&fit=crop&w=600&h=180&q=70"
          alt="Voyance par chat sans attente ni inscription" loading="lazy"
-         style="position:absolute;inset:0;width:100%;height:100%;object-fit:cover;opacity:.45;filter:saturate(.7)">
-    <div class="bc-bg" style="background:radial-gradient(ellipse at 40% 60%,#0A1A3A 0%,rgba(5,4,10,.7) 100%);position:absolute;inset:0;mix-blend-mode:multiply"></div>
+         style="position:absolute;inset:0;width:100%;height:100%;object-fit:cover;opacity:.75;filter:saturate(.85) brightness(.8)">
+    <div class="bc-bg" style="background:radial-gradient(ellipse at 40% 60%,#0A1A3A 0%,rgba(5,4,10,.4) 100%);position:absolute;inset:0"></div>
     <div class="bc-circle bc-c1"></div>
     <div class="bc-circle bc-c2"></div>
     <div class="bc-symbol" style="font-size:80px;position:relative;z-index:1">✦</div>
@@ -418,8 +433,8 @@ footer{background:var(--void);border-top:1px solid var(--bdr);padding:100px 64px
   <div class="bc-img">
     <img src="https://images.unsplash.com/photo-1534796636912-3b95b3ab5986?auto=format&fit=crop&w=600&h=180&q=70"
          alt="Prévisions astrologiques 2026 signe par signe" loading="lazy"
-         style="position:absolute;inset:0;width:100%;height:100%;object-fit:cover;opacity:.45;filter:saturate(.7)">
-    <div class="bc-bg" style="background:radial-gradient(ellipse at 40% 60%,#0A0A2E 0%,rgba(5,4,10,.7) 100%);position:absolute;inset:0;mix-blend-mode:multiply"></div>
+         style="position:absolute;inset:0;width:100%;height:100%;object-fit:cover;opacity:.75;filter:saturate(.85) brightness(.8)">
+    <div class="bc-bg" style="background:radial-gradient(ellipse at 40% 60%,#0A0A2E 0%,rgba(5,4,10,.4) 100%);position:absolute;inset:0"></div>
     <div class="bc-circle bc-c1"></div>
     <div class="bc-circle bc-c2"></div>
     <div class="bc-symbol" style="font-size:80px;position:relative;z-index:1">★</div>
@@ -438,8 +453,8 @@ footer{background:var(--void);border-top:1px solid var(--bdr);padding:100px 64px
   <div class="bc-img">
     <img src="https://images.unsplash.com/photo-1509228468518-180dd4864904?auto=format&fit=crop&w=600&h=180&q=70"
          alt="Numérologie du prénom : ce qu'il révèle de vous" loading="lazy"
-         style="position:absolute;inset:0;width:100%;height:100%;object-fit:cover;opacity:.45;filter:saturate(.7)">
-    <div class="bc-bg" style="background:radial-gradient(ellipse at 40% 60%,#2A1A0A 0%,rgba(5,4,10,.7) 100%);position:absolute;inset:0;mix-blend-mode:multiply"></div>
+         style="position:absolute;inset:0;width:100%;height:100%;object-fit:cover;opacity:.75;filter:saturate(.85) brightness(.8)">
+    <div class="bc-bg" style="background:radial-gradient(ellipse at 40% 60%,#2A1A0A 0%,rgba(5,4,10,.4) 100%);position:absolute;inset:0"></div>
     <div class="bc-circle bc-c1"></div>
     <div class="bc-circle bc-c2"></div>
     <div class="bc-symbol" style="font-size:80px;position:relative;z-index:1">∞</div>
@@ -458,8 +473,8 @@ footer{background:var(--void);border-top:1px solid var(--bdr);padding:100px 64px
   <div class="bc-img">
     <img src="https://images.unsplash.com/photo-1502134249126-9f3755a50d78?auto=format&fit=crop&w=600&h=180&q=70"
          alt="Ascendant astrologique : plus révélateur que votre signe" loading="lazy"
-         style="position:absolute;inset:0;width:100%;height:100%;object-fit:cover;opacity:.45;filter:saturate(.7)">
-    <div class="bc-bg" style="background:radial-gradient(ellipse at 40% 60%,#0A0A2E 0%,rgba(5,4,10,.7) 100%);position:absolute;inset:0;mix-blend-mode:multiply"></div>
+         style="position:absolute;inset:0;width:100%;height:100%;object-fit:cover;opacity:.75;filter:saturate(.85) brightness(.8)">
+    <div class="bc-bg" style="background:radial-gradient(ellipse at 40% 60%,#0A0A2E 0%,rgba(5,4,10,.4) 100%);position:absolute;inset:0"></div>
     <div class="bc-circle bc-c1"></div>
     <div class="bc-circle bc-c2"></div>
     <div class="bc-symbol" style="font-size:80px;position:relative;z-index:1">★</div>
@@ -478,8 +493,8 @@ footer{background:var(--void);border-top:1px solid var(--bdr);padding:100px 64px
   <div class="bc-img">
     <img src="https://images.unsplash.com/photo-1518020382113-a7e8fc38eac9?auto=format&fit=crop&w=600&h=180&q=70"
          alt="Interprétation des rêves : décoder vos nuits" loading="lazy"
-         style="position:absolute;inset:0;width:100%;height:100%;object-fit:cover;opacity:.45;filter:saturate(.7)">
-    <div class="bc-bg" style="background:radial-gradient(ellipse at 40% 60%,#0A0F2E 0%,rgba(5,4,10,.7) 100%);position:absolute;inset:0;mix-blend-mode:multiply"></div>
+         style="position:absolute;inset:0;width:100%;height:100%;object-fit:cover;opacity:.75;filter:saturate(.85) brightness(.8)">
+    <div class="bc-bg" style="background:radial-gradient(ellipse at 40% 60%,#0A0F2E 0%,rgba(5,4,10,.4) 100%);position:absolute;inset:0"></div>
     <div class="bc-circle bc-c1"></div>
     <div class="bc-circle bc-c2"></div>
     <div class="bc-symbol" style="font-size:80px;position:relative;z-index:1">☽</div>
@@ -498,8 +513,8 @@ footer{background:var(--void);border-top:1px solid var(--bdr);padding:100px 64px
   <div class="bc-img">
     <img src="https://images.unsplash.com/photo-1465101162946-4377e57745c3?auto=format&fit=crop&w=600&h=180&q=70"
          alt="Thème astral : comprendre votre carte natale" loading="lazy"
-         style="position:absolute;inset:0;width:100%;height:100%;object-fit:cover;opacity:.45;filter:saturate(.7)">
-    <div class="bc-bg" style="background:radial-gradient(ellipse at 40% 60%,#0A0A2E 0%,rgba(5,4,10,.7) 100%);position:absolute;inset:0;mix-blend-mode:multiply"></div>
+         style="position:absolute;inset:0;width:100%;height:100%;object-fit:cover;opacity:.75;filter:saturate(.85) brightness(.8)">
+    <div class="bc-bg" style="background:radial-gradient(ellipse at 40% 60%,#0A0A2E 0%,rgba(5,4,10,.4) 100%);position:absolute;inset:0"></div>
     <div class="bc-circle bc-c1"></div>
     <div class="bc-circle bc-c2"></div>
     <div class="bc-symbol" style="font-size:80px;position:relative;z-index:1">★</div>
@@ -518,8 +533,8 @@ footer{background:var(--void);border-top:1px solid var(--bdr);padding:100px 64px
   <div class="bc-img">
     <img src="https://images.unsplash.com/photo-1560807707-8cc77767d783?auto=format&fit=crop&w=600&h=180&q=70"
          alt="Médium gratuit : à quoi s'attendre vraiment" loading="lazy"
-         style="position:absolute;inset:0;width:100%;height:100%;object-fit:cover;opacity:.45;filter:saturate(.7)">
-    <div class="bc-bg" style="background:radial-gradient(ellipse at 40% 60%,#0A1A3A 0%,rgba(5,4,10,.7) 100%);position:absolute;inset:0;mix-blend-mode:multiply"></div>
+         style="position:absolute;inset:0;width:100%;height:100%;object-fit:cover;opacity:.75;filter:saturate(.85) brightness(.8)">
+    <div class="bc-bg" style="background:radial-gradient(ellipse at 40% 60%,#0A1A3A 0%,rgba(5,4,10,.4) 100%);position:absolute;inset:0"></div>
     <div class="bc-circle bc-c1"></div>
     <div class="bc-circle bc-c2"></div>
     <div class="bc-symbol" style="font-size:80px;position:relative;z-index:1">✦</div>
@@ -538,8 +553,8 @@ footer{background:var(--void);border-top:1px solid var(--bdr);padding:100px 64px
   <div class="bc-img">
     <img src="https://images.unsplash.com/photo-1605648916361-9bc12ad6a569?auto=format&fit=crop&w=600&h=180&q=70"
          alt="Signification des 22 lames du tarot de Marseille" loading="lazy"
-         style="position:absolute;inset:0;width:100%;height:100%;object-fit:cover;opacity:.45;filter:saturate(.7)">
-    <div class="bc-bg" style="background:radial-gradient(ellipse at 40% 60%,#2A0A4E 0%,rgba(5,4,10,.7) 100%);position:absolute;inset:0;mix-blend-mode:multiply"></div>
+         style="position:absolute;inset:0;width:100%;height:100%;object-fit:cover;opacity:.75;filter:saturate(.85) brightness(.8)">
+    <div class="bc-bg" style="background:radial-gradient(ellipse at 40% 60%,#2A0A4E 0%,rgba(5,4,10,.4) 100%);position:absolute;inset:0"></div>
     <div class="bc-circle bc-c1"></div>
     <div class="bc-circle bc-c2"></div>
     <div class="bc-symbol" style="font-size:80px;position:relative;z-index:1">♦</div>
@@ -558,8 +573,8 @@ footer{background:var(--void);border-top:1px solid var(--bdr);padding:100px 64px
   <div class="bc-img">
     <img src="https://images.unsplash.com/photo-1611532736597-de2d4265fba3?auto=format&fit=crop&w=600&h=180&q=70"
          alt="Voyance tchat en ligne : guide complet" loading="lazy"
-         style="position:absolute;inset:0;width:100%;height:100%;object-fit:cover;opacity:.45;filter:saturate(.7)">
-    <div class="bc-bg" style="background:radial-gradient(ellipse at 40% 60%,#0A1A3A 0%,rgba(5,4,10,.7) 100%);position:absolute;inset:0;mix-blend-mode:multiply"></div>
+         style="position:absolute;inset:0;width:100%;height:100%;object-fit:cover;opacity:.75;filter:saturate(.85) brightness(.8)">
+    <div class="bc-bg" style="background:radial-gradient(ellipse at 40% 60%,#0A1A3A 0%,rgba(5,4,10,.4) 100%);position:absolute;inset:0"></div>
     <div class="bc-circle bc-c1"></div>
     <div class="bc-circle bc-c2"></div>
     <div class="bc-symbol" style="font-size:80px;position:relative;z-index:1">✦</div>
@@ -578,8 +593,8 @@ footer{background:var(--void);border-top:1px solid var(--bdr);padding:100px 64px
   <div class="bc-img">
     <img src="https://images.unsplash.com/photo-1506126613408-eca07ce68773?auto=format&fit=crop&w=600&h=180&q=70"
          alt="Chakras et énergie : les 7 centres énergétiques" loading="lazy"
-         style="position:absolute;inset:0;width:100%;height:100%;object-fit:cover;opacity:.45;filter:saturate(.7)">
-    <div class="bc-bg" style="background:radial-gradient(ellipse at 40% 60%,#0A0F2E 0%,rgba(5,4,10,.7) 100%);position:absolute;inset:0;mix-blend-mode:multiply"></div>
+         style="position:absolute;inset:0;width:100%;height:100%;object-fit:cover;opacity:.75;filter:saturate(.85) brightness(.8)">
+    <div class="bc-bg" style="background:radial-gradient(ellipse at 40% 60%,#0A0F2E 0%,rgba(5,4,10,.4) 100%);position:absolute;inset:0"></div>
     <div class="bc-circle bc-c1"></div>
     <div class="bc-circle bc-c2"></div>
     <div class="bc-symbol" style="font-size:80px;position:relative;z-index:1">☽</div>
@@ -598,8 +613,8 @@ footer{background:var(--void);border-top:1px solid var(--bdr);padding:100px 64px
   <div class="bc-img">
     <img src="https://images.unsplash.com/photo-1518199266791-5375a83190b7?auto=format&fit=crop&w=600&h=180&q=70"
          alt="Voyance amour gratuite : explorer votre vie sentimentale" loading="lazy"
-         style="position:absolute;inset:0;width:100%;height:100%;object-fit:cover;opacity:.45;filter:saturate(.7)">
-    <div class="bc-bg" style="background:radial-gradient(ellipse at 40% 60%,#3A0A1A 0%,rgba(5,4,10,.7) 100%);position:absolute;inset:0;mix-blend-mode:multiply"></div>
+         style="position:absolute;inset:0;width:100%;height:100%;object-fit:cover;opacity:.75;filter:saturate(.85) brightness(.8)">
+    <div class="bc-bg" style="background:radial-gradient(ellipse at 40% 60%,#3A0A1A 0%,rgba(5,4,10,.4) 100%);position:absolute;inset:0"></div>
     <div class="bc-circle bc-c1"></div>
     <div class="bc-circle bc-c2"></div>
     <div class="bc-symbol" style="font-size:80px;position:relative;z-index:1">♥</div>
@@ -618,8 +633,8 @@ footer{background:var(--void);border-top:1px solid var(--bdr);padding:100px 64px
   <div class="bc-img">
     <img src="https://images.unsplash.com/photo-1455390582262-044cdead277a?auto=format&fit=crop&w=600&h=180&q=70"
          alt="Rêves et signification : messages de l'inconscient" loading="lazy"
-         style="position:absolute;inset:0;width:100%;height:100%;object-fit:cover;opacity:.45;filter:saturate(.7)">
-    <div class="bc-bg" style="background:radial-gradient(ellipse at 40% 60%,#0A0F2E 0%,rgba(5,4,10,.7) 100%);position:absolute;inset:0;mix-blend-mode:multiply"></div>
+         style="position:absolute;inset:0;width:100%;height:100%;object-fit:cover;opacity:.75;filter:saturate(.85) brightness(.8)">
+    <div class="bc-bg" style="background:radial-gradient(ellipse at 40% 60%,#0A0F2E 0%,rgba(5,4,10,.4) 100%);position:absolute;inset:0"></div>
     <div class="bc-circle bc-c1"></div>
     <div class="bc-circle bc-c2"></div>
     <div class="bc-symbol" style="font-size:80px;position:relative;z-index:1">☽</div>
