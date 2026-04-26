@@ -1,8 +1,8 @@
 <!DOCTYPE html>
 <html lang="fr"><head>
 <meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1.0">
-<title>Blog Auryel &mdash; Voyance, Tarot, Num&eacute;rologie &amp; Guidance Spirituelle</title>
-<meta name="description" content="Articles sur la voyance en ligne, le tarot amour, la num&eacute;rologie et la guidance spirituelle. Conseils et guides gratuits.">
+<title>Blog Auryel — Voyance, Tarot, Numérologie &amp; Guidance Spirituelle</title>
+<meta name="description" content="Articles sur la voyance en ligne, le tarot amour, la numérologie et la guidance spirituelle. Conseils et guides gratuits.">
 <meta name="robots" content="index, follow">
 <link rel="canonical" href="https://auryel.com/blog">
 <link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin><link href="https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@0,400;0,500;1,400;1,500&family=Tenor+Sans&family=Raleway:wght@200;300;400;500&display=swap" rel="stylesheet">
@@ -12,7 +12,6 @@ html{scroll-behavior:smooth}
 body{background:var(--void);color:var(--cream);font-family:var(--fb);font-weight:300;line-height:1.75;overflow-x:hidden}
 body::after{content:'';position:fixed;inset:0;pointer-events:none;z-index:9998;opacity:.18;background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='200' height='200'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.75' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='200' height='200' filter='url(%23n)' opacity='1'/%3E%3C/svg%3E")}
 .cursor{width:8px;height:8px;background:var(--gold);border-radius:50%;position:fixed;pointer-events:none;z-index:9999;transform:translate(-50%,-50%);transition:width .3s,height .3s;mix-blend-mode:screen}
-/* NAV */
 nav{position:fixed;top:0;left:0;right:0;z-index:100;display:flex;align-items:center;justify-content:space-between;padding:28px 64px;transition:all .5s}
 nav.sc{padding:18px 64px;background:rgba(5,4,10,.96);backdrop-filter:blur(24px);border-bottom:1px solid var(--bdr)}
 .n-logo{font-family:var(--fs);font-size:17px;letter-spacing:.5em;color:var(--gold);text-decoration:none;text-transform:uppercase}
@@ -21,19 +20,8 @@ nav.sc{padding:18px 64px;background:rgba(5,4,10,.96);backdrop-filter:blur(24px);
 .n-links a:hover,.n-links a.active{color:var(--gold-b)}
 .n-btn{font-family:var(--fb);font-size:10px;font-weight:500;letter-spacing:.2em;text-transform:uppercase;color:var(--void);background:var(--gold);border:none;padding:12px 28px;cursor:pointer;text-decoration:none;transition:all .3s;display:inline-block}
 .n-btn:hover{background:var(--gold-b);transform:translateY(-1px)}
-/* COMMON */
 .ey{font-family:var(--fs);font-size:10px;letter-spacing:.5em;text-transform:uppercase;color:var(--gold);margin-bottom:20px;display:block}
-.hd{font-family:var(--fd);font-size:clamp(36px,4.5vw,60px);font-weight:400;line-height:1.1;color:var(--cream);margin-bottom:20px}
-.hd em{font-style:italic;color:var(--gold-b)}
-.bt{font-size:14px;font-weight:300;color:var(--cs);line-height:1.85;max-width:500px}
 .rule{width:48px;height:1px;background:linear-gradient(to right,var(--gold),transparent);margin:28px 0}
-.cta-p{background:linear-gradient(135deg,var(--gold),var(--gold-b));color:var(--void);border:none;padding:18px 52px;font-family:var(--fb);font-size:11px;font-weight:500;letter-spacing:.25em;text-transform:uppercase;cursor:pointer;text-decoration:none;display:inline-block;transition:all .4s}
-.cta-p:hover{transform:translateY(-3px);box-shadow:0 20px 60px rgba(200,169,110,.35);filter:brightness(1.08)}
-.cta-g{background:transparent;color:var(--cs);border:1px solid var(--bdrm);padding:18px 44px;font-family:var(--fb);font-size:11px;letter-spacing:.2em;text-transform:uppercase;cursor:pointer;text-decoration:none;display:inline-block;transition:all .4s}
-.cta-g:hover{border-color:var(--gold-m);color:var(--cream);transform:translateY(-3px)}
-.la{display:inline-flex;align-items:center;gap:10px;font-family:var(--fb);font-size:11px;letter-spacing:.2em;text-transform:uppercase;color:var(--gold);text-decoration:none;transition:gap .3s}
-.la:hover{gap:16px}
-/* FOOTER */
 footer{background:var(--void);border-top:1px solid var(--bdr);padding:100px 64px 48px}
 .ft{max-width:1280px;margin:0 auto;display:grid;grid-template-columns:2fr 1fr 1fr 1fr;gap:72px;margin-bottom:72px}
 .fl2{font-family:var(--fs);font-size:17px;letter-spacing:.5em;color:var(--gold);margin-bottom:20px;display:block;text-transform:uppercase}
@@ -47,19 +35,6 @@ footer{background:var(--void);border-top:1px solid var(--bdr);padding:100px 64px
 .fb2{max-width:1280px;margin:0 auto;display:flex;justify-content:space-between;align-items:center;padding-top:40px;border-top:1px solid var(--bdr)}
 .fcp{font-size:11px;color:var(--cd);opacity:.5}
 .fdi{font-size:10px;color:var(--cd);opacity:.4;max-width:520px;text-align:right;line-height:1.7}
-/* LEGAL OVERLAY */
-.leg-ov{display:none;position:fixed;inset:0;background:var(--void);z-index:200;overflow-y:auto}
-.leg-ov.open{display:block}
-.leg-cl{position:fixed;top:30px;right:44px;background:transparent;border:1px solid var(--bdrm);color:var(--cd);padding:10px 22px;font-family:var(--fb);font-size:10px;letter-spacing:.2em;text-transform:uppercase;cursor:pointer;transition:all .3s;z-index:201}
-.leg-cl:hover{border-color:var(--gold);color:var(--gold)}
-.leg-cnt{max-width:800px;margin:0 auto;padding:130px 60px 100px}
-.leg-h1{font-family:var(--fd);font-size:50px;font-weight:400;color:var(--cream);margin-bottom:10px}
-.leg-dt{font-size:11px;color:var(--cd);letter-spacing:.1em;margin-bottom:64px;display:block}
-.lb{margin-bottom:48px}
-.lb h2{font-family:var(--fs);font-size:10px;letter-spacing:.4em;text-transform:uppercase;color:var(--gold);margin-bottom:18px}
-.lb p,.lb li{font-size:14px;font-weight:300;color:var(--cs);line-height:1.9;margin-bottom:12px}
-.lb ul{padding-left:18px}
-/* COOKIE */
 .ck-bar{position:fixed;bottom:0;left:0;right:0;background:rgba(9,7,15,.97);backdrop-filter:blur(20px);border-top:1px solid var(--bdr);padding:24px 64px;display:flex;align-items:center;justify-content:space-between;gap:40px;z-index:150;transform:translateY(110%);transition:transform .6s cubic-bezier(.25,.46,.45,.94)}
 .ck-bar.show{transform:translateY(0)}
 .ck-txt{font-size:13px;font-weight:300;color:var(--cs);flex:1;line-height:1.7}
@@ -68,10 +43,8 @@ footer{background:var(--void);border-top:1px solid var(--bdr);padding:100px 64px
 .ck-ok{background:linear-gradient(135deg,var(--gold),var(--gold-b));color:var(--void);border:none;padding:12px 32px;font-family:var(--fb);font-size:10px;font-weight:500;letter-spacing:.2em;text-transform:uppercase;cursor:pointer}
 .ck-no{background:transparent;color:var(--cd);border:1px solid var(--bdr);padding:12px 24px;font-family:var(--fb);font-size:10px;letter-spacing:.15em;text-transform:uppercase;cursor:pointer;transition:border-color .3s}
 .ck-no:hover{border-color:var(--gold-m)}
-/* RESPONSIVE */
 @media(max-width:1100px){nav{padding:20px 32px}nav.sc{padding:16px 32px}.n-links{display:none}.ft{grid-template-columns:1fr 1fr;gap:40px}}
 @media(max-width:640px){.ft{grid-template-columns:1fr}.ck-bar{flex-direction:column;padding:20px}}
-
 .blog-hero{padding:180px 64px 100px;position:relative;overflow:hidden;background:var(--deep)}
 .blog-hero::before{content:"";position:absolute;inset:0;background:radial-gradient(ellipse 70% 60% at 50% 100%,rgba(123,94,167,.2) 0%,transparent 60%)}
 .orb{position:absolute;border-radius:50%;filter:blur(80px);pointer-events:none}
@@ -85,32 +58,27 @@ footer{background:var(--void);border-top:1px solid var(--bdr);padding:100px 64px
 .cat-btn{background:transparent;border:1px solid var(--bdr);color:var(--cd);font-family:var(--fb);font-size:10px;letter-spacing:.2em;text-transform:uppercase;padding:8px 18px;cursor:pointer;transition:all .3s}
 .cat-btn:hover{border-color:var(--gold-m);color:var(--gold)}
 .cat-btn.active{background:rgba(200,169,110,.12);border-color:var(--gold);color:var(--gold)}
-
 .blog-featured{max-width:1280px;margin:0 auto;padding:80px 64px 0;display:grid;grid-template-columns:1.6fr 1fr;grid-template-rows:1fr 1fr;gap:2px}
 .bc-main{grid-row:1/3}
 .blog-grid{max-width:1280px;margin:0 auto;padding:2px 64px 120px;display:grid;grid-template-columns:repeat(5,1fr);gap:2px}
 .blog-sep{height:1px;background:linear-gradient(to right,transparent,var(--gold-m),transparent);margin:0 64px}
-
 .bc{text-decoration:none;display:flex;flex-direction:column;overflow:hidden;transition:all .4s;position:relative;background:var(--card)}
 .bc:hover{transform:translateY(-4px);box-shadow:0 24px 60px rgba(0,0,0,.6)}
-
 .bc-img{position:relative;overflow:hidden;width:100%;display:flex;align-items:center;justify-content:center}
 .bc-main .bc-img{height:380px}
 .bc-side .bc-img{height:188px}
 .bc-small .bc-img{height:180px}
-
+.bc-img img.bc-photo{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;opacity:.45;filter:saturate(.65)}
 .bc-bg{position:absolute;inset:0;transition:transform .6s}
 .bc:hover .bc-bg{transform:scale(1.05)}
 .bc-symbol{position:relative;z-index:1;font-family:Georgia,serif;color:rgba(200,169,110,0.18);line-height:1;pointer-events:none;user-select:none}
 .bc-main .bc-symbol{font-size:180px}
 .bc-side .bc-symbol{font-size:90px}
 .bc-small .bc-symbol{font-size:80px}
-.bc-circle{position:absolute;border-radius:50%;border:1px solid rgba(200,169,110,0.12);pointer-events:none}
+.bc-circle{position:absolute;border-radius:50%;border:1px solid rgba(200,169,110,0.12);pointer-events:none;z-index:1}
 .bc-c1{width:200px;height:200px;top:50%;left:50%;transform:translate(-50%,-50%)}
 .bc-c2{width:130px;height:130px;top:50%;left:50%;transform:translate(-50%,-50%)}
-
 .bc-cat-pill{position:absolute;top:14px;left:14px;z-index:2;background:rgba(5,4,10,.85);backdrop-filter:blur(8px);border:1px solid rgba(200,169,110,.3);padding:5px 12px;font-family:var(--fs);font-size:9px;letter-spacing:.25em;text-transform:uppercase;color:var(--gold)}
-
 .bc-body{padding:24px 28px 22px;flex:1;display:flex;flex-direction:column}
 .bc-main .bc-body{padding:32px 36px 28px}
 .bc-title{font-family:var(--fd);font-size:20px;font-weight:400;color:var(--cream);line-height:1.25;margin-bottom:10px}
@@ -121,165 +89,568 @@ footer{background:var(--void);border-top:1px solid var(--bdr);padding:100px 64px
 .bc-foot{display:flex;align-items:center;justify-content:space-between;margin-top:auto}
 .bc-meta{font-size:11px;color:var(--cd)}
 .bc-read{font-family:var(--fb);font-size:10px;letter-spacing:.15em;text-transform:uppercase;color:var(--gold)}
-
-@media(max-width:1100px){
-  .blog-featured{grid-template-columns:1fr;grid-template-rows:auto;padding:60px 32px 0}
-  .bc-main{grid-row:auto}
-  .bc-main .bc-img{height:260px}
-  .blog-grid{grid-template-columns:repeat(2,1fr);padding:2px 32px 80px}
-  .blog-sep{margin:0 32px}
-}
-@media(max-width:640px){
-  .blog-hero{padding:140px 24px 60px}
-  .blog-featured{padding:40px 16px 0}
-  .blog-grid{grid-template-columns:1fr;padding:16px 16px 60px}
-  .blog-sep{margin:0 16px}
-  .blog-h1{font-size:44px}
-}
+@media(max-width:1100px){.blog-featured{grid-template-columns:1fr;grid-template-rows:auto;padding:60px 32px 0}.bc-main{grid-row:auto}.bc-main .bc-img{height:260px}.blog-grid{grid-template-columns:repeat(2,1fr);padding:2px 32px 80px}.blog-sep{margin:0 32px}}
+@media(max-width:640px){.blog-hero{padding:140px 24px 60px}.blog-featured{padding:40px 16px 0}.blog-grid{grid-template-columns:1fr;padding:16px 16px 60px}.blog-sep{margin:0 16px}.blog-h1{font-size:44px}}
 </style>
 </head><body>
 <div class="cursor" id="cur"></div>
 <nav id="nav"><a href="index.html" class="n-logo">Auryel</a><ul class="n-links"><li><a href="index.html">Accueil</a></li><li><a href="conseillers.html">Conseillers</a></li><li><a href="comment-ca-marche.html">Comment ca marche</a></li><li><a href="tarifs.html">Tarifs</a></li><li><a href="blog.html" class=active>Blog</a></li><li><a href="recrutement.html">Recrutement</a></li></ul><a href="inscription.html" class="n-btn">Commencer</a></nav>
+
 <section class="blog-hero">
   <div class="orb o1"></div><div class="orb o2"></div>
   <div class="blog-hero-in">
     <span class="ey">Guidance &amp; Sagesse</span>
     <h1 class="blog-h1">Le blog <em>Auryel</em></h1>
     <div class="rule"></div>
-    <p class="blog-sub">Voyance, tarot, num&eacute;rologie, compatibilit&eacute; amoureuse &mdash; des guides pour &eacute;clairer votre chemin.</p>
-    <div class="cats"><button class="cat-btn active" data-cat="all" onclick="filterCat('all')">Tous</button><button class="cat-btn" data-cat="amour" onclick="filterCat('amour')">Amour</button><button class="cat-btn" data-cat="tarot" onclick="filterCat('tarot')">Tarot</button><button class="cat-btn" data-cat="numerologie" onclick="filterCat('numerologie')">Num&eacute;rologie</button><button class="cat-btn" data-cat="astrologie" onclick="filterCat('astrologie')">Astrologie</button><button class="cat-btn" data-cat="spiritualite" onclick="filterCat('spiritualite')">Spiritualit&eacute;</button><button class="cat-btn" data-cat="carriere" onclick="filterCat('carriere')">Carri&egrave;re</button><button class="cat-btn" data-cat="guide" onclick="filterCat('guide')">Guide</button></div>
+    <p class="blog-sub">Voyance, tarot, numérologie, compatibilité amoureuse — des guides pour éclairer votre chemin.</p>
+    <div class="cats">
+      <button class="cat-btn active" data-cat="all" onclick="filterCat('all')">Tous</button>
+      <button class="cat-btn" data-cat="amour" onclick="filterCat('amour')">Amour</button>
+      <button class="cat-btn" data-cat="tarot" onclick="filterCat('tarot')">Tarot</button>
+      <button class="cat-btn" data-cat="numerologie" onclick="filterCat('numerologie')">Numérologie</button>
+      <button class="cat-btn" data-cat="astrologie" onclick="filterCat('astrologie')">Astrologie</button>
+      <button class="cat-btn" data-cat="spiritualite" onclick="filterCat('spiritualite')">Spiritualité</button>
+      <button class="cat-btn" data-cat="carriere" onclick="filterCat('carriere')">Carrière</button>
+      <button class="cat-btn" data-cat="guide" onclick="filterCat('guide')">Guide</button>
+    </div>
   </div>
 </section>
-<div class="blog-featured"><a href="numerologie-date-naissance-chemin-de-vie.html" class="bc bc-main" data-cat="numerologie">
-  <div class="bc-img">
-  <div class="bc-bg" style="background:radial-gradient(ellipse at 40% 60%,#3A1A6E 0%,#05040A 100%);position:absolute;inset:0"></div>
-  <div class="bc-circle bc-c1"></div>
-  <div class="bc-circle bc-c2"></div>
-  <div class="bc-symbol" style="font-size:180px">9</div>
-  <div class="bc-cat-pill">Num&eacute;rologie</div>
-</div>
-  <div class="bc-body">
-    <div class="bc-title">Num&eacute;rologie : calculez votre chemin de vie</div>
-    <div class="bc-desc">D&eacute;couvrez comment d&eacute;coder les chiffres de votre date de naissance pour r&eacute;v&eacute;ler votre mission de vie.</div>
-    <div class="bc-foot">
-      <span class="bc-meta">21 Avr 2026 &middot; 8 min</span>
-      <span class="bc-read">Lire &rarr;</span>
+
+<!-- FEATURED — 3 articles mis en avant avec images Unsplash -->
+<div class="blog-featured">
+  <a href="numerologie-date-naissance-chemin-de-vie.html" class="bc bc-main" data-cat="numerologie">
+    <div class="bc-img">
+      <img src="https://images.unsplash.com/photo-1509228468518-180dd4864904?auto=format&fit=crop&w=900&h=400&q=75" alt="Numérologie chemin de vie" loading="eager" class="bc-photo">
+      <div class="bc-bg" style="background:radial-gradient(ellipse at 40% 60%,#3A1A6E 0%,rgba(5,4,10,.6) 100%);position:absolute;inset:0;mix-blend-mode:multiply"></div>
+      <div class="bc-circle bc-c1"></div><div class="bc-circle bc-c2"></div>
+      <div class="bc-symbol" style="font-size:180px">9</div>
+      <div class="bc-cat-pill">Numérologie</div>
     </div>
-  </div>
-</a><a href="tarot-amour-gratuit-en-ligne.html" class="bc bc-side" data-cat="tarot">
-  <div class="bc-img">
-  <div class="bc-bg" style="background:radial-gradient(ellipse at 40% 60%,#2A0A4E 0%,#05040A 100%);position:absolute;inset:0"></div>
-  <div class="bc-circle bc-c1"></div>
-  <div class="bc-circle bc-c2"></div>
-  <div class="bc-symbol" style="font-size:90px">&#9830;</div>
-  <div class="bc-cat-pill">Tarot</div>
-</div>
-  <div class="bc-body">
-    <div class="bc-title">Tirage tarot amour : que dit votre c&#339;ur ?</div>
-    <div class="bc-desc">Ce que les cartes r&eacute;v&egrave;lent sur votre vie amoureuse. Signification des arcanes et guidance sentimentale.</div>
-    <div class="bc-foot">
-      <span class="bc-meta">20 Avr 2026 &middot; 7 min</span>
-      <span class="bc-read">Lire &rarr;</span>
+    <div class="bc-body">
+      <div class="bc-title">Numérologie : calculez votre chemin de vie</div>
+      <div class="bc-desc">Découvrez comment décoder les chiffres de votre date de naissance pour révéler votre mission de vie.</div>
+      <div class="bc-foot"><span class="bc-meta">21 Avr 2026 · 8 min</span><span class="bc-read">Lire →</span></div>
     </div>
-  </div>
-</a><a href="mon-ex-va-t-il-revenir-voyance.html" class="bc bc-side" data-cat="amour">
-  <div class="bc-img">
-  <div class="bc-bg" style="background:radial-gradient(ellipse at 40% 60%,#5A0D1A 0%,#05040A 100%);position:absolute;inset:0"></div>
-  <div class="bc-circle bc-c1"></div>
-  <div class="bc-circle bc-c2"></div>
-  <div class="bc-symbol" style="font-size:90px">&#9829;</div>
-  <div class="bc-cat-pill">Amour</div>
-</div>
-  <div class="bc-body">
-    <div class="bc-title">Mon ex va-t-il revenir ? La voyance r&eacute;pond</div>
-    <div class="bc-desc">La question universelle apr&egrave;s une rupture. Ce que la guidance spirituelle peut r&eacute;v&eacute;ler sur un retour affectif.</div>
-    <div class="bc-foot">
-      <span class="bc-meta">19 Avr 2026 &middot; 6 min</span>
-      <span class="bc-read">Lire &rarr;</span>
+  </a>
+  <a href="tarot-amour-gratuit-en-ligne.html" class="bc bc-side" data-cat="tarot">
+    <div class="bc-img">
+      <img src="https://images.unsplash.com/photo-1604085792867-8f0de9f6bbd1?auto=format&fit=crop&w=600&h=200&q=70" alt="Tarot amour" loading="eager" class="bc-photo">
+      <div class="bc-bg" style="background:radial-gradient(ellipse at 40% 60%,#2A0A4E 0%,rgba(5,4,10,.6) 100%);position:absolute;inset:0;mix-blend-mode:multiply"></div>
+      <div class="bc-circle bc-c1"></div><div class="bc-circle bc-c2"></div>
+      <div class="bc-symbol" style="font-size:90px">&#9830;</div>
+      <div class="bc-cat-pill">Tarot</div>
     </div>
-  </div>
-</a></div>
+    <div class="bc-body">
+      <div class="bc-title">Tirage tarot amour : que dit votre cœur ?</div>
+      <div class="bc-desc">Ce que les cartes révèlent sur votre vie amoureuse. Signification des arcanes et guidance sentimentale.</div>
+      <div class="bc-foot"><span class="bc-meta">20 Avr 2026 · 7 min</span><span class="bc-read">Lire →</span></div>
+    </div>
+  </a>
+  <a href="mon-ex-va-t-il-revenir-voyance.html" class="bc bc-side" data-cat="amour">
+    <div class="bc-img">
+      <img src="https://images.unsplash.com/photo-1518199266791-5375a83190b7?auto=format&fit=crop&w=600&h=200&q=70" alt="Retour amoureux" loading="eager" class="bc-photo">
+      <div class="bc-bg" style="background:radial-gradient(ellipse at 40% 60%,#5A0D1A 0%,rgba(5,4,10,.6) 100%);position:absolute;inset:0;mix-blend-mode:multiply"></div>
+      <div class="bc-circle bc-c1"></div><div class="bc-circle bc-c2"></div>
+      <div class="bc-symbol" style="font-size:90px">&#9829;</div>
+      <div class="bc-cat-pill">Amour</div>
+    </div>
+    <div class="bc-body">
+      <div class="bc-title">Mon ex va-t-il revenir ? La voyance répond</div>
+      <div class="bc-desc">La question universelle après une rupture. Ce que la guidance spirituelle peut révéler sur un retour affectif.</div>
+      <div class="bc-foot"><span class="bc-meta">19 Avr 2026 · 6 min</span><span class="bc-read">Lire →</span></div>
+    </div>
+  </a>
+</div>
+
 <div class="blog-sep"></div>
-<div class="blog-grid"><a href="comment-choisir-son-voyant-en-ligne.html" class="bc bc-small" data-cat="guide">
+
+<!-- GRID — 5 articles existants + 20 nouveaux -->
+<div class="blog-grid">
+  <!-- Articles existants -->
+  <a href="comment-choisir-son-voyant-en-ligne.html" class="bc bc-small" data-cat="guide">
+    <div class="bc-img">
+      <img src="https://images.unsplash.com/photo-1518611012118-696072aa579a?auto=format&fit=crop&w=400&h=180&q=65" alt="Voyant en ligne" loading="lazy" class="bc-photo">
+      <div class="bc-bg" style="background:radial-gradient(ellipse at 40% 60%,#0A1A3A 0%,rgba(5,4,10,.6) 100%);position:absolute;inset:0;mix-blend-mode:multiply"></div>
+      <div class="bc-circle bc-c1"></div><div class="bc-circle bc-c2"></div>
+      <div class="bc-symbol" style="font-size:90px">&#10022;</div><div class="bc-cat-pill">Guide</div>
+    </div>
+    <div class="bc-body">
+      <div class="bc-title">Comment choisir son voyant en ligne</div>
+      <div class="bc-desc">Tous les critères pour trouver une voyance sérieuse. Comment éviter les arnaques.</div>
+      <div class="bc-foot"><span class="bc-meta">18 Avr 2026 · 9 min</span><span class="bc-read">Lire →</span></div>
+    </div>
+  </a>
+  <a href="compatibilite-amoureuse-signe-astrologique.html" class="bc bc-small" data-cat="astrologie">
+    <div class="bc-img">
+      <img src="https://images.unsplash.com/photo-1502134249126-9f3755a50d78?auto=format&fit=crop&w=400&h=180&q=65" alt="Compatibilité astrologique" loading="lazy" class="bc-photo">
+      <div class="bc-bg" style="background:radial-gradient(ellipse at 40% 60%,#3A0A2A 0%,rgba(5,4,10,.6) 100%);position:absolute;inset:0;mix-blend-mode:multiply"></div>
+      <div class="bc-circle bc-c1"></div><div class="bc-circle bc-c2"></div>
+      <div class="bc-symbol" style="font-size:90px">&#9812;</div><div class="bc-cat-pill">Astrologie</div>
+    </div>
+    <div class="bc-body">
+      <div class="bc-title">Compatibilité amoureuse par signe</div>
+      <div class="bc-desc">Ce que l'astrologie révèle vraiment sur vos affinités amoureuses.</div>
+      <div class="bc-foot"><span class="bc-meta">17 Avr 2026 · 8 min</span><span class="bc-read">Lire →</span></div>
+    </div>
+  </a>
+  <a href="signification-reves-voyance.html" class="bc bc-small" data-cat="spiritualite">
+    <div class="bc-img">
+      <img src="https://images.unsplash.com/photo-1518020382113-a7e8fc38eac9?auto=format&fit=crop&w=400&h=180&q=65" alt="Signification des rêves" loading="lazy" class="bc-photo">
+      <div class="bc-bg" style="background:radial-gradient(ellipse at 40% 60%,#0A0F2E 0%,rgba(5,4,10,.6) 100%);position:absolute;inset:0;mix-blend-mode:multiply"></div>
+      <div class="bc-circle bc-c1"></div><div class="bc-circle bc-c2"></div>
+      <div class="bc-symbol" style="font-size:90px">&#9790;</div><div class="bc-cat-pill">Spiritualité</div>
+    </div>
+    <div class="bc-body">
+      <div class="bc-title">Signification des rêves : écoutez votre âme</div>
+      <div class="bc-desc">Les rêves sont des messages de votre âme. Interprétation des symboles les plus fréquents.</div>
+      <div class="bc-foot"><span class="bc-meta">16 Avr 2026 · 7 min</span><span class="bc-read">Lire →</span></div>
+    </div>
+  </a>
+  <a href="voyance-avenir-professionnel.html" class="bc bc-small" data-cat="carriere">
+    <div class="bc-img">
+      <img src="https://images.unsplash.com/photo-1611974789855-9c2a0a7236a3?auto=format&fit=crop&w=400&h=180&q=65" alt="Avenir professionnel" loading="lazy" class="bc-photo">
+      <div class="bc-bg" style="background:radial-gradient(ellipse at 40% 60%,#0A2A0A 0%,rgba(5,4,10,.6) 100%);position:absolute;inset:0;mix-blend-mode:multiply"></div>
+      <div class="bc-circle bc-c1"></div><div class="bc-circle bc-c2"></div>
+      <div class="bc-symbol" style="font-size:90px">&#9650;</div><div class="bc-cat-pill">Carrière</div>
+    </div>
+    <div class="bc-body">
+      <div class="bc-title">Voyance travail : votre avenir professionnel</div>
+      <div class="bc-desc">Reconversion, promotion — ce que la guidance révèle sur votre carrière.</div>
+      <div class="bc-foot"><span class="bc-meta">15 Avr 2026 · 6 min</span><span class="bc-read">Lire →</span></div>
+    </div>
+  </a>
+  <a href="tarot-oui-non-reponse-immediate.html" class="bc bc-small" data-cat="tarot">
+    <div class="bc-img">
+      <img src="https://images.unsplash.com/photo-1605648916361-9bc12ad6a569?auto=format&fit=crop&w=400&h=180&q=65" alt="Tarot oui non" loading="lazy" class="bc-photo">
+      <div class="bc-bg" style="background:radial-gradient(ellipse at 40% 60%,#1A0A3A 0%,rgba(5,4,10,.6) 100%);position:absolute;inset:0;mix-blend-mode:multiply"></div>
+      <div class="bc-circle bc-c1"></div><div class="bc-circle bc-c2"></div>
+      <div class="bc-symbol" style="font-size:90px">?</div><div class="bc-cat-pill">Tarot</div>
+    </div>
+    <div class="bc-body">
+      <div class="bc-title">Tarot oui non : réponse immédiate</div>
+      <div class="bc-desc">Comment fonctionne le tirage tarot oui non. Les cartes positives et négatives décryptées.</div>
+      <div class="bc-foot"><span class="bc-meta">14 Avr 2026 · 5 min</span><span class="bc-read">Lire →</span></div>
+    </div>
+  </a>
+
+  <!-- 20 NOUVEAUX ARTICLES -->
+<a href="voyance-serieuse-en-ligne.html" class="bc bc-small" data-cat="guide">
   <div class="bc-img">
-  <div class="bc-bg" style="background:radial-gradient(ellipse at 40% 60%,#0A1A3A 0%,#05040A 100%);position:absolute;inset:0"></div>
-  <div class="bc-circle bc-c1"></div>
-  <div class="bc-circle bc-c2"></div>
-  <div class="bc-symbol" style="font-size:90px">&#10022;</div>
-  <div class="bc-cat-pill">Guide</div>
-</div>
+    <img src="https://images.unsplash.com/photo-1518611012118-696072aa579a?auto=format&fit=crop&w=600&h=180&q=70"
+         alt="Voyance sérieuse en ligne : trouver un médium fiable" loading="lazy"
+         style="position:absolute;inset:0;width:100%;height:100%;object-fit:cover;opacity:.45;filter:saturate(.7)">
+    <div class="bc-bg" style="background:radial-gradient(ellipse at 40% 60%,#0A1A3A 0%,rgba(5,4,10,.7) 100%);position:absolute;inset:0;mix-blend-mode:multiply"></div>
+    <div class="bc-circle bc-c1"></div>
+    <div class="bc-circle bc-c2"></div>
+    <div class="bc-symbol" style="font-size:80px;position:relative;z-index:1">✦</div>
+    <div class="bc-cat-pill">Guide</div>
+  </div>
   <div class="bc-body">
-    <div class="bc-title">Comment choisir son voyant en ligne</div>
-    <div class="bc-desc">Tous les crit&egrave;res pour trouver une voyance s&eacute;rieuse. Comment &eacute;viter les arnaques.</div>
+    <div class="bc-title">Voyance sérieuse en ligne : trouver un médium fiable</div>
+    <div class="bc-desc">Comment reconnaître une voyance sérieuse et éviter les arnaques.</div>
     <div class="bc-foot">
-      <span class="bc-meta">18 Avr 2026 &middot; 9 min</span>
-      <span class="bc-read">Lire &rarr;</span>
+      <span class="bc-meta">24 Avr 2026 · 6 min</span>
+      <span class="bc-read">Lire →</span>
     </div>
   </div>
-</a><a href="compatibilite-amoureuse-signe-astrologique.html" class="bc bc-small" data-cat="astrologie">
+</a>
+<a href="retour-affectif-voyance.html" class="bc bc-small" data-cat="amour">
   <div class="bc-img">
-  <div class="bc-bg" style="background:radial-gradient(ellipse at 40% 60%,#3A0A2A 0%,#05040A 100%);position:absolute;inset:0"></div>
-  <div class="bc-circle bc-c1"></div>
-  <div class="bc-circle bc-c2"></div>
-  <div class="bc-symbol" style="font-size:90px">&#9812;</div>
-  <div class="bc-cat-pill">Astrologie</div>
-</div>
+    <img src="https://images.unsplash.com/photo-1518199266791-5375a83190b7?auto=format&fit=crop&w=600&h=180&q=70"
+         alt="Retour affectif : ce que la voyance révèle" loading="lazy"
+         style="position:absolute;inset:0;width:100%;height:100%;object-fit:cover;opacity:.45;filter:saturate(.7)">
+    <div class="bc-bg" style="background:radial-gradient(ellipse at 40% 60%,#3A0A1A 0%,rgba(5,4,10,.7) 100%);position:absolute;inset:0;mix-blend-mode:multiply"></div>
+    <div class="bc-circle bc-c1"></div>
+    <div class="bc-circle bc-c2"></div>
+    <div class="bc-symbol" style="font-size:80px;position:relative;z-index:1">♥</div>
+    <div class="bc-cat-pill">Amour</div>
+  </div>
   <div class="bc-body">
-    <div class="bc-title">Compatibilit&eacute; amoureuse par signe</div>
-    <div class="bc-desc">Ce que l&apos;astrologie r&eacute;v&egrave;le vraiment sur vos affinit&eacute;s amoureuses.</div>
+    <div class="bc-title">Retour affectif : ce que la voyance révèle</div>
+    <div class="bc-desc">Ce que les cartes peuvent révéler sur une réconciliation.</div>
     <div class="bc-foot">
-      <span class="bc-meta">17 Avr 2026 &middot; 8 min</span>
-      <span class="bc-read">Lire &rarr;</span>
+      <span class="bc-meta">24 Avr 2026 · 6 min</span>
+      <span class="bc-read">Lire →</span>
     </div>
   </div>
-</a><a href="signification-reves-voyance.html" class="bc bc-small" data-cat="spiritualite">
+</a>
+<a href="oracle-gratuit-en-ligne.html" class="bc bc-small" data-cat="tarot">
   <div class="bc-img">
-  <div class="bc-bg" style="background:radial-gradient(ellipse at 40% 60%,#0A0F2E 0%,#05040A 100%);position:absolute;inset:0"></div>
-  <div class="bc-circle bc-c1"></div>
-  <div class="bc-circle bc-c2"></div>
-  <div class="bc-symbol" style="font-size:90px">&#9790;</div>
-  <div class="bc-cat-pill">Spiritualit&eacute;</div>
-</div>
+    <img src="https://images.unsplash.com/photo-1604085792867-8f0de9f6bbd1?auto=format&fit=crop&w=600&h=180&q=70"
+         alt="Oracle gratuit en ligne : bien interpréter votre tirage" loading="lazy"
+         style="position:absolute;inset:0;width:100%;height:100%;object-fit:cover;opacity:.45;filter:saturate(.7)">
+    <div class="bc-bg" style="background:radial-gradient(ellipse at 40% 60%,#2A0A4E 0%,rgba(5,4,10,.7) 100%);position:absolute;inset:0;mix-blend-mode:multiply"></div>
+    <div class="bc-circle bc-c1"></div>
+    <div class="bc-circle bc-c2"></div>
+    <div class="bc-symbol" style="font-size:80px;position:relative;z-index:1">♦</div>
+    <div class="bc-cat-pill">Tarot</div>
+  </div>
   <div class="bc-body">
-    <div class="bc-title">Signification des r&ecirc;ves : &eacute;coutez votre &acirc;me</div>
-    <div class="bc-desc">Les r&ecirc;ves sont des messages de votre &acirc;me. Interpr&eacute;tation des symboles les plus fr&eacute;quents.</div>
+    <div class="bc-title">Oracle gratuit en ligne : bien interpréter votre tirage</div>
+    <div class="bc-desc">Différences avec le tarot, types d'oracle, erreurs à éviter.</div>
     <div class="bc-foot">
-      <span class="bc-meta">16 Avr 2026 &middot; 7 min</span>
-      <span class="bc-read">Lire &rarr;</span>
+      <span class="bc-meta">24 Avr 2026 · 5 min</span>
+      <span class="bc-read">Lire →</span>
     </div>
   </div>
-</a><a href="voyance-avenir-professionnel.html" class="bc bc-small" data-cat="carriere">
+</a>
+<a href="avenir-sentimental-gratuit.html" class="bc bc-small" data-cat="amour">
   <div class="bc-img">
-  <div class="bc-bg" style="background:radial-gradient(ellipse at 40% 60%,#0A2A0A 0%,#05040A 100%);position:absolute;inset:0"></div>
-  <div class="bc-circle bc-c1"></div>
-  <div class="bc-circle bc-c2"></div>
-  <div class="bc-symbol" style="font-size:90px">&#9650;</div>
-  <div class="bc-cat-pill">Carri&egrave;re</div>
-</div>
+    <img src="https://images.unsplash.com/photo-1474552226712-ac0f0961a954?auto=format&fit=crop&w=600&h=180&q=70"
+         alt="Avenir sentimental gratuit : que vous réserve l'amour ?" loading="lazy"
+         style="position:absolute;inset:0;width:100%;height:100%;object-fit:cover;opacity:.45;filter:saturate(.7)">
+    <div class="bc-bg" style="background:radial-gradient(ellipse at 40% 60%,#3A0A1A 0%,rgba(5,4,10,.7) 100%);position:absolute;inset:0;mix-blend-mode:multiply"></div>
+    <div class="bc-circle bc-c1"></div>
+    <div class="bc-circle bc-c2"></div>
+    <div class="bc-symbol" style="font-size:80px;position:relative;z-index:1">♥</div>
+    <div class="bc-cat-pill">Amour</div>
+  </div>
   <div class="bc-body">
-    <div class="bc-title">Voyance travail : votre avenir professionnel</div>
-    <div class="bc-desc">Reconversion, promotion — ce que la guidance r&eacute;v&egrave;le sur votre carri&egrave;re.</div>
+    <div class="bc-title">Avenir sentimental gratuit : que vous réserve l'amour ?</div>
+    <div class="bc-desc">Rencontre, réconciliation, évolution — ce que la guidance révèle.</div>
     <div class="bc-foot">
-      <span class="bc-meta">15 Avr 2026 &middot; 6 min</span>
-      <span class="bc-read">Lire &rarr;</span>
+      <span class="bc-meta">24 Avr 2026 · 6 min</span>
+      <span class="bc-read">Lire →</span>
     </div>
   </div>
-</a><a href="tarot-oui-non-reponse-immediate.html" class="bc bc-small" data-cat="tarot">
+</a>
+<a href="voyance-argent-et-finances.html" class="bc bc-small" data-cat="carriere">
   <div class="bc-img">
-  <div class="bc-bg" style="background:radial-gradient(ellipse at 40% 60%,#1A0A3A 0%,#05040A 100%);position:absolute;inset:0"></div>
-  <div class="bc-circle bc-c1"></div>
-  <div class="bc-circle bc-c2"></div>
-  <div class="bc-symbol" style="font-size:90px">?</div>
-  <div class="bc-cat-pill">Tarot</div>
-</div>
+    <img src="https://images.unsplash.com/photo-1611974789855-9c2a0a7236a3?auto=format&fit=crop&w=600&h=180&q=70"
+         alt="Voyance argent et finances : les cartes et la prospérité" loading="lazy"
+         style="position:absolute;inset:0;width:100%;height:100%;object-fit:cover;opacity:.45;filter:saturate(.7)">
+    <div class="bc-bg" style="background:radial-gradient(ellipse at 40% 60%,#0A2A0A 0%,rgba(5,4,10,.7) 100%);position:absolute;inset:0;mix-blend-mode:multiply"></div>
+    <div class="bc-circle bc-c1"></div>
+    <div class="bc-circle bc-c2"></div>
+    <div class="bc-symbol" style="font-size:80px;position:relative;z-index:1">◆</div>
+    <div class="bc-cat-pill">Carrière</div>
+  </div>
   <div class="bc-body">
-    <div class="bc-title">Tarot oui non : r&eacute;ponse imm&eacute;diate</div>
-    <div class="bc-desc">Comment fonctionne le tirage tarot oui non. Les cartes positives et n&eacute;gatives d&eacute;crypt&eacute;es.</div>
+    <div class="bc-title">Voyance argent et finances : les cartes et la prospérité</div>
+    <div class="bc-desc">Blocages financiers, opportunités, numérologie de l'abondance.</div>
     <div class="bc-foot">
-      <span class="bc-meta">14 Avr 2026 &middot; 5 min</span>
-      <span class="bc-read">Lire &rarr;</span>
+      <span class="bc-meta">24 Avr 2026 · 6 min</span>
+      <span class="bc-read">Lire →</span>
     </div>
   </div>
-</a></div>
-<footer><div class="ft"><div><span class="fl2">Auryel</span><p class="ftag">10 conseillers disponibles<br>24h/24 pour vous guider.</p></div><div><span class="fct">Navigation</span><ul class="fli"><li><a href="index.html">Accueil</a></li><li><a href="conseillers.html">Conseillers</a></li><li><a href="tarifs.html">Tarifs</a></li><li><a href="blog.html">Blog</a></li></ul></div><div><span class="fct">Legal</span><ul class="fli"><li><a href="mentions-legales.html">Mentions legales</a></li><li><a href="cgu.html">CGU</a></li><li><a href="cgv.html">CGV</a></li><li><a href="confidentialite.html">Confidentialite</a></li></ul></div><div><span class="fct">Contact</span><ul class="fli"><li><a href="mailto:contact@auryel.com">contact@auryel.com</a></li></ul></div></div><div class="fb2"><div class="fcp">&copy; 2026 Auryel Inc.</div><div class="fdi">Les consultations sont fournies a titre de guidance personnelle.</div></div></footer><div class="ck-bar" id="ck-bar"><div class="ck-txt">Cookies. <a href="cookies.html">En savoir plus</a>.</div><div class="ck-btns"><button class="ck-no" onclick="hC()">Refuser</button><button class="ck-ok" onclick="hC()">Accepter</button></div></div><script>var cur=document.getElementById("cur");if(cur)document.addEventListener("mousemove",function(e){cur.style.left=e.clientX+"px";cur.style.top=e.clientY+"px"});window.addEventListener("scroll",function(){var n=document.getElementById("nav");if(n)n.classList.toggle("sc",window.scrollY>60)});setTimeout(function(){if(!localStorage.getItem("ck")){var b=document.getElementById("ck-bar");if(b)b.classList.add("show")}},2000);function hC(){localStorage.setItem("ck","1");var b=document.getElementById("ck-bar");if(b)b.classList.remove("show")}function filterCat(cat){document.querySelectorAll(".bc").forEach(function(c){c.style.display=(cat==="all"||c.getAttribute("data-cat")===cat)?"flex":"none"});document.querySelectorAll(".cat-btn").forEach(function(b){b.classList.toggle("active",b.getAttribute("data-cat")===cat)})}document.addEventListener("DOMContentLoaded",function(){var io=new IntersectionObserver(function(e){e.forEach(function(x){if(x.isIntersecting){x.target.style.opacity="1";x.target.style.transform="translateY(0)"}})},{threshold:.05});document.querySelectorAll(".bc").forEach(function(el){el.style.opacity="0";el.style.transform="translateY(20px)";el.style.transition="opacity .6s ease,transform .6s ease";io.observe(el)})})</script>
+</a>
+<a href="que-signifie-rever-de-mort.html" class="bc bc-small" data-cat="spiritualite">
+  <div class="bc-img">
+    <img src="https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?auto=format&fit=crop&w=600&h=180&q=70"
+         alt="Que signifie rêver de mort ? Interprétation complète" loading="lazy"
+         style="position:absolute;inset:0;width:100%;height:100%;object-fit:cover;opacity:.45;filter:saturate(.7)">
+    <div class="bc-bg" style="background:radial-gradient(ellipse at 40% 60%,#0A0F2E 0%,rgba(5,4,10,.7) 100%);position:absolute;inset:0;mix-blend-mode:multiply"></div>
+    <div class="bc-circle bc-c1"></div>
+    <div class="bc-circle bc-c2"></div>
+    <div class="bc-symbol" style="font-size:80px;position:relative;z-index:1">☽</div>
+    <div class="bc-cat-pill">Spiritualité</div>
+  </div>
+  <div class="bc-body">
+    <div class="bc-title">Que signifie rêver de mort ? Interprétation complète</div>
+    <div class="bc-desc">Un symbole de transformation, pas de mauvais présage.</div>
+    <div class="bc-foot">
+      <span class="bc-meta">24 Avr 2026 · 5 min</span>
+      <span class="bc-read">Lire →</span>
+    </div>
+  </div>
+</a>
+<a href="tarot-de-marseille-en-ligne.html" class="bc bc-small" data-cat="tarot">
+  <div class="bc-img">
+    <img src="https://images.unsplash.com/photo-1572478570012-c4e6e5b3d7e2?auto=format&fit=crop&w=600&h=180&q=70"
+         alt="Tarot de Marseille en ligne : les 22 arcanes" loading="lazy"
+         style="position:absolute;inset:0;width:100%;height:100%;object-fit:cover;opacity:.45;filter:saturate(.7)">
+    <div class="bc-bg" style="background:radial-gradient(ellipse at 40% 60%,#2A0A4E 0%,rgba(5,4,10,.7) 100%);position:absolute;inset:0;mix-blend-mode:multiply"></div>
+    <div class="bc-circle bc-c1"></div>
+    <div class="bc-circle bc-c2"></div>
+    <div class="bc-symbol" style="font-size:80px;position:relative;z-index:1">♦</div>
+    <div class="bc-cat-pill">Tarot</div>
+  </div>
+  <div class="bc-body">
+    <div class="bc-title">Tarot de Marseille en ligne : les 22 arcanes</div>
+    <div class="bc-desc">Guide complet des arcanes majeurs et leur signification.</div>
+    <div class="bc-foot">
+      <span class="bc-meta">24 Avr 2026 · 7 min</span>
+      <span class="bc-read">Lire →</span>
+    </div>
+  </div>
+</a>
+<a href="pierre-de-protection-esoterisme.html" class="bc bc-small" data-cat="spiritualite">
+  <div class="bc-img">
+    <img src="https://images.unsplash.com/photo-1518241353330-0f7941c2d9b5?auto=format&fit=crop&w=600&h=180&q=70"
+         alt="Pierres de protection : choisir la bonne pierre" loading="lazy"
+         style="position:absolute;inset:0;width:100%;height:100%;object-fit:cover;opacity:.45;filter:saturate(.7)">
+    <div class="bc-bg" style="background:radial-gradient(ellipse at 40% 60%,#0A0F2E 0%,rgba(5,4,10,.7) 100%);position:absolute;inset:0;mix-blend-mode:multiply"></div>
+    <div class="bc-circle bc-c1"></div>
+    <div class="bc-circle bc-c2"></div>
+    <div class="bc-symbol" style="font-size:80px;position:relative;z-index:1">☽</div>
+    <div class="bc-cat-pill">Spiritualité</div>
+  </div>
+  <div class="bc-body">
+    <div class="bc-title">Pierres de protection : choisir la bonne pierre</div>
+    <div class="bc-desc">Obsidienne, tourmaline noire, labradorite — guide complet.</div>
+    <div class="bc-foot">
+      <span class="bc-meta">24 Avr 2026 · 6 min</span>
+      <span class="bc-read">Lire →</span>
+    </div>
+  </div>
+</a>
+<a href="voyance-par-chat-sans-attente.html" class="bc bc-small" data-cat="guide">
+  <div class="bc-img">
+    <img src="https://images.unsplash.com/photo-1516321318423-f06f85e504b3?auto=format&fit=crop&w=600&h=180&q=70"
+         alt="Voyance par chat sans attente ni inscription" loading="lazy"
+         style="position:absolute;inset:0;width:100%;height:100%;object-fit:cover;opacity:.45;filter:saturate(.7)">
+    <div class="bc-bg" style="background:radial-gradient(ellipse at 40% 60%,#0A1A3A 0%,rgba(5,4,10,.7) 100%);position:absolute;inset:0;mix-blend-mode:multiply"></div>
+    <div class="bc-circle bc-c1"></div>
+    <div class="bc-circle bc-c2"></div>
+    <div class="bc-symbol" style="font-size:80px;position:relative;z-index:1">✦</div>
+    <div class="bc-cat-pill">Guide</div>
+  </div>
+  <div class="bc-body">
+    <div class="bc-title">Voyance par chat sans attente ni inscription</div>
+    <div class="bc-desc">Consulter un médium en temps réel, à toute heure.</div>
+    <div class="bc-foot">
+      <span class="bc-meta">24 Avr 2026 · 5 min</span>
+      <span class="bc-read">Lire →</span>
+    </div>
+  </div>
+</a>
+<a href="previsions-astrologiques-2026.html" class="bc bc-small" data-cat="astrologie">
+  <div class="bc-img">
+    <img src="https://images.unsplash.com/photo-1534796636912-3b95b3ab5986?auto=format&fit=crop&w=600&h=180&q=70"
+         alt="Prévisions astrologiques 2026 signe par signe" loading="lazy"
+         style="position:absolute;inset:0;width:100%;height:100%;object-fit:cover;opacity:.45;filter:saturate(.7)">
+    <div class="bc-bg" style="background:radial-gradient(ellipse at 40% 60%,#0A0A2E 0%,rgba(5,4,10,.7) 100%);position:absolute;inset:0;mix-blend-mode:multiply"></div>
+    <div class="bc-circle bc-c1"></div>
+    <div class="bc-circle bc-c2"></div>
+    <div class="bc-symbol" style="font-size:80px;position:relative;z-index:1">★</div>
+    <div class="bc-cat-pill">Astrologie</div>
+  </div>
+  <div class="bc-body">
+    <div class="bc-title">Prévisions astrologiques 2026 signe par signe</div>
+    <div class="bc-desc">Jupiter, Saturne, Pluton — ce que les astres préparent.</div>
+    <div class="bc-foot">
+      <span class="bc-meta">24 Avr 2026 · 7 min</span>
+      <span class="bc-read">Lire →</span>
+    </div>
+  </div>
+</a>
+<a href="calcul-numerologie-prenom.html" class="bc bc-small" data-cat="numerologie">
+  <div class="bc-img">
+    <img src="https://images.unsplash.com/photo-1509228468518-180dd4864904?auto=format&fit=crop&w=600&h=180&q=70"
+         alt="Numérologie du prénom : ce qu'il révèle de vous" loading="lazy"
+         style="position:absolute;inset:0;width:100%;height:100%;object-fit:cover;opacity:.45;filter:saturate(.7)">
+    <div class="bc-bg" style="background:radial-gradient(ellipse at 40% 60%,#2A1A0A 0%,rgba(5,4,10,.7) 100%);position:absolute;inset:0;mix-blend-mode:multiply"></div>
+    <div class="bc-circle bc-c1"></div>
+    <div class="bc-circle bc-c2"></div>
+    <div class="bc-symbol" style="font-size:80px;position:relative;z-index:1">∞</div>
+    <div class="bc-cat-pill">Numérologie</div>
+  </div>
+  <div class="bc-body">
+    <div class="bc-title">Numérologie du prénom : ce qu'il révèle de vous</div>
+    <div class="bc-desc">Calcul du nombre actif, d'expression et intime.</div>
+    <div class="bc-foot">
+      <span class="bc-meta">24 Avr 2026 · 6 min</span>
+      <span class="bc-read">Lire →</span>
+    </div>
+  </div>
+</a>
+<a href="ascendant-astrologique.html" class="bc bc-small" data-cat="astrologie">
+  <div class="bc-img">
+    <img src="https://images.unsplash.com/photo-1502134249126-9f3755a50d78?auto=format&fit=crop&w=600&h=180&q=70"
+         alt="Ascendant astrologique : plus révélateur que votre signe" loading="lazy"
+         style="position:absolute;inset:0;width:100%;height:100%;object-fit:cover;opacity:.45;filter:saturate(.7)">
+    <div class="bc-bg" style="background:radial-gradient(ellipse at 40% 60%,#0A0A2E 0%,rgba(5,4,10,.7) 100%);position:absolute;inset:0;mix-blend-mode:multiply"></div>
+    <div class="bc-circle bc-c1"></div>
+    <div class="bc-circle bc-c2"></div>
+    <div class="bc-symbol" style="font-size:80px;position:relative;z-index:1">★</div>
+    <div class="bc-cat-pill">Astrologie</div>
+  </div>
+  <div class="bc-body">
+    <div class="bc-title">Ascendant astrologique : plus révélateur que votre signe</div>
+    <div class="bc-desc">Comment le calculer et ce qu'il révèle vraiment.</div>
+    <div class="bc-foot">
+      <span class="bc-meta">24 Avr 2026 · 6 min</span>
+      <span class="bc-read">Lire →</span>
+    </div>
+  </div>
+</a>
+<a href="interpretation-reves-symbolique.html" class="bc bc-small" data-cat="spiritualite">
+  <div class="bc-img">
+    <img src="https://images.unsplash.com/photo-1518020382113-a7e8fc38eac9?auto=format&fit=crop&w=600&h=180&q=70"
+         alt="Interprétation des rêves : décoder vos nuits" loading="lazy"
+         style="position:absolute;inset:0;width:100%;height:100%;object-fit:cover;opacity:.45;filter:saturate(.7)">
+    <div class="bc-bg" style="background:radial-gradient(ellipse at 40% 60%,#0A0F2E 0%,rgba(5,4,10,.7) 100%);position:absolute;inset:0;mix-blend-mode:multiply"></div>
+    <div class="bc-circle bc-c1"></div>
+    <div class="bc-circle bc-c2"></div>
+    <div class="bc-symbol" style="font-size:80px;position:relative;z-index:1">☽</div>
+    <div class="bc-cat-pill">Spiritualité</div>
+  </div>
+  <div class="bc-body">
+    <div class="bc-title">Interprétation des rêves : décoder vos nuits</div>
+    <div class="bc-desc">Eau, maison, serpent, vol — guide de symbolique onirique.</div>
+    <div class="bc-foot">
+      <span class="bc-meta">24 Avr 2026 · 6 min</span>
+      <span class="bc-read">Lire →</span>
+    </div>
+  </div>
+</a>
+<a href="theme-astral-gratuit.html" class="bc bc-small" data-cat="astrologie">
+  <div class="bc-img">
+    <img src="https://images.unsplash.com/photo-1465101162946-4377e57745c3?auto=format&fit=crop&w=600&h=180&q=70"
+         alt="Thème astral : comprendre votre carte natale" loading="lazy"
+         style="position:absolute;inset:0;width:100%;height:100%;object-fit:cover;opacity:.45;filter:saturate(.7)">
+    <div class="bc-bg" style="background:radial-gradient(ellipse at 40% 60%,#0A0A2E 0%,rgba(5,4,10,.7) 100%);position:absolute;inset:0;mix-blend-mode:multiply"></div>
+    <div class="bc-circle bc-c1"></div>
+    <div class="bc-circle bc-c2"></div>
+    <div class="bc-symbol" style="font-size:80px;position:relative;z-index:1">★</div>
+    <div class="bc-cat-pill">Astrologie</div>
+  </div>
+  <div class="bc-body">
+    <div class="bc-title">Thème astral : comprendre votre carte natale</div>
+    <div class="bc-desc">Soleil, Lune, maisons — tout ce que contient votre thème.</div>
+    <div class="bc-foot">
+      <span class="bc-meta">24 Avr 2026 · 7 min</span>
+      <span class="bc-read">Lire →</span>
+    </div>
+  </div>
+</a>
+<a href="medium-gratuit-premiere-consultation.html" class="bc bc-small" data-cat="guide">
+  <div class="bc-img">
+    <img src="https://images.unsplash.com/photo-1560807707-8cc77767d783?auto=format&fit=crop&w=600&h=180&q=70"
+         alt="Médium gratuit : à quoi s'attendre vraiment" loading="lazy"
+         style="position:absolute;inset:0;width:100%;height:100%;object-fit:cover;opacity:.45;filter:saturate(.7)">
+    <div class="bc-bg" style="background:radial-gradient(ellipse at 40% 60%,#0A1A3A 0%,rgba(5,4,10,.7) 100%);position:absolute;inset:0;mix-blend-mode:multiply"></div>
+    <div class="bc-circle bc-c1"></div>
+    <div class="bc-circle bc-c2"></div>
+    <div class="bc-symbol" style="font-size:80px;position:relative;z-index:1">✦</div>
+    <div class="bc-cat-pill">Guide</div>
+  </div>
+  <div class="bc-body">
+    <div class="bc-title">Médium gratuit : à quoi s'attendre vraiment</div>
+    <div class="bc-desc">Ce qui est inclus, les pièges à éviter, comment bien consulter.</div>
+    <div class="bc-foot">
+      <span class="bc-meta">24 Avr 2026 · 5 min</span>
+      <span class="bc-read">Lire →</span>
+    </div>
+  </div>
+</a>
+<a href="signification-des-lames-du-tarot.html" class="bc bc-small" data-cat="tarot">
+  <div class="bc-img">
+    <img src="https://images.unsplash.com/photo-1605648916361-9bc12ad6a569?auto=format&fit=crop&w=600&h=180&q=70"
+         alt="Signification des 22 lames du tarot de Marseille" loading="lazy"
+         style="position:absolute;inset:0;width:100%;height:100%;object-fit:cover;opacity:.45;filter:saturate(.7)">
+    <div class="bc-bg" style="background:radial-gradient(ellipse at 40% 60%,#2A0A4E 0%,rgba(5,4,10,.7) 100%);position:absolute;inset:0;mix-blend-mode:multiply"></div>
+    <div class="bc-circle bc-c1"></div>
+    <div class="bc-circle bc-c2"></div>
+    <div class="bc-symbol" style="font-size:80px;position:relative;z-index:1">♦</div>
+    <div class="bc-cat-pill">Tarot</div>
+  </div>
+  <div class="bc-body">
+    <div class="bc-title">Signification des 22 lames du tarot de Marseille</div>
+    <div class="bc-desc">Les arcanes majeurs expliqués de 0 (Le Mat) à 21 (Le Monde).</div>
+    <div class="bc-foot">
+      <span class="bc-meta">24 Avr 2026 · 7 min</span>
+      <span class="bc-read">Lire →</span>
+    </div>
+  </div>
+</a>
+<a href="voyance-tchat-en-ligne.html" class="bc bc-small" data-cat="guide">
+  <div class="bc-img">
+    <img src="https://images.unsplash.com/photo-1611532736597-de2d4265fba3?auto=format&fit=crop&w=600&h=180&q=70"
+         alt="Voyance tchat en ligne : guide complet" loading="lazy"
+         style="position:absolute;inset:0;width:100%;height:100%;object-fit:cover;opacity:.45;filter:saturate(.7)">
+    <div class="bc-bg" style="background:radial-gradient(ellipse at 40% 60%,#0A1A3A 0%,rgba(5,4,10,.7) 100%);position:absolute;inset:0;mix-blend-mode:multiply"></div>
+    <div class="bc-circle bc-c1"></div>
+    <div class="bc-circle bc-c2"></div>
+    <div class="bc-symbol" style="font-size:80px;position:relative;z-index:1">✦</div>
+    <div class="bc-cat-pill">Guide</div>
+  </div>
+  <div class="bc-body">
+    <div class="bc-title">Voyance tchat en ligne : guide complet</div>
+    <div class="bc-desc">Tarifs, plateformes, conseils pour bien consulter par messagerie.</div>
+    <div class="bc-foot">
+      <span class="bc-meta">24 Avr 2026 · 5 min</span>
+      <span class="bc-read">Lire →</span>
+    </div>
+  </div>
+</a>
+<a href="chakras-et-energie.html" class="bc bc-small" data-cat="spiritualite">
+  <div class="bc-img">
+    <img src="https://images.unsplash.com/photo-1506126613408-eca07ce68773?auto=format&fit=crop&w=600&h=180&q=70"
+         alt="Chakras et énergie : les 7 centres énergétiques" loading="lazy"
+         style="position:absolute;inset:0;width:100%;height:100%;object-fit:cover;opacity:.45;filter:saturate(.7)">
+    <div class="bc-bg" style="background:radial-gradient(ellipse at 40% 60%,#0A0F2E 0%,rgba(5,4,10,.7) 100%);position:absolute;inset:0;mix-blend-mode:multiply"></div>
+    <div class="bc-circle bc-c1"></div>
+    <div class="bc-circle bc-c2"></div>
+    <div class="bc-symbol" style="font-size:80px;position:relative;z-index:1">☽</div>
+    <div class="bc-cat-pill">Spiritualité</div>
+  </div>
+  <div class="bc-body">
+    <div class="bc-title">Chakras et énergie : les 7 centres énergétiques</div>
+    <div class="bc-desc">Localisation, blocages, pierres et pratiques pour rééquilibrer.</div>
+    <div class="bc-foot">
+      <span class="bc-meta">24 Avr 2026 · 6 min</span>
+      <span class="bc-read">Lire →</span>
+    </div>
+  </div>
+</a>
+<a href="voyance-amour-gratuite.html" class="bc bc-small" data-cat="amour">
+  <div class="bc-img">
+    <img src="https://images.unsplash.com/photo-1518199266791-5375a83190b7?auto=format&fit=crop&w=600&h=180&q=70"
+         alt="Voyance amour gratuite : explorer votre vie sentimentale" loading="lazy"
+         style="position:absolute;inset:0;width:100%;height:100%;object-fit:cover;opacity:.45;filter:saturate(.7)">
+    <div class="bc-bg" style="background:radial-gradient(ellipse at 40% 60%,#3A0A1A 0%,rgba(5,4,10,.7) 100%);position:absolute;inset:0;mix-blend-mode:multiply"></div>
+    <div class="bc-circle bc-c1"></div>
+    <div class="bc-circle bc-c2"></div>
+    <div class="bc-symbol" style="font-size:80px;position:relative;z-index:1">♥</div>
+    <div class="bc-cat-pill">Amour</div>
+  </div>
+  <div class="bc-body">
+    <div class="bc-title">Voyance amour gratuite : explorer votre vie sentimentale</div>
+    <div class="bc-desc">Tirages, compatibilité, questions à poser — guide pratique.</div>
+    <div class="bc-foot">
+      <span class="bc-meta">24 Avr 2026 · 6 min</span>
+      <span class="bc-read">Lire →</span>
+    </div>
+  </div>
+</a>
+<a href="reves-et-leur-signification.html" class="bc bc-small" data-cat="spiritualite">
+  <div class="bc-img">
+    <img src="https://images.unsplash.com/photo-1455390582262-044cdead277a?auto=format&fit=crop&w=600&h=180&q=70"
+         alt="Rêves et signification : messages de l'inconscient" loading="lazy"
+         style="position:absolute;inset:0;width:100%;height:100%;object-fit:cover;opacity:.45;filter:saturate(.7)">
+    <div class="bc-bg" style="background:radial-gradient(ellipse at 40% 60%,#0A0F2E 0%,rgba(5,4,10,.7) 100%);position:absolute;inset:0;mix-blend-mode:multiply"></div>
+    <div class="bc-circle bc-c1"></div>
+    <div class="bc-circle bc-c2"></div>
+    <div class="bc-symbol" style="font-size:80px;position:relative;z-index:1">☽</div>
+    <div class="bc-cat-pill">Spiritualité</div>
+  </div>
+  <div class="bc-body">
+    <div class="bc-title">Rêves et signification : messages de l'inconscient</div>
+    <div class="bc-desc">Symboles récurrents, rêves prémonitoires, journal des rêves.</div>
+    <div class="bc-foot">
+      <span class="bc-meta">24 Avr 2026 · 6 min</span>
+      <span class="bc-read">Lire →</span>
+    </div>
+  </div>
+</a>
+</div>
+
+<footer><div class="ft"><div><span class="fl2">Auryel</span><p class="ftag">10 conseillers disponibles<br>24h/24 pour vous guider.</p></div><div><span class="fct">Navigation</span><ul class="fli"><li><a href="index.html">Accueil</a></li><li><a href="conseillers.html">Conseillers</a></li><li><a href="tarifs.html">Tarifs</a></li><li><a href="blog.html">Blog</a></li></ul></div><div><span class="fct">Legal</span><ul class="fli"><li><a href="mentions-legales.html">Mentions légales</a></li><li><a href="cgu.html">CGU</a></li><li><a href="cgv.html">CGV</a></li><li><a href="confidentialite.html">Confidentialité</a></li></ul></div><div><span class="fct">Contact</span><ul class="fli"><li><a href="mailto:contact@auryel.com">contact@auryel.com</a></li></ul></div></div><div class="fb2"><div class="fcp">&copy; 2026 Auryel Inc.</div><div class="fdi">Les consultations sont fournies à titre de guidance personnelle. ⚠️ Service de divertissement uniquement.</div></div></footer>
+<div class="ck-bar" id="ck-bar"><div class="ck-txt">Nous utilisons des cookies pour améliorer votre expérience. <a href="cookies.html">En savoir plus</a>.</div><div class="ck-btns"><button class="ck-no" onclick="hC()">Refuser</button><button class="ck-ok" onclick="hC()">Accepter</button></div></div>
+<script>
+var cur=document.getElementById("cur");
+if(cur)document.addEventListener("mousemove",function(e){cur.style.left=e.clientX+"px";cur.style.top=e.clientY+"px"});
+window.addEventListener("scroll",function(){var n=document.getElementById("nav");if(n)n.classList.toggle("sc",window.scrollY>60)});
+setTimeout(function(){if(!localStorage.getItem("ck")){var b=document.getElementById("ck-bar");if(b)b.classList.add("show")}},2000);
+function hC(){localStorage.setItem("ck","1");var b=document.getElementById("ck-bar");if(b)b.classList.remove("show")}
+function filterCat(cat){
+  document.querySelectorAll(".bc").forEach(function(c){c.style.display=(cat==="all"||c.getAttribute("data-cat")===cat)?"flex":"none"});
+  document.querySelectorAll(".cat-btn").forEach(function(b){b.classList.toggle("active",b.getAttribute("data-cat")===cat)});
+}
+document.addEventListener("DOMContentLoaded",function(){
+  var io=new IntersectionObserver(function(e){e.forEach(function(x){if(x.isIntersecting){x.target.style.opacity="1";x.target.style.transform="translateY(0)"}})},{threshold:.05});
+  document.querySelectorAll(".bc").forEach(function(el){el.style.opacity="0";el.style.transform="translateY(20px)";el.style.transition="opacity .6s ease,transform .6s ease";io.observe(el)});
+});
+</script>
 </body></html>
