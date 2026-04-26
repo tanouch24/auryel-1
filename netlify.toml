@@ -1,0 +1,28 @@
+# Netlify déploie uniquement les fichiers HTML/CSS/JS
+# Le fichier auryel_bot.py est ignoré par Netlify (c'est pour Railway)
+
+[build]
+  publish = "."
+
+[[headers]]
+  for = "/*"
+  [headers.values]
+    X-Frame-Options = "DENY"
+    X-XSS-Protection = "1; mode=block"
+    X-Content-Type-Options = "nosniff"
+
+# Ignorer les fichiers Python côté Netlify
+[[redirects]]
+  from = "/auryel_bot.py"
+  to = "/404"
+  status = 404
+
+[[redirects]]
+  from = "/requirements.txt"
+  to = "/404"
+  status = 404
+
+[[redirects]]
+  from = "/Procfile"
+  to = "/404"
+  status = 404
