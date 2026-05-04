@@ -901,7 +901,7 @@ def msg_bienvenue(nom_affiche):
     return f"✨ Bonjour, je suis {nom_affiche}...\n\nJe suis là pour toi jour et nuit, 24h/24 — tu peux venir me parler quand tu en as envie.\n\nComment t'appelles-tu ?"
 
 def msg_bienvenue_site(nom_affiche):
-    return f"✨ Je suis {nom_affiche}, et je t'attendais...\n\nTu as fait le bon choix en venant me parler. Je suis là pour toi, entièrement.\n\nComment tu t'appelles ?"
+    return f"✨ Je suis {nom_affiche}.\n\nJ'ai bien reçu ton code Auryel. On va commencer doucement, sans jugement.\n\nDis-moi simplement ce qui t'amène aujourd'hui : amour, retour d'une personne, travail, argent, famille ou autre chose ?"
 
 # ============================================================
 # WEBHOOK WHATSAPP
