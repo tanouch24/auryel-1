@@ -33,9 +33,9 @@ if _missing_env:
 
 
 PRICES = {
-    "mensuel":    "price_1TP1bbRs93gJ2Bf6zOODCcxn",
-    "semestriel": "price_1TP1dBRs93gJ2Bf6Cpho7O3A",
-    "annuel":     "price_1TP1eLRs93gJ2Bf6VTua1xiy",
+    "mensuel":    "price_1TTSbxFbuWJZYdVOmXGm6Fzg",
+    "semestriel": "price_1TTScJFbuWJZYdVOxU3fQLFj",
+    "annuel":     "price_1TTSdQFbuWJZYdVOinbs7aI3",
 }
 
 stripe.api_key = STRIPE_SK
