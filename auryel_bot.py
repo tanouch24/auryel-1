@@ -7,11 +7,7 @@ from groq import Groq
 app = Flask(__name__)
 app.secret_key = os.environ.get("SECRET_KEY")
 
-CORS(app, resources={r"/stripe/*": {"origins": [
-    "https://www.auryelvoyance.com",
-    "https://auryel.fr",
-    "https://auryel-1.netlify.app"   # ← retirer en prod une fois domaine connecté
-]}})
+CORS(app, resources={r"/stripe/*": {"origins": ["https://www.auryelvoyance.com"]}})
 
 WHATSAPP_TOKEN  = os.environ.get("WHATSAPP_TOKEN")
 PHONE_NUMBER_ID = os.environ.get("PHONE_NUMBER_ID")
@@ -25,6 +21,16 @@ RESEND_API_KEY  = os.environ.get("RESEND_API_KEY")
 FROM_EMAIL      = "contact@auryelvoyance.com"
 SITE_URL        = "https://www.auryelvoyance.com"
 CRON_SECRET     = os.environ.get("CRON_SECRET")
+# ── Vérification variables au démarrage ────────────────────
+_REQUIRED_ENV = [
+    "SECRET_KEY", "VERIFY_TOKEN", "ADMIN_PASSWORD", "CRON_SECRET",
+    "DATABASE_URL", "STRIPE_SK", "STRIPE_WEBHOOK_SECRET",
+    "WHATSAPP_TOKEN", "PHONE_NUMBER_ID", "GROQ_API_KEY", "RESEND_API_KEY"
+]
+_missing_env = [v for v in _REQUIRED_ENV if not os.environ.get(v)]
+if _missing_env:
+    raise RuntimeError(f"Variables manquantes : {', '.join(_missing_env)}")
+
 
 PRICES = {
     "mensuel":    "price_1TP1bbRs93gJ2Bf6zOODCcxn",
@@ -1135,7 +1141,10 @@ def create_checkout():
         if not data:
             return jsonify({"error": "Body JSON manquant"}), 400
 
-        price_id    = data.get("priceId")
+        plan        = data.get("plan")
+        price_id    = PRICES.get(plan)
+        if not price_id:
+            return jsonify({"error": "Plan invalide. Valeurs acceptées : mensuel, semestriel, annuel"}), 400
         success_url = data.get("successUrl")
         cancel_url  = data.get("cancelUrl")
         trial_days  = int(data.get("trialDays", 7))
@@ -1143,7 +1152,7 @@ def create_checkout():
         email       = data.get("email")
         phone       = data.get("phone")
 
-        if not price_id or not success_url or not cancel_url:
+        if not success_url or not cancel_url:
             return jsonify({"error": "Paramètres manquants"}), 400
         if not phone:
             return jsonify({"error": "Numéro WhatsApp requis"}), 400
