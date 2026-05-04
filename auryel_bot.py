@@ -1809,7 +1809,7 @@ def build_sitemap(extra_urls):
 
 
 def ping_indexnow(url):
-    key = "os.environ.get("INDEXNOW_KEY", "")"
+    key = os.environ.get("INDEXNOW_KEY", "")
     payload = {"host": "www.auryelvoyance.com", "key": key, "urlList": [url]}
     for endpoint in ["https://api.indexnow.org/indexnow", "https://www.bing.com/indexnow"]:
         try:
