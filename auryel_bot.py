@@ -888,6 +888,13 @@ def get_reply(phone, user_message, guide, depuis_pub=False):
         max_tokens=180, temperature=0.92
     )
     reply = response.choices[0].message.content
+    # ===== TRIGGER CONVERSION =====
+    user_after = get_user(phone)
+    if user_after and user_after.get("nb_echanges", 0) >= 3 and user_after.get("etat") == "normal":
+        if random.random() < 0.35:
+            links = get_stripe_links(phone)
+            reply += "\n\n✨ Je ressens qu’on pourrait aller plus loin ensemble…\nJe peux vraiment t’accompagner plus en profondeur.\n\nSi tu veux continuer avec moi :\n" + links.get("mensuel","")
+
     add_message(phone, "assistant", reply)
     return reply
 
