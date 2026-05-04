@@ -263,7 +263,10 @@ def get_jours_absence(phone):
     dernier = datetime.fromisoformat(user["date_dernier_contact"])
     return (datetime.now() - dernier).days
 
-init_db()
+try:
+    init_db()
+except Exception as e:
+    print(f"[init_db] Warning: {e}")
 
 # ============================================================
 # 150 PSAUMES
