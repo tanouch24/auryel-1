@@ -5,10 +5,10 @@ from flask_cors import CORS
 from groq import Groq
 
 app = Flask(__name__)
-app.secret_key = os.environ.get("SECRET_KEY", "auryel_secret_2026_xK9m")
+app.secret_key = os.environ.get("SECRET_KEY")
 
 CORS(app, resources={r"/stripe/*": {"origins": [
-    "https://auryel.com",
+    "https://www.auryelvoyance.com",
     "https://auryel.fr",
     "https://auryel-1.netlify.app"   # ← retirer en prod une fois domaine connecté
 ]}})
@@ -16,15 +16,15 @@ CORS(app, resources={r"/stripe/*": {"origins": [
 WHATSAPP_TOKEN  = os.environ.get("WHATSAPP_TOKEN")
 PHONE_NUMBER_ID = os.environ.get("PHONE_NUMBER_ID")
 GROQ_API_KEY    = os.environ.get("GROQ_API_KEY")
-VERIFY_TOKEN    = os.environ.get("VERIFY_TOKEN", "auryel_webhook_2025")
-ADMIN_PASSWORD  = os.environ.get("ADMIN_PASSWORD", "auryel2026")
+VERIFY_TOKEN    = os.environ.get("VERIFY_TOKEN")
+ADMIN_PASSWORD  = os.environ.get("ADMIN_PASSWORD")
 DATABASE_URL    = os.environ.get("DATABASE_URL")
 STRIPE_SK       = os.environ.get("STRIPE_SK")
 STRIPE_WEBHOOK  = os.environ.get("STRIPE_WEBHOOK_SECRET")
 RESEND_API_KEY  = os.environ.get("RESEND_API_KEY")
-FROM_EMAIL      = "contact@auryel.com"
-SITE_URL        = "https://auryel.com"
-CRON_SECRET     = os.environ.get("CRON_SECRET", "auryel_cron_2026")
+FROM_EMAIL      = "contact@auryelvoyance.com"
+SITE_URL        = "https://www.auryelvoyance.com"
+CRON_SECRET     = os.environ.get("CRON_SECRET")
 
 PRICES = {
     "mensuel":    "price_1TP1bbRs93gJ2Bf6zOODCcxn",
@@ -1160,7 +1160,7 @@ def create_checkout():
             custom_text={
                 "terms_of_service_acceptance": {
                     "message": (
-                        "En continuant, vous acceptez les [CGV](https://auryel.com/cgv.html). "
+                        "En continuant, vous acceptez les [CGV](https://www.auryelvoyance.com/cgv.html). "
                         "7 jours gratuits, puis renouvellement automatique. "
                         "Annulable à tout moment avant la fin de l'essai."
                     ),
@@ -1553,7 +1553,7 @@ if __name__ == "__main__":
 
 GITHUB_TOKEN = os.environ.get("GITHUB_TOKEN")
 GITHUB_REPO  = os.environ.get("GITHUB_REPO", "tanouch24/auryel-1")
-SITE_BASE    = "https://auryel.com"
+SITE_BASE    = "https://www.auryelvoyance.com"
 
 SEO_KEYWORDS = [
     {"slug":"voyance-gratuite-sans-cb",       "kw":"voyance gratuite sans cb",            "cat":"guide",       "cat_label":"Guide"},
@@ -1800,8 +1800,8 @@ def build_sitemap(extra_urls):
 
 
 def ping_indexnow(url):
-    key = "auryel2026seo"
-    payload = {"host": "auryel.com", "key": key, "urlList": [url]}
+    key = "os.environ.get("INDEXNOW_KEY", "")"
+    payload = {"host": "www.auryelvoyance.com", "key": key, "urlList": [url]}
     for endpoint in ["https://api.indexnow.org/indexnow", "https://www.bing.com/indexnow"]:
         try:
             requests.post(endpoint, json=payload, timeout=5)
@@ -1817,7 +1817,7 @@ def send_seo_recap_email(title, kw, article_url):
         resend.api_key = RESEND_API_KEY
         resend.Emails.send({
             "from": f"Auryel SEO <{FROM_EMAIL}>",
-            "to": ["contact@auryel.com"],
+            "to": ["contact@auryelvoyance.com"],
             "subject": f"✅ Article SEO publié : {title}",
             "html": f"""<html><body style="background:#05040A;color:#F0EBE0;font-family:Georgia,serif;padding:40px">
 <h2 style="color:#C8A96E">✅ Article publié automatiquement</h2>
