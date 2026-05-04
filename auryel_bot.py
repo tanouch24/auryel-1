@@ -1351,6 +1351,8 @@ def admin_dashboard():
           </div>
         </div>"""
 
+    users_table_html = "<div class='empty'>Aucun utilisateur</div>" if not users else "<table><thead><tr><th></th><th>Utilisateur</th><th>Conseiller</th><th>Messages</th><th>Dernier contact</th><th>Statut</th></tr></thead><tbody>" + rows_html + "</tbody></table>"
+
     return f"""<!DOCTYPE html><html><head><title>Auryel Admin</title><meta name='viewport' content='width=device-width,initial-scale=1'>
 <link href='https://fonts.googleapis.com/css2?family=Cormorant+Garamond:wght@400;600&family=DM+Sans:wght@300;400;500&display=swap' rel='stylesheet'>
 <style>
@@ -1416,9 +1418,7 @@ tr:hover td{{background:rgba(212,168,67,0.05)}}tr:last-child td{{border-bottom:n
         <span class='card-title'>Conversations</span>
         <span style='font-size:11px;color:#8a7a6a'>📱 pub · 🌐 site</span>
       </div>
-      {"<div class='empty'>Aucun utilisateur</div>" if not users else f"""
-      <table><thead><tr><th></th><th>Utilisateur</th><th>Conseiller</th><th>Messages</th><th>Dernier contact</th><th>Statut</th></tr></thead>
-      <tbody>{rows_html}</tbody></table>"""}
+      {users_table_html}
     </div>
     <div>
       <div class='card'>
