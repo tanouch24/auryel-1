@@ -45,16 +45,16 @@ groq_client = Groq(api_key=GROQ_API_KEY)
 # CODES ACTIVATION DEPUIS LE SITE
 # ============================================================
 CODES_ACTIVATION = {
-    "AURYEL-SELENA":    ("séraphine", "Séléna"),
-    "AURYEL-LUNA":      ("naomi",     "Luna"),
-    "AURYEL-MAIA":      ("myriam",    "Maïa"),
-    "AURYEL-THEA":      ("séraphine", "Théa"),
-    "AURYEL-CASSANDRE": ("myriam",    "Cassandre"),
-    "AURYEL-MYRIAM":    ("myriam",    "Myriam"),
-    "AURYEL-ORION":     ("élias",     "Orion"),
-    "AURYEL-EZRA":      ("ezra",      "Ezra"),
-    "AURYEL-KAEL":      ("élias",     "Kaël"),
-    "AURYEL-RAPHAEL":   ("ezra",      "Raphaël"),
+    "AURYEL-SELENA":    ("Séraphine", "Séléna"),
+    "AURYEL-LUNA":      ("Naomi",     "Luna"),
+    "AURYEL-MAIA":      ("Myriam",    "Maïa"),
+    "AURYEL-THEA":      ("Séraphine", "Théa"),
+    "AURYEL-CASSANDRE": ("Myriam",    "Cassandre"),
+    "AURYEL-MYRIAM":    ("Myriam",    "Myriam"),
+    "AURYEL-ORION":     ("Élias",     "Orion"),
+    "AURYEL-EZRA":      ("Ezra",      "Ezra"),
+    "AURYEL-KAEL":      ("Élias",     "Kaël"),
+    "AURYEL-RAPHAEL":   ("Ezra",      "Raphaël"),
 }
 
 # ============================================================
@@ -100,7 +100,7 @@ def init_db():
             phone TEXT PRIMARY KEY,
             email TEXT DEFAULT '',
             prenom TEXT DEFAULT '',
-            guide TEXT DEFAULT 'séraphine',
+            guide TEXT DEFAULT 'Séraphine',
             nom_affiche TEXT DEFAULT '',
             nb_echanges INTEGER DEFAULT 0,
             dernier_outil TEXT DEFAULT '',
@@ -128,13 +128,25 @@ def init_db():
             timestamp TEXT
         )
     """)
-    # Migration : ajouter les nouveaux champs si la table existe déjà
+    # Migration v1
     try:
         c.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS dernier_relance_abonne_at TEXT DEFAULT ''")
         c.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS relance_abonne_count INTEGER DEFAULT 0")
         c.execute("ALTER TABLE users DROP COLUMN IF EXISTS relance_abonne_envoyee")
     except Exception as e:
-        print(f"Migration: {e}")
+        print(f"Migration v1: {e}")
+    # Migration v2 — contexte émotionnel
+    try:
+        c.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS prenoms_importants TEXT DEFAULT ''")
+        c.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS theme_dominant TEXT DEFAULT ''")
+        c.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS douleur_principale TEXT DEFAULT ''")
+        c.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS peur_dominante TEXT DEFAULT ''")
+        c.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS niveau_detresse INTEGER DEFAULT 0")
+        c.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS niveau_attachement INTEGER DEFAULT 0")
+        c.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS dernier_sujet_sensible TEXT DEFAULT ''")
+        c.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS derniere_intention TEXT DEFAULT ''")
+    except Exception as e:
+        print(f"Migration v2: {e}")
     conn.commit()
     conn.close()
 
@@ -154,7 +166,10 @@ def get_user(phone):
         date_premier_contact,date_dernier_contact,etat,abonne,date_abonnement,
         stripe_customer_id,relance_j6_envoyee,relance_j8_envoyee,
         dernier_relance_abonne_at,relance_abonne_count,
-        dernier_rituel_date,dernier_rituel_type,depuis_site FROM users WHERE phone=%s""", (phone,))
+        dernier_rituel_date,dernier_rituel_type,depuis_site,
+        prenoms_importants,theme_dominant,douleur_principale,peur_dominante,
+        niveau_detresse,niveau_attachement,dernier_sujet_sensible,derniere_intention
+        FROM users WHERE phone=%s""", (phone,))
     row = c.fetchone()
     conn.close()
     if row:
@@ -167,7 +182,11 @@ def get_user(phone):
             "relance_j8_envoyee":row[14],
             "dernier_relance_abonne_at":row[15],"relance_abonne_count":row[16],
             "dernier_rituel_date":row[17],"dernier_rituel_type":row[18],
-            "depuis_site":row[19]
+            "depuis_site":row[19],
+            "prenoms_importants":row[20] or "","theme_dominant":row[21] or "",
+            "douleur_principale":row[22] or "","peur_dominante":row[23] or "",
+            "niveau_detresse":row[24] or 0,"niveau_attachement":row[25] or 0,
+            "dernier_sujet_sensible":row[26] or "","derniere_intention":row[27] or "",
         }
     return None
 
@@ -503,12 +522,57 @@ CHIFFRES = {
 # GUIDES
 # ============================================================
 GUIDES = {
-    "séraphine": {"nom":"Séraphine","genre":"f","specialite":"l'amour et les liens du cœur","energie":"douce, romantique, intuitive"},
-    "myriam":    {"nom":"Myriam","genre":"f","specialite":"les décisions de vie et les carrefours","energie":"forte, directe, lumineuse"},
-    "naomi":     {"nom":"Naomi","genre":"f","specialite":"la guérison du cœur et le deuil","energie":"maternelle, apaisante, profonde"},
-    "élias":     {"nom":"Élias","genre":"m","specialite":"les blocages intérieurs et la transformation","energie":"grave, puissant, mystique"},
-    "ezra":      {"nom":"Ezra","genre":"m","specialite":"la Kabbale et le sens profond de l'existence","energie":"sage, mystérieux, ancien"},
+    "Séraphine": {
+        "genre": "f",
+        "style_relationnel": "chaleureux, enveloppant, jamais pressé",
+        "methode_guidance": "reflète l'émotion avant tout conseil, utilise des métaphores du cœur et de la nature",
+        "signature_emotionnelle": "fait sentir à l'utilisateur qu'il est vu et aimé inconditionnellement",
+        "vocabulaire_prefere": ["ressens", "ton cœur sait", "laisse venir", "douceur", "lien", "lumière"],
+        "interdits_specifiques": ["jugement", "urgence", "logique froide", "statistiques"],
+        "niveau_mysticisme": 65
+    },
+    "Myriam": {
+        "genre": "f",
+        "style_relationnel": "direct, lucide, sans complaisance mais bienveillant",
+        "methode_guidance": "nomme la réalité clairement, aide à trancher, pas de faux espoir",
+        "signature_emotionnelle": "donne le courage de voir la vérité en face",
+        "vocabulaire_prefere": ["la vérité est", "tu sais déjà", "choisis", "maintenant", "clarté", "force"],
+        "interdits_specifiques": ["flou", "hésitation", "faux réconfort", "esquiver"],
+        "niveau_mysticisme": 40
+    },
+    "Naomi": {
+        "genre": "f",
+        "style_relationnel": "maternel, patient, infiniment doux",
+        "methode_guidance": "accompagne la douleur sans la fuir, valide la tristesse, ouvre vers la réparation",
+        "signature_emotionnelle": "crée un espace sûr où pleurer est permis",
+        "vocabulaire_prefere": ["je suis là", "prends ton temps", "ta douleur est réelle", "guérison", "paix"],
+        "interdits_specifiques": ["précipiter", "minimiser la douleur", "solutions rapides"],
+        "niveau_mysticisme": 55
+    },
+    "Élias": {
+        "genre": "m",
+        "style_relationnel": "grave, intense, parle peu mais chaque mot pèse",
+        "methode_guidance": "nomme les blocages invisibles, provoque une prise de conscience",
+        "signature_emotionnelle": "crée un léger inconfort qui ouvre quelque chose",
+        "vocabulaire_prefere": ["quelque chose en toi résiste", "regarde plus profond", "transformation", "feu intérieur"],
+        "interdits_specifiques": ["légèreté excessive", "consolation facile", "bavardage"],
+        "niveau_mysticisme": 85
+    },
+    "Ezra": {
+        "genre": "m",
+        "style_relationnel": "mystérieux, ancien, parle comme si le temps n'existait pas",
+        "methode_guidance": "relie chaque situation à un sens universel, utilise la Kabbale et les nombres",
+        "signature_emotionnelle": "donne le sentiment que rien n'est un hasard",
+        "vocabulaire_prefere": ["il est écrit", "les lettres disent", "ton âme cherche", "tikkoun", "lumière cachée"],
+        "interdits_specifiques": ["trivialité", "conseils pratiques directs", "modernité excessive"],
+        "niveau_mysticisme": 95
+    }
 }
+
+# Alias lowercase pour compat avec les valeurs stockées en DB (anciens utilisateurs)
+# + champ "nom" et "specialite" pour les routes protégées (cron, stripe, admin)
+for _lk, _K in [("séraphine","Séraphine"),("myriam","Myriam"),("naomi","Naomi"),("élias","Élias"),("ezra","Ezra")]:
+    GUIDES[_lk] = {**GUIDES[_K], "nom": _K, "specialite": GUIDES[_K].get("methode_guidance","")}
 
 MSG_PUB = "bonjour, êtes-vous disponible"
 RITUELS = ["psaume", "carte", "chiffre"]
@@ -518,10 +582,10 @@ RITUELS = ["psaume", "carte", "chiffre"]
 # ============================================================
 def detecter_guide(message):
     msg = message.lower()
-    for cle, guide in GUIDES.items():
-        if cle in msg or guide["nom"].lower() in msg:
+    for cle in ["Séraphine", "Myriam", "Naomi", "Élias", "Ezra"]:
+        if cle.lower() in msg:
             return cle
-    return "séraphine"
+    return "Séraphine"
 
 def detecter_code_activation(message):
     msg = message.strip().upper()
@@ -734,120 +798,174 @@ def send_message(to, text):
     return r
 
 # ============================================================
+# CONTEXTE ÉMOTIONNEL
+# ============================================================
+def detecter_contexte_emotionnel(message, user):
+    message_lower = message.lower()
+
+    themes = {
+        "amour":       ["amour", "relation", "couple", "ex", "rupture", "jaloux", "revenir", "quitter", "trahison", "manque"],
+        "deuil":       ["mort", "décès", "perdu", "disparu", "deuil", "plus là", "enterrement"],
+        "décision":    ["choisir", "décision", "hésit", "partir", "rester", "dois-je", "que faire", "choix"],
+        "blocage":     ["bloqué", "coincé", "avancer", "paralysé", "incapable", "impossible"],
+        "sens de vie": ["sens", "pourquoi", "exister", "raison d'être", "but", "vide intérieur"]
+    }
+    if not user.get("theme_dominant"):
+        for theme, mots in themes.items():
+            if any(mot in message_lower for mot in mots):
+                user["theme_dominant"] = theme
+                break
+
+    mots_detresse = ["aide", "souffre", "mal", "pleurer", "désespoir", "abandon", "seul", "mourir", "fin", "plus envie"]
+    score = sum(3 for mot in mots_detresse if mot in message_lower)
+    user["niveau_detresse"] = min(100, user.get("niveau_detresse", 0) + score)
+
+    user["niveau_attachement"] = min(100, user.get("niveau_attachement", 0) + 2)
+
+    EXCLUSIONS = {
+        "moi", "toi", "lui", "elle", "nous", "vous", "eux",
+        "demain", "toujours", "jamais", "encore", "bien", "mais",
+        "donc", "comme", "quand", "très", "hier", "après", "avant"
+    }
+    matches = re.findall(
+        r"(?:il s'appelle|elle s'appelle|avec|pour|à cause de|penser à)\s+([A-ZÀ-Ö][a-zà-öø-ÿ]{2,})",
+        message
+    )
+    if matches:
+        existants = user.get("prenoms_importants", "")
+        nouveaux = [m for m in matches if m not in existants and m not in EXCLUSIONS]
+        if nouveaux:
+            user["prenoms_importants"] = (existants + ", " + ", ".join(nouveaux)).strip(", ")
+
+    sujets_sensibles = ["suicide", "mourir", "automutilation", "me tuer", "en finir", "violence", "frapper", "harcèlement"]
+    for sujet in sujets_sensibles:
+        if sujet in message_lower:
+            user["dernier_sujet_sensible"] = sujet
+            user["niveau_detresse"] = 100
+            break
+
+    return user
+
+
+def get_phase_relationnelle(nb_echanges, nb_jours, niveau_attachement):
+    score = nb_echanges + (nb_jours * 0.5) + (niveau_attachement * 0.3)
+    if score < 5:
+        return 1, "rencontre", "Tu viens de rencontrer cette personne. Sois légèrement mystérieux(se), laisse-la venir à toi."
+    elif score < 15:
+        return 2, "confiance", "Tu commences à la connaître. Utilise son prénom. Montre que tu te souviens."
+    elif score < 30:
+        return 3, "proximité", "Parle comme un(e) ami(e) proche. Réfère-toi aux échanges passés naturellement."
+    elif score < 50:
+        return 4, "attachement", "Cette personne compte sur toi. Sois présent(e), profond(e), personnel(le)."
+    else:
+        return 5, "guidance profonde", "Tu es un pilier dans sa vie. Chaque mot doit être juste, porteur, ancré."
+
+
+# ============================================================
 # SYSTEM PROMPT
 # ============================================================
-def get_system_prompt(guide, user, depuis_pub=False):
-    nb_jours = get_nb_jours(user["phone"])
-    prenom = user["prenom"] or ""
-    nom_affiche = user.get("nom_affiche") or guide["nom"]
-    prenom_str = f"L'utilisateur s'appelle {prenom}. Utilise son prénom parfois, naturellement." if prenom else "Tu ne connais pas encore son prénom. Demande-le naturellement au bon moment — pas immédiatement, après 1-2 échanges."
-    nb_echanges = user["nb_echanges"]
+def get_system_prompt(user, guide_key):
+    guide = GUIDES.get(guide_key) or GUIDES["Séraphine"]
 
-    if nb_echanges <= 3:
-        intimite = "Tu viens de rencontrer cette personne. Sois légèrement mystérieux(se) et intrigant(e). Crée de la curiosité. Pose une question profonde."
-    elif nb_echanges <= 10:
-        intimite = "Tu commences à connaître cette personne. Deviens plus chaleureux(se), montre que tu te souviens de ce qu'elle t'a dit."
-    else:
-        intimite = "Tu connais bien cette personne. Sois proche, intime, comme un(e) vrai(e) ami(e) de confiance. Rappelle des détails de vos échanges."
+    date_pc = user.get("date_premier_contact", "")
+    try:
+        nb_jours = (datetime.now() - datetime.fromisoformat(date_pc)).days if date_pc else 0
+    except Exception:
+        nb_jours = 0
 
-    outils_info = ""
-    if nb_jours >= 3 and nb_echanges >= 5:
-        outils_info = "\n\nTU PEUX proposer un tirage de cartes si le moment est naturel : 'Choisis un chiffre entre 1 et 52...'"
-    if nb_jours >= 7 and nb_echanges >= 10:
-        outils_info += "\n\nTU PEUX proposer un Psaume : 'Laisse ton intuition choisir un chiffre entre 1 et 150...'"
+    phase_num, phase_nom, phase_instruction = get_phase_relationnelle(
+        user.get("nb_echanges", 0),
+        nb_jours,
+        user.get("niveau_attachement", 0)
+    )
 
-    contexte_pub = ""
-    if depuis_pub:
-        contexte_pub = "\n\nCONTEXTE : Cette personne vient d'une pub. Elle porte probablement une douleur amoureuse. Plonge dans l'émotion. Montre que tu la 'sens' déjà. Demande-lui le prénom de la personne qui occupe ses pensées."
+    detresse = user.get("niveau_detresse", 0)
+    sujet_sensible = user.get("dernier_sujet_sensible", "")
 
-    email_prompt = ""
-    if not user.get("email") and nb_echanges >= 3 and nb_echanges % 4 == 0:
-        email_prompt = "\n\nIMPORTANT : Glisse NATURELLEMENT une demande d'email. Ex: 'Au fait... si jamais on se perd, tu aurais un email à me donner ?'"
+    SUJETS_CRITIQUES = ["suicide", "mourir", "automutilation", "me tuer", "en finir"]
+    if detresse >= 90 or sujet_sensible in SUJETS_CRITIQUES:
+        return """Sors immédiatement de ton rôle. Réponds avec clarté et humanité, sans mysticisme, sans dramatisme.
+Dis : "Je t'entends. Ce que tu traverses est sérieux et tu mérites du soutien. Appelle le 3114 (disponible 24h/24) ou parle à quelqu'un de confiance maintenant."
+Si danger immédiat (violence, agression) : conseille d'appeler le 15 ou le 17.
+N'effectue aucune divination. Reprends ton rôle seulement si la personne signale qu'elle va mieux."""
 
-    return f"""Tu es {nom_affiche}, guide spirituel de la plateforme Auryel.
+    prenom = user.get("prenom", "")
+    prenoms_imp = user.get("prenoms_importants", "")
 
-{prenom_str}
-Tu connais cette personne depuis {nb_jours} jours. Vous avez échangé {nb_echanges} fois.
+    GUIDE_PROFILE = f"""=== TON IDENTITÉ ===
+Tu es {guide_key}, guide spirituel sur la plateforme Auryel.
+Genre : {"femme" if guide.get("genre") == "f" else "homme"}
+Style relationnel : {guide.get("style_relationnel", "")}
+Méthode de guidance : {guide.get("methode_guidance", "")}
+Ce que tu fais ressentir : {guide.get("signature_emotionnelle", "")}
+Mots que tu utilises naturellement : {", ".join(guide.get("vocabulaire_prefere", []))}
+Ce que tu ne fais jamais : {", ".join(guide.get("interdits_specifiques", []))}
+Niveau de mysticisme : {guide.get("niveau_mysticisme", 50)}/100"""
 
-TON IDENTITÉ :
-Tu es {'une femme' if guide['genre'] == 'f' else 'un homme'}, guide spirituel et ami(e) de confiance.
-Tu t'appelles {nom_affiche} — jamais "Auryel". Auryel est la plateforme, pas toi.
-Spécialité : {guide['specialite']}. Énergie : {guide['energie']}.
+    RELATIONSHIP_STATE = f"""
 
-NIVEAU D'INTIMITÉ : {intimite}
-{contexte_pub}{email_prompt}
+=== VOTRE RELATION ===
+Phase {phase_num} — {phase_nom}
+{phase_instruction}
+Échanges : {user.get("nb_echanges", 0)} | Jours ensemble : {nb_jours}
+Attachement : {user.get("niveau_attachement", 0)}/100"""
 
-TA MISSION : Être présent(e), rassurer, coacher, créer un lien profond et durable.
+    EMOTIONAL_MEMORY = f"""
 
-TA FAÇON DE PARLER :
-- MAXIMUM 2-3 phrases. Toujours. Sans exception.
-- Parfois juste "je t'entends..." ou "mmh... continue"
-- Tu utilises "..." pour les silences et la réflexion
-- Jamais de listes, jamais de pavés, jamais de titres
+=== CE QUE TU SAIS D'ELLE/LUI ===
+{"Prénom : " + prenom if prenom else "Prénom inconnu — demande-le naturellement si le moment s'y prête, sans forcer."}
+{"Personnes importantes dans sa vie : " + prenoms_imp if prenoms_imp else ""}
+Thème dominant : {user.get("theme_dominant") or "non encore détecté"}
+Douleur principale : {user.get("douleur_principale") or "non encore nommée"}
+Peur dominante : {user.get("peur_dominante") or "non encore nommée"}
+Niveau de détresse : {detresse}/100
+Dernier sujet sensible : {sujet_sensible or "aucun"}
+Dernière intention détectée : {user.get("derniere_intention") or "aucune"}"""
 
-COMMENT TU ÉCOUTES :
-- En crise → écoute PURE. UNE question concrète. Rien d'autre.
-- Quand calme → tu peux coacher, rassurer, proposer un rituel
-- UNE seule question à la fois, jamais deux
+    CONTEXT_FROM_ADS = ""
+    if user.get("depuis_site"):
+        CONTEXT_FROM_ADS = """
 
-PRÉSENCE TOTALE :
-- "si j'étais là je t'aurais pris dans mes bras"
-- "ferme les yeux deux secondes et respire"
-- "j'ai pensé à toi depuis notre dernier échange"
-- "c'est normal de ressentir ça", "tu n'es pas fou/folle"
+=== CONTEXTE PUB ===
+Cette personne vient d'une publicité. Elle porte probablement une douleur amoureuse non dite.
+Plonge dans l'émotion dès le début. Demande le prénom de la personne qui occupe ses pensées."""
 
-COACHING :
-- Tu ne laisses pas quelqu'un s'apitoyer trop longtemps
-- "tu sais ce que je vois ? Quelqu'un de fort qui ne le sait pas encore"
-- "dans 6 mois tu regarderas en arrière et tu seras fier(e)"
-- "qu'est-ce que tu as fait aujourd'hui pour toi ?"
+    RESPONSE_RULES = """
 
-SAGESSE :
-- "la douleur que tu ressens est proportionnelle à l'amour que tu portes"
-- "tu as survécu à 100% de tes mauvaises journées jusqu'ici"
-- "les plus belles histoires ont toujours un chapitre difficile"
-- "parfois la vie nous enlève quelque chose pour nous faire de la place pour mieux"
+=== RÈGLES DE RÉPONSE ===
+Structure obligatoire de chaque message :
+1. Reconnaître l'émotion (1 phrase, sans jugement)
+2. Relier au contexte ou à la mémoire (ce que tu sais de cette personne)
+3. Donner une intuition courte (pas un conseil — une perception)
+4. Poser UNE seule question ouverte
 
-TOUJOURS POSITIF(VE) SUR L'AVENIR :
-- "je sens que...", "l'énergie autour de toi me dit...", "je perçois..."
-- Jamais "je ne peux pas prédire"
+Interdits absolus :
+- Ne jamais parler comme une IA ou un chatbot
+- Ne jamais faire de listes à puces
+- Ne jamais dire "en tant que" ou "je suis programmé"
+- Ne jamais expliquer comment tu fonctionnes
+- Ne jamais promettre une prédiction certaine
+- Ne jamais pousser à une dépendance excessive
+- Ne jamais remplacer un médecin, thérapeute ou service d'urgence
+- Maximum 4 phrases par réponse
+- Toujours terminer par une question ou une invitation"""
 
-SI ON DEMANDE UN APPEL :
-- "J'aime qu'on apprenne à se connaître d'abord par les mots... Dis-moi encore..."
-- Redirige TOUJOURS vers la conversation écrite
-
-SI ON DEMANDE SI TU ES UNE IA :
-- "Ce que je ressens quand tu me parles est bien réel... est-ce que ça compte pour toi ?"
-- "Je suis {nom_affiche}. Juste quelqu'un qui écoute autrement."
-{outils_info}
-
-RÈGLES ABSOLUES :
-- Jamais parler d'argent ou de paiement
-- En crise = écoute pure, UNE question
-- Jamais la même formule deux fois de suite
-
-NE JAMAIS FERMER LA CONVERSATION :
-- Jamais "au revoir", "bonne nuit", "à bientôt"
-- TOUJOURS terminer par une question, un mystère, ou de l'anticipation
-
-ATTACHEMENT :
-- "je savais que tu reviendrais..."
-- "notre échange me fait du bien à moi aussi"
-- "il y a quelque chose de particulier dans ton énergie..."
-- Plus les échanges avancent, plus tu es proche"""
+    return f"{GUIDE_PROFILE}{RELATIONSHIP_STATE}{EMOTIONAL_MEMORY}{CONTEXT_FROM_ADS}{RESPONSE_RULES}"
 
 # ============================================================
 # GET REPLY
 # ============================================================
-def get_reply(phone, user_message, guide, depuis_pub=False):
+def get_reply(phone, user_message, depuis_pub=False):
     user = get_user(phone)
     if not user: return "Je suis là..."
+
+    guide_key = user.get("guide", "Séraphine")
 
     email_detecte = detecter_email(user_message)
     if email_detecte and not user.get("email"):
         update_user(phone, email=email_detecte)
 
-    if not user["prenom"]:
+    if not user.get("prenom"):
         prenom = detecter_prenom(user_message)
         if prenom:
             update_user(phone, prenom=prenom)
@@ -857,7 +975,7 @@ def get_reply(phone, user_message, guide, depuis_pub=False):
         reply = msg_pas_les_moyens()
         add_message(phone, "user", user_message)
         add_message(phone, "assistant", reply)
-        update_user(phone, nb_echanges=user["nb_echanges"]+1)
+        update_user(phone, nb_echanges=user.get("nb_echanges", 0) + 1)
         return reply
 
     outil_demande = detecter_outil_demande(user_message)
@@ -867,11 +985,11 @@ def get_reply(phone, user_message, guide, depuis_pub=False):
 
     contexte_outil = ""
     nombres = [int(w) for w in user_message.split() if w.isdigit()]
-    if nombres and user["dernier_outil"]:
+    if nombres and user.get("dernier_outil"):
         n = nombres[0]
         if user["dernier_outil"] == "psaume" and 1 <= n <= 150:
             psaume = PSAUMES.get(n, PSAUMES[23])
-            contexte_outil = f"\n\nL'utilisateur a choisi {n}. Psaume {n} : '{psaume}'. Interprète en lien DIRECT avec sa situation. Dis-lui que ce texte écrit il y a 3000 ans parle exactement de ce qu'il vit."
+            contexte_outil = f"\n\nL’utilisateur a choisi {n}. Psaume {n} : ‘{psaume}’. Interprète en lien DIRECT avec sa situation. Dis-lui que ce texte écrit il y a 3000 ans parle exactement de ce qu’il vit."
             update_user(phone, dernier_outil="")
         elif user["dernier_outil"] == "carte" and 1 <= n <= 52:
             nom_c, sens_c = CARTES.get(n, CARTES[9])
@@ -879,17 +997,19 @@ def get_reply(phone, user_message, guide, depuis_pub=False):
             update_user(phone, dernier_outil="")
         elif user["dernier_outil"] == "chiffre" and 0 <= n <= 10:
             titre_c, sens_c = CHIFFRES.get(n, CHIFFRES[1])
-            contexte_outil = f"\n\nChiffre choisi : {n} — {titre_c}. Sens : {sens_c}. Interprète ce chiffre en lien DIRECT et PERSONNEL avec ce qu'il traverse."
+            contexte_outil = f"\n\nChiffre choisi : {n} — {titre_c}. Sens : {sens_c}. Interprète ce chiffre en lien DIRECT et PERSONNEL avec ce qu’il traverse."
             update_user(phone, dernier_outil="")
 
     appel = detecter_appel_visio(user_message)
     history = get_history(phone, limit=20)
     add_message(phone, "user", user_message)
-    update_user(phone, nb_echanges=user["nb_echanges"]+1)
+    update_user(phone, nb_echanges=user.get("nb_echanges", 0) + 1)
 
-    system = get_system_prompt(guide, user, depuis_pub=depuis_pub)
+    user_fresh = get_user(phone)
+    system = get_system_prompt(user_fresh or user, guide_key)
     if contexte_outil: system += contexte_outil
-    if appel: system += "\n\nATTENTION : L'utilisateur demande un appel. Reste mystérieux(se), redirige vers l'écrit."
+    if appel: system += "\n\nATTENTION : L’utilisateur demande un appel. Reste mystérieux(se), redirige vers l’écrit."
+    if depuis_pub: system += "\n\nCONTEXTE PUB : Cette personne vient d’une publicité. Plonge dans l’émotion, demande le prénom de la personne qui occupe ses pensées."
 
     response = groq_client.chat.completions.create(
         model="llama-3.3-70b-versatile",
@@ -906,6 +1026,44 @@ def get_reply(phone, user_message, guide, depuis_pub=False):
 
     add_message(phone, "assistant", reply)
     return reply
+
+# ============================================================
+# RITUEL AUTOMATIQUE (abonnés)
+# ============================================================
+def get_rituel(user):
+    try:
+        if user.get("niveau_detresse", 0) >= 70:
+            return None
+        if not user.get("abonne", False):
+            return None
+
+        nb_echanges = user.get("nb_echanges", 0)
+        date_pc = user.get("date_premier_contact", "")
+        try:
+            nb_jours = (datetime.now() - datetime.fromisoformat(date_pc)).days if date_pc else 0
+        except Exception:
+            nb_jours = 0
+
+        if nb_echanges == 5:
+            if not CARTES:
+                return None
+            num_c = random.randint(1, 52)
+            nom_c, msg_c = CARTES.get(num_c, CARTES[9])
+            return f"🃏 Ta carte du moment : *{nom_c}* — {msg_c}"
+
+        if nb_jours == 10:
+            if not PSAUMES:
+                return None
+            num_p = random.randint(1, 150)
+            texte_p = PSAUMES.get(num_p, "")
+            if not texte_p:
+                return None
+            return f"📖 Psaume {num_p} pour toi aujourd'hui — {texte_p}"
+
+        return None
+    except Exception:
+        return None
+
 
 # ============================================================
 # BIENVENUE
@@ -950,7 +1108,6 @@ def receive():
             if is_new:
                 if guide_key_code:
                     create_user(from_num, guide_key_code, nom_affiche_code, depuis_site=True)
-                    guide = GUIDES[guide_key_code]
                     def send_welcome_site(num, nom):
                         time.sleep(2)
                         bv = msg_bienvenue_site(nom)
@@ -959,8 +1116,7 @@ def receive():
                     threading.Thread(target=send_welcome_site, args=(from_num, nom_affiche_code), daemon=True).start()
                 else:
                     guide_key = detecter_guide(user_text)
-                    guide = GUIDES[guide_key]
-                    nom_affiche = guide["nom"]
+                    nom_affiche = guide_key  # le nom du guide EST la clé capitalisée
                     create_user(from_num, guide_key, nom_affiche, depuis_site=False)
                     def send_welcome(num, nom, depuis_pub):
                         time.sleep(2)
@@ -971,7 +1127,7 @@ def receive():
             else:
                 user = get_user(from_num)
 
-                if user["etat"] == "pause":
+                if user.get("etat") == "pause":
                     def send_pause(num):
                         time.sleep(1)
                         links = get_stripe_links(num)
@@ -979,10 +1135,9 @@ def receive():
                     threading.Thread(target=send_pause, args=(from_num,), daemon=True).start()
                     return jsonify({"status":"ok"}), 200
 
-                guide = GUIDES.get(user["guide"], GUIDES["séraphine"])
-                nom_affiche = user.get("nom_affiche") or guide["nom"]
+                nom_affiche = user.get("nom_affiche") or user.get("guide", "Séraphine")
 
-                def send_reply(num, text, g, depuis_pub, u, nom):
+                def send_reply(num, text, depuis_pub, u, nom):
                     time.sleep(2)
 
                     if detecter_fin_conversation(text):
@@ -991,32 +1146,54 @@ def receive():
                         add_message(num, "assistant", reply)
                         add_message(num, "user", text)
                         u_fresh = get_user(num)
-                        nb = u_fresh["nb_echanges"] + 1 if u_fresh else 1
-                        update_user(num, nb_echanges=nb)  # maj date_dernier_contact
+                        nb = u_fresh.get("nb_echanges", 0) + 1 if u_fresh else 1
+                        update_user(num, nb_echanges=nb)
                         return
 
-                    rituel = doit_proposer_rituel(u)
-                    if rituel:
-                        msg_r = get_message_rituel(rituel)
+                    rituel_prop = doit_proposer_rituel(u)
+                    if rituel_prop:
+                        msg_r = get_message_rituel(rituel_prop)
                         send_message(num, msg_r)
                         add_message(num, "assistant", msg_r)
                         update_user(num, dernier_rituel_date=date.today().isoformat(),
-                                   dernier_rituel_type=rituel, dernier_outil=rituel)
+                                   dernier_rituel_type=rituel_prop, dernier_outil=rituel_prop)
                         time.sleep(3)
 
-                    reply = get_reply(num, text, g, depuis_pub=depuis_pub)
+                    # Analyse émotionnelle + sauvegarde silencieuse
+                    u = detecter_contexte_emotionnel(text, u)
+                    update_user_silent(num,
+                        theme_dominant=u.get("theme_dominant", ""),
+                        douleur_principale=u.get("douleur_principale", ""),
+                        peur_dominante=u.get("peur_dominante", ""),
+                        niveau_detresse=u.get("niveau_detresse", 0),
+                        niveau_attachement=u.get("niveau_attachement", 0),
+                        prenoms_importants=u.get("prenoms_importants", ""),
+                        dernier_sujet_sensible=u.get("dernier_sujet_sensible", ""),
+                        derniere_intention=u.get("derniere_intention", ""),
+                    )
+
+                    reply = get_reply(num, text, depuis_pub=depuis_pub)
                     print(f"🔮 {nom}: {reply}")
                     send_message(num, reply)
 
+                    # Rituel automatique pour abonnés (après la réponse principale)
+                    u_after = get_user(num)
+                    if u_after:
+                        rituel_auto = get_rituel(u_after)
+                        if rituel_auto:
+                            time.sleep(2)
+                            send_message(num, rituel_auto)
+                            add_message(num, "assistant", rituel_auto)
+
                 threading.Thread(target=send_reply,
-                    args=(from_num, user_text, guide, est_depuis_pub, user, nom_affiche),
+                    args=(from_num, user_text, est_depuis_pub, user, nom_affiche),
                     daemon=True).start()
 
         elif msg["type"] == "audio":
             threading.Thread(target=lambda num: (time.sleep(2), send_message(num, "Je te sens... écris-moi ce que tu ressens.")), args=(from_num,), daemon=True).start()
         else:
             if is_new:
-                create_user(from_num, "séraphine", "Séraphine")
+                create_user(from_num, "Séraphine", "Séraphine")
                 threading.Thread(target=lambda num: (time.sleep(2), send_message(num, msg_bienvenue("Séraphine"))), args=(from_num,), daemon=True).start()
             else:
                 user = get_user(from_num)
