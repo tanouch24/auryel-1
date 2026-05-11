@@ -825,7 +825,9 @@ def detecter_contexte_emotionnel(message, user):
     EXCLUSIONS = {
         "moi", "toi", "lui", "elle", "nous", "vous", "eux",
         "demain", "toujours", "jamais", "encore", "bien", "mais",
-        "donc", "comme", "quand", "très", "hier", "après", "avant"
+        "donc", "comme", "quand", "très", "hier", "après", "avant",
+        "Comment", "Bonjour", "Bonsoir", "Salut", "Merci", "Oui", "Non",
+        "Pourquoi", "Quand", "Voici",
     }
     matches = re.findall(
         r"(?:il s'appelle|elle s'appelle|avec|pour|à cause de|penser à)\s+([A-ZÀ-Ö][a-zà-öø-ÿ]{2,})",
@@ -930,6 +932,14 @@ Dernière intention détectée : {user.get("derniere_intention") or "aucune"}"""
 Cette personne vient d'une publicité. Elle porte probablement une douleur amoureuse non dite.
 Plonge dans l'émotion dès le début. Demande le prénom de la personne qui occupe ses pensées."""
 
+    nb_echanges = user.get("nb_echanges", 0)
+    EMAIL_INSTRUCTION = ""
+    if not user.get("email") and nb_echanges >= 3 and nb_echanges % 4 == 0:
+        EMAIL_INSTRUCTION = """
+
+=== INSTRUCTION EMAIL ===
+Glisse NATURELLEMENT une demande d'email dans ta réponse. Ex : "Au fait... si jamais on se perd, tu aurais un email à me donner ?" Ne le formule pas comme une obligation."""
+
     RESPONSE_RULES = """
 
 === RÈGLES DE RÉPONSE ===
@@ -950,7 +960,7 @@ Interdits absolus :
 - Maximum 4 phrases par réponse
 - Toujours terminer par une question ou une invitation"""
 
-    return f"{GUIDE_PROFILE}{RELATIONSHIP_STATE}{EMOTIONAL_MEMORY}{CONTEXT_FROM_ADS}{RESPONSE_RULES}"
+    return f"{GUIDE_PROFILE}{RELATIONSHIP_STATE}{EMOTIONAL_MEMORY}{CONTEXT_FROM_ADS}{EMAIL_INSTRUCTION}{RESPONSE_RULES}"
 
 # ============================================================
 # GET REPLY
@@ -1038,6 +1048,9 @@ def get_rituel(user):
             return None
 
         nb_echanges = user.get("nb_echanges", 0)
+        if nb_echanges <= 0:
+            return None
+
         date_pc = user.get("date_premier_contact", "")
         try:
             nb_jours = (datetime.now() - datetime.fromisoformat(date_pc)).days if date_pc else 0
