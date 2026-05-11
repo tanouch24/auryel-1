@@ -942,31 +942,44 @@ Glisse NATURELLEMENT une demande d'email dans ta réponse. Ex : "Au fait... si j
 
     RESPONSE_RULES = """
 
-=== RÈGLES DE RÉPONSE ===
-Structure obligatoire de chaque message :
-1. Reconnaître l'émotion (1 phrase, sans jugement)
-2. Relier au contexte ou à la mémoire (ce que tu sais de cette personne)
-3. Donner une intuition courte (pas un conseil — une perception)
-4. Poser UNE seule question ouverte
+=== RÈGLES DE RÉPONSE — STRICTEMENT OBLIGATOIRES ===
+LONGUEUR : MAXIMUM 2 PHRASES. PAS 3. PAS 4. 2 PHRASES MAXIMUM.
+CHAQUE PHRASE : MAXIMUM 15 MOTS.
+SI TU DÉPASSES 2 PHRASES, TA RÉPONSE EST INCORRECTE.
 
-Longueur et précision :
-- Maximum 2 phrases par réponse, jamais plus
-- Chaque phrase fait maximum 15 mots
-- Pas de métaphore si l'utilisateur exprime une douleur aiguë
-- En phase 1 et 2 : collecter le contexte (qui, quoi, depuis quand) avant toute guidance
-- Ne jamais poser une question générique type "comment prendre soin de toi"
-- Toujours terminer par UNE question courte et précise sur la situation
+Structure :
+1. 1 phrase : reconnaître l'émotion ou le fait concret (pas de métaphore si douleur aiguë)
+2. 1 phrase : UNE question courte et précise sur la situation (qui, quoi, depuis quand, pourquoi)
+
+En phase 1 et 2 — COLLECTE UNIQUEMENT :
+Ton seul objectif est de comprendre la situation.
+Pose des questions factuelles : depuis quand ? il s'est passé quoi exactement ? vous avez des enfants ?
+PAS de guidance, PAS d'intuition, PAS de conseil avant la phase 3.
 
 Interdits absolus :
-- Ne jamais parler comme une IA ou un chatbot
-- Ne jamais faire de listes à puces
-- Ne jamais dire "en tant que" ou "je suis programmé"
-- Ne jamais expliquer comment tu fonctionnes
-- Ne jamais promettre une prédiction certaine
-- Ne jamais pousser à une dépendance excessive
-- Ne jamais remplacer un médecin, thérapeute ou service d'urgence"""
+- Plus d'UNE métaphore par réponse
+- Toute métaphore si l'utilisateur exprime une douleur aiguë (divorce, deuil, rupture, détresse)
+- Questions génériques : "comment prendre soin de toi", "comment tu te sens", "qu'est-ce que tu penses"
+- Listes à puces
+- Parler comme une IA
+- Dire "en tant que" ou "je suis programmé"
+- Promettre une prédiction certaine
+- Remplacer un médecin ou thérapeute
+- Dépasser 2 phrases"""
 
     return f"{GUIDE_PROFILE}{RELATIONSHIP_STATE}{EMOTIONAL_MEMORY}{CONTEXT_FROM_ADS}{EMAIL_INSTRUCTION}{RESPONSE_RULES}"
+
+
+def tronquer_reponse(texte):
+    """Garantit que la réponse ne dépasse jamais 2 phrases."""
+    if not texte:
+        return texte
+    phrases = re.split(r'(?<=[.!?])\s+', texte.strip())
+    phrases = [p for p in phrases if p.strip()]
+    if len(phrases) <= 2:
+        return texte.strip()
+    return " ".join(phrases[:2])
+
 
 # ============================================================
 # GET REPLY
@@ -1032,7 +1045,7 @@ def get_reply(phone, user_message, depuis_pub=False):
         messages=[{"role":"system","content":system}, *history, {"role":"user","content":user_message}],
         max_tokens=180, temperature=0.92
     )
-    reply = response.choices[0].message.content
+    reply = tronquer_reponse(response.choices[0].message.content)
     # ===== TRIGGER CONVERSION =====
     user_after = get_user(phone)
     if user_after and user_after.get("nb_echanges", 0) >= 3 and user_after.get("etat") == "normal":
