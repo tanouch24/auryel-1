@@ -1,112 +1,153 @@
-# CLAUDE.md
+# CLAUDE.md — Auryel
 
-This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+Fichier de contexte automatiquement lu par Claude Code à chaque session.
+Ne pas supprimer.
 
-## Project Overview
+---
 
-**Auryel** is a spiritual guidance SaaS chatbot delivered via WhatsApp. Users consult one of 5 AI-powered "guides" (Séraphine, Myriam, Naomi, Élias, Ezra) for divination (tarot, psalms, numerology). The platform uses a freemium model: 7 free exchanges, then Stripe subscription (€4.90/mo, €19.90/semester, €29.90/year).
+## Projet
 
-**Dual-host deployment:**
-- **Railway.io** — Python/Flask backend (`Procfile`: `gunicorn auryel_bot:app --bind 0.0.0.0:$PORT --workers 2 --timeout 120`)
-- **Netlify** — 40 static HTML landing pages (auto-deploys on git push)
+**Auryel** — Bot WhatsApp IA spiritualité (voyance, tarot, psaumes, guidance personnalisée)
+**Objectif :** Revenus récurrents 100% automatisés — lancer SEO + ads une fois, puis hands-off
+**Statut :** Code complet — phase redesign site + SEO automation + ads setup
 
-## Running Locally
+---
 
+## Stack technique
+
+| Composant | Techno |
+|-----------|--------|
+| Backend | Flask (Python) |
+| Base de données | PostgreSQL |
+| IA | Groq — llama-3.3-70b |
+| WhatsApp | Meta Graph API |
+| Paiement | Stripe |
+| Emails | Resend |
+| Hébergement API | Railway |
+| Hébergement static | Netlify |
+| Repo | tanouch24/auryel-1 |
+
+---
+
+## Plugins Claude Code installés
+
+| Plugin | Rôle | Usage |
+|--------|------|-------|
+| `superpowers` | Méthodologie dev — plan avant code | Toujours actif |
+| `frontend-design` | Design pro anti-générique | Redesign site |
+| `github` | Connexion repo GitHub | Push/pull direct |
+| `episodic-memory` | Mémoire entre sessions | Contexte persistant |
+| `claude-seo` | Audit SEO technique (20 sous-skills) | SEO Auryel |
+| `ui-ux-pro-max` | 67 styles UI, 161 palettes, 57 typos | Design pages |
+| `marketing-skills` | 41 skills marketing/copywriting | Ads + copy |
+| `gsap-skills` | Animations GSAP premium | Effets site |
+| `claude-ads` | Création ads Google/Meta/TikTok | Campagnes ads |
+| `magic MCP` | Génération 5 variants UI (21st.dev) | Design components |
+
+### Commandes utiles plugins
 ```bash
-pip install -r requirements.txt
-python auryel_bot.py       # dev server (Flask debug mode)
-# or
-gunicorn auryel_bot:app    # production-like
+/audit          # Audit SEO complet
+/magic          # Génération variants UI
+/review         # Review code
+/simplify       # Simplifier code
 ```
 
-Required env vars (all must be set — app verifies at startup):
+---
+
+## Architecture fichiers clés
+
 ```
-SECRET_KEY, VERIFY_TOKEN, ADMIN_PASSWORD, CRON_SECRET,
-DATABASE_URL, STRIPE_SK, STRIPE_WEBHOOK_SECRET,
-WHATSAPP_TOKEN, PHONE_NUMBER_ID, GROQ_API_KEY, RESEND_API_KEY
-```
-
-No build step. No test suite. No linter configured.
-
-## Architecture
-
-The entire backend is a **single file**: `auryel_bot.py`. It's monolithic but sectioned:
-
-### Request Flow
-```
-WhatsApp POST /webhook
-  → extract phone + message text
-  → upsert user in PostgreSQL (users table)
-  → check subscription state (etat: normal / attente_paiement / pause)
-  → detect signals in text: email, first name, budget objection, end-of-conversation
-  → fetch last 20 messages from PostgreSQL (messages table)
-  → detect divination tool request → pull psalm/tarot/numerology content
-  → call Groq LLM (llama-3.3-70b-versatile, max 180 tokens, temp=0.92)
-  → 35% chance: append Stripe checkout link (after 3+ exchanges)
-  → save reply to messages table, increment nb_echanges
-  → send reply via WhatsApp Business API
+auryel-1/
+├── index.html                    # Page d'accueil principale
+├── auryel_bot.py                 # Bot Flask principal
+├── blog.html                     # Hub articles SEO
+├── preview-auryel-redesign.html  # Maquette redesign en cours
+├── preview-auryel-production.html
+├── requirements.txt
+├── Procfile                      # Config Railway
+└── CLAUDE.md                     # Ce fichier
 ```
 
-### Key Sections in `auryel_bot.py`
-- **Database init** (`init_db`) — creates `users` + `messages` tables if absent
-- **`get_reply()`** — core LLM call; builds system prompt from guide personality + engagement level
-- **`POST /webhook`** — main message handler; all detection logic lives here
-- **`POST /stripe/webhook`** — handles `checkout.session.completed`, `customer.subscription.*` events
-- **`GET/POST /cron/daily`** — Day 6 upsell, Day 7 pause, Day 8 final nudge; subscriber re-engagement every 3 days (max 3 times)
-- **`GET/POST /cron/seo-publish`** — Groq generates article → Markdown→HTML → GitHub push → IndexNow ping
-- **`/admin/*`** — password-protected dashboard: view users/conversations, pause/resume, send messages
+---
 
-### Data Model
-- **`users`** — `phone` (PK), `guide`, `nb_echanges`, `etat`, `abonne`, `stripe_customer_id`, `depuis_site` (activation-code flow), ritual tracking, relance (follow-up) state
-- **`messages`** — `phone` (FK), `role` (user/assistant), `content`, `timestamp`
+## Les 5 guides personas
 
-### Divination Content
-Hard-coded in `auryel_bot.py`:
-- `PSAUMES` dict — 150 psalms with spiritual interpretations
-- `TIRAGES_TAROT` list — 52 Marseille tarot cards with meanings
-- `CHIFFRES_SAGESSE` dict — numbers 0–10 with numerology wisdom
+| Guide | Spécialité | Ton |
+|-------|-----------|-----|
+| Séraphine 🌸 | Amour, émotions | Doux, maternel |
+| Myriam 🕊️ | Psaumes, foi | Posé, biblique |
+| Naomi ⚡ | Transformation | Direct, puissant |
+| Élias 🌿 | Abondance, chance | Serein, confiant |
+| Ezra ✨ | Tarot, mystères | Mystérieux, cosmique |
 
-### Guide System
-5 guides with distinct personalities (system prompt varies per guide). Activation codes allow site visitors to unlock 6 additional premium guides (Séléna, Luna, Théa, Orion, Kaël, Raphaël). The `depuis_site` flag routes these users differently.
+---
 
-### Engagement Automation
-- Intimacy levels escalate based on `nb_echanges`: strangers → acquaintances → close friends
-- Conversion triggers fire randomly (35% chance) after 3+ exchanges
-- Cron at `/cron/daily` handles day-based lifecycle (Days 6/7/8) and subscriber re-engagement
+## Règles métier CRITIQUES
 
-## Static Site (Netlify)
+- **`update_user_silent()`** — ne jamais remplacer par `update_user()` dans les flows de relance
+- Relance time-based : J+3 / J+6 / J+9, maximum 3/cycle
+- Stripe webhooks : 5 événements (checkout, subscription updated/deleted, invoice succeeded/failed)
+- SEO publish : `/cron/seo-publish` → push GitHub → Netlify rebuild — convention `blog/{slug}.html`
 
-40 HTML landing pages in the repo root. They share a consistent structure:
-- Dark theme + gold accents via CSS variables
-- Mobile-first responsive layout
-- Schema.org JSON-LD for SEO
-- CTA buttons linking to WhatsApp or Stripe checkout
+---
 
-The SEO cron job generates new articles as HTML and commits them to the repo, triggering a Netlify redeploy.
+## Design system
 
-## Règles critiques
+```css
+--violet: #6B21A8;  --violet-clair: #A855F7;
+--or: #D4AF37;      --or-clair: #F0D060;
+--noir: #0D0D0D;    --noir-doux: #1A1A2E;
+--creme: #FDF6E3;
+/* Fonts : Cinzel (titres) + Lora (corps) */
+/* Animations : GSAP ScrollTrigger */
+```
 
-1. **Ne jamais modifier `update_user_silent()`** — cette fonction effectue les mises à jour internes sans écraser `date_dernier_contact`. La modifier casserait le tracking de la dernière interaction utilisateur.
-2. **Mapping des états Stripe** :
-   - `active` / `trialing` → `abonne=True`, `etat=normal`
-   - `past_due` / `unpaid` / `canceled` → `abonne=False`, `etat=pause`
-3. **Le fichier principal est `auryel_bot.py`** — ne pas confondre avec d'éventuels fichiers versionés locaux (`auryel_bot_v8.py`, etc.).
-4. **PORT Railway = 8080** — Railway expose toujours le port 8080 ; ne pas le changer dans le `Procfile` ou la config.
-5. **Ne jamais créer `real_engine.py`** — ce fichier appartient à un autre projet (bot Solana) et n'a aucune place ici.
-6. **Pushs SEO via `GITHUB_TOKEN`** — le cron `/cron/seo-publish` pousse les articles générés vers GitHub en utilisant exclusivement `GITHUB_TOKEN` (var d'env Railway). Ne pas substituer d'autre mécanisme d'authentification Git.
+---
 
-## API Routes Summary
+## Variables d'environnement Railway
 
-| Route | Purpose |
-|-------|---------|
-| `GET /webhook` | WhatsApp verification handshake |
-| `POST /webhook` | Inbound message handler |
-| `POST /stripe/webhook` | Stripe payment events |
-| `POST /stripe/create-checkout` | Generate Stripe checkout link |
-| `GET/POST /cron/daily?secret=` | Daily lifecycle cron |
-| `GET/POST /cron/seo-publish?secret=` | SEO article generation |
-| `GET/POST /admin/login` | Admin auth |
-| `GET /admin` | Admin dashboard |
-| `POST /admin/pause` / `/admin/resume` | User account control |
-| `POST /admin/send` | Send custom WhatsApp message |
-| `GET /health` | Structured health check |
+```env
+DATABASE_URL=          GROQ_API_KEY=
+META_VERIFY_TOKEN=     META_ACCESS_TOKEN=
+WHATSAPP_PHONE_NUMBER_ID=
+STRIPE_SECRET_KEY=     STRIPE_WEBHOOK_SECRET=
+RESEND_API_KEY=        GITHUB_TOKEN=
+GITHUB_REPO=tanouch24/auryel-1
+```
+
+---
+
+## SEO — Règles
+
+- 3 articles HTML/jour, rotation thématiques : tarot, psaumes, voyance, amour, chance, protection, anges
+- 1 guide persona par article
+- Balises obligatoires : title, meta, canonical, OG, Schema.org Article + FAQPage
+- Fichiers Google à créer : `llms.txt` + `sitemap.xml`
+
+---
+
+## Objectifs redesign (en cours)
+
+1. Design dark luxury + animations GSAP + effets 3D
+2. Audit SEO complet `/audit` + schema.org + sitemap
+3. CTAs WhatsApp + Stripe optimisés
+4. Core Web Vitals + performance
+
+---
+
+## Statut
+
+### Fait ✅
+- Stack complète, 5 personas, 150 psaumes, 52 tarot
+- Stripe webhooks, relance J+3/J+6/J+9
+- 40+ pages SEO, 9 plugins Claude Code
+
+### En cours 🔄
+- Redesign site complet
+- Pipeline SEO auto (Make.com → Claude API → GitHub)
+- Setup ads Meta + TikTok
+
+### À ne pas toucher ⛔
+- `update_user_silent()` vs `update_user()`
+- Architecture relance (max 3/cycle)
+- Convention slugs SEO
