@@ -1,0 +1,1896 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Auryel - Cabinet digital de guidance personnelle</title>
+  <meta name="description" content="Auryel accompagne les questions intimes avec un cadre calme, humain et confidentiel. Choisissez une conseillère, une formule claire, puis continuez en privé.">
+  <style>
+    :root {
+      color-scheme: dark;
+      --ink-950: #07050a;
+      --ink-900: #0b0710;
+      --ink-850: #100a14;
+      --ink-800: #160e19;
+      --aubergine: #211323;
+      --aubergine-2: #2d1a2c;
+      --wine: #62323c;
+      --rosewood: #9f706c;
+      --champagne: #d8c18b;
+      --champagne-2: #b89e68;
+      --ivory: #f7efe3;
+      --linen: #ded0bd;
+      --mist: #b7aa99;
+      --muted: #7e7167;
+      --line: rgba(216, 193, 139, 0.18);
+      --line-soft: rgba(247, 239, 227, 0.09);
+      --panel: rgba(247, 239, 227, 0.052);
+      --panel-strong: rgba(247, 239, 227, 0.085);
+      --shadow: 0 32px 110px rgba(0, 0, 0, 0.48);
+      --shadow-soft: 0 18px 54px rgba(0, 0, 0, 0.30);
+      --serif: Georgia, "Times New Roman", serif;
+      --sans: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      --mono: ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    html {
+      scroll-behavior: smooth;
+    }
+
+    body {
+      margin: 0;
+      min-width: 320px;
+      color: var(--ivory);
+      font-family: var(--sans);
+      line-height: 1.62;
+      background:
+        radial-gradient(circle at 18% -8%, rgba(98, 50, 60, 0.28), transparent 34rem),
+        radial-gradient(circle at 92% 4%, rgba(216, 193, 139, 0.12), transparent 28rem),
+        linear-gradient(180deg, var(--ink-950), var(--ink-900) 36%, #130c16 70%, #08060a);
+      -webkit-font-smoothing: antialiased;
+      text-rendering: optimizeLegibility;
+    }
+
+    body::before,
+    body::after {
+      content: "";
+      position: fixed;
+      inset: 0;
+      pointer-events: none;
+      z-index: -1;
+    }
+
+    body::before {
+      opacity: 0.13;
+      background:
+        linear-gradient(90deg, rgba(247, 239, 227, 0.07) 1px, transparent 1px),
+        linear-gradient(rgba(247, 239, 227, 0.055) 1px, transparent 1px);
+      background-size: 108px 108px;
+      mask-image: linear-gradient(to bottom, black 0%, transparent 74%);
+    }
+
+    body::after {
+      opacity: 0.16;
+      mix-blend-mode: screen;
+      background-image:
+        radial-gradient(circle at 20% 28%, rgba(247, 239, 227, 0.20) 0 1px, transparent 1.5px),
+        radial-gradient(circle at 76% 16%, rgba(216, 193, 139, 0.16) 0 1px, transparent 1.4px),
+        radial-gradient(circle at 86% 72%, rgba(247, 239, 227, 0.12) 0 1px, transparent 1.5px);
+      background-size: 210px 210px, 280px 280px, 360px 360px;
+    }
+
+    a {
+      color: inherit;
+      text-decoration: none;
+    }
+
+    button,
+    summary {
+      font: inherit;
+    }
+
+    .page {
+      overflow: hidden;
+    }
+
+    .container {
+      width: min(1180px, calc(100% - 36px));
+      margin: 0 auto;
+    }
+
+    .top-note {
+      display: flex;
+      justify-content: center;
+      padding: 8px 18px;
+      color: rgba(247, 239, 227, 0.62);
+      font-size: 11px;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      background: rgba(7, 5, 10, 0.72);
+      border-bottom: 1px solid rgba(216, 193, 139, 0.12);
+    }
+
+    .site-header {
+      position: sticky;
+      top: 0;
+      z-index: 30;
+      backdrop-filter: blur(22px);
+      background: rgba(9, 6, 12, 0.78);
+      border-bottom: 1px solid rgba(247, 239, 227, 0.08);
+    }
+
+    .header-inner {
+      width: min(1180px, calc(100% - 28px));
+      min-height: 74px;
+      margin: 0 auto;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 18px;
+    }
+
+    .brand {
+      display: inline-flex;
+      align-items: center;
+      gap: 12px;
+      min-width: max-content;
+    }
+
+    .brand-mark,
+    .seal {
+      position: relative;
+      display: grid;
+      place-items: center;
+      border: 1px solid rgba(216, 193, 139, 0.46);
+      border-radius: 50%;
+      color: var(--champagne);
+      font-family: var(--serif);
+      font-style: italic;
+      background: rgba(247, 239, 227, 0.035);
+      box-shadow: inset 0 0 0 1px rgba(247, 239, 227, 0.04), 0 0 32px rgba(216, 193, 139, 0.08);
+    }
+
+    .brand-mark {
+      width: 38px;
+      height: 38px;
+      font-size: 18px;
+    }
+
+    .brand-mark::before,
+    .seal::before {
+      content: "";
+      position: absolute;
+      width: 42%;
+      height: 1px;
+      background: currentColor;
+      opacity: 0.72;
+      transform: rotate(-24deg);
+    }
+
+    .brand-word {
+      display: grid;
+      gap: 0;
+    }
+
+    .brand-word strong {
+      font-family: var(--serif);
+      font-size: 25px;
+      line-height: 1;
+      letter-spacing: 0.01em;
+      font-weight: 400;
+    }
+
+    .brand-word span {
+      color: rgba(222, 208, 189, 0.62);
+      font-size: 11px;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+    }
+
+    .desktop-nav {
+      display: none;
+      align-items: center;
+      gap: 28px;
+      color: rgba(247, 239, 227, 0.70);
+      font-size: 13px;
+    }
+
+    .desktop-nav a {
+      transition: color 260ms ease;
+    }
+
+    .desktop-nav a:hover {
+      color: var(--ivory);
+    }
+
+    .button {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      min-height: 48px;
+      padding: 0 20px;
+      border: 1px solid transparent;
+      border-radius: 999px;
+      font-size: 13px;
+      font-weight: 700;
+      letter-spacing: 0.01em;
+      cursor: pointer;
+      transition: transform 380ms ease, border-color 380ms ease, background 380ms ease, color 380ms ease, box-shadow 380ms ease;
+    }
+
+    .button:hover {
+      transform: translateY(-2px);
+    }
+
+    .button-primary {
+      color: #1b1110;
+      background: linear-gradient(135deg, #f0dca8, #c2a463);
+      box-shadow: 0 18px 46px rgba(194, 164, 99, 0.18);
+    }
+
+    .button-primary:hover {
+      box-shadow: 0 22px 62px rgba(194, 164, 99, 0.26);
+    }
+
+    .button-secondary,
+    .button-ghost {
+      color: var(--ivory);
+      background: rgba(247, 239, 227, 0.055);
+      border-color: rgba(216, 193, 139, 0.22);
+    }
+
+    .button-secondary:hover,
+    .button-ghost:hover {
+      background: rgba(247, 239, 227, 0.09);
+      border-color: rgba(216, 193, 139, 0.42);
+    }
+
+    .header-cta {
+      display: none;
+    }
+
+    .mobile-menu {
+      position: relative;
+    }
+
+    .mobile-menu summary {
+      list-style: none;
+      min-height: 44px;
+      padding: 0 16px;
+      display: inline-flex;
+      align-items: center;
+      border: 1px solid rgba(216, 193, 139, 0.24);
+      border-radius: 999px;
+      color: var(--ivory);
+      font-size: 13px;
+      background: rgba(247, 239, 227, 0.055);
+      cursor: pointer;
+    }
+
+    .mobile-menu summary::-webkit-details-marker {
+      display: none;
+    }
+
+    .mobile-panel {
+      position: absolute;
+      top: 56px;
+      right: 0;
+      width: min(330px, calc(100vw - 28px));
+      padding: 12px;
+      border: 1px solid rgba(216, 193, 139, 0.18);
+      border-radius: 26px;
+      background:
+        linear-gradient(135deg, rgba(247, 239, 227, 0.09), rgba(247, 239, 227, 0.035)),
+        rgba(13, 8, 17, 0.97);
+      box-shadow: var(--shadow);
+    }
+
+    .mobile-panel a {
+      display: flex;
+      align-items: center;
+      min-height: 50px;
+      padding: 0 14px;
+      border-radius: 16px;
+      color: rgba(247, 239, 227, 0.78);
+      border-bottom: 1px solid rgba(247, 239, 227, 0.055);
+    }
+
+    .mobile-panel a:hover {
+      color: var(--ivory);
+      background: rgba(247, 239, 227, 0.06);
+    }
+
+    .hero {
+      position: relative;
+      min-height: calc(100svh - 112px);
+      padding: 44px 0 74px;
+      display: grid;
+      align-items: center;
+    }
+
+    .hero::before {
+      content: "";
+      position: absolute;
+      inset: -14% -8% auto;
+      height: 84%;
+      pointer-events: none;
+      background:
+        radial-gradient(circle at 30% 22%, rgba(216, 193, 139, 0.17), transparent 21rem),
+        radial-gradient(circle at 73% 36%, rgba(98, 50, 60, 0.32), transparent 24rem);
+      filter: blur(5px);
+    }
+
+    .hero-grid {
+      position: relative;
+      display: grid;
+      gap: 34px;
+    }
+
+    .kicker,
+    .eyebrow {
+      color: var(--champagne);
+      font-size: 11px;
+      letter-spacing: 0.17em;
+      text-transform: uppercase;
+      font-weight: 750;
+    }
+
+    .kicker {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      margin: 0 0 20px;
+    }
+
+    .kicker::before {
+      content: "";
+      width: 44px;
+      height: 1px;
+      background: linear-gradient(90deg, var(--champagne), transparent);
+    }
+
+    h1,
+    h2,
+    h3,
+    p {
+      margin-top: 0;
+    }
+
+    h1 {
+      max-width: 840px;
+      margin-bottom: 22px;
+      font-family: var(--serif);
+      font-size: clamp(50px, 14vw, 112px);
+      line-height: 0.88;
+      letter-spacing: 0;
+      font-weight: 400;
+    }
+
+    .hero-lede {
+      max-width: 650px;
+      margin-bottom: 20px;
+      color: rgba(247, 239, 227, 0.82);
+      font-family: var(--serif);
+      font-size: clamp(20px, 5.1vw, 29px);
+      line-height: 1.36;
+    }
+
+    .hero-copy {
+      max-width: 620px;
+      margin-bottom: 0;
+      color: rgba(222, 208, 189, 0.76);
+      font-size: 15px;
+      line-height: 1.78;
+    }
+
+    .hero-actions {
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+      margin: 28px 0 24px;
+    }
+
+    .hero-actions .button {
+      width: 100%;
+    }
+
+    .trust-row {
+      display: grid;
+      gap: 10px;
+      max-width: 620px;
+    }
+
+    .trust-item {
+      display: flex;
+      gap: 12px;
+      align-items: flex-start;
+      color: rgba(247, 239, 227, 0.74);
+      font-size: 13px;
+    }
+
+    .trust-item::before {
+      content: "";
+      flex: 0 0 auto;
+      width: 8px;
+      height: 8px;
+      margin-top: 0.65em;
+      border-radius: 50%;
+      background: var(--champagne);
+      box-shadow: 0 0 18px rgba(216, 193, 139, 0.42);
+    }
+
+    .hero-visual {
+      position: relative;
+      min-height: 560px;
+      overflow: hidden;
+      border: 1px solid rgba(216, 193, 139, 0.18);
+      border-radius: 36px;
+      background:
+        linear-gradient(145deg, rgba(247, 239, 227, 0.08), rgba(247, 239, 227, 0.018)),
+        linear-gradient(180deg, #241526, #0c080f);
+      box-shadow: var(--shadow);
+      isolation: isolate;
+    }
+
+    .hero-visual::before {
+      content: "";
+      position: absolute;
+      inset: 0;
+      z-index: -1;
+      opacity: 0.45;
+      background:
+        linear-gradient(110deg, transparent 0 17%, rgba(247, 239, 227, 0.16) 17% 18%, transparent 18% 44%, rgba(247, 239, 227, 0.10) 44% 45%, transparent 45%),
+        repeating-linear-gradient(90deg, rgba(247, 239, 227, 0.04) 0 1px, transparent 1px 17px);
+      mask-image: linear-gradient(to right, black, transparent 78%);
+    }
+
+    .hero-visual::after {
+      content: "";
+      position: absolute;
+      inset: 0;
+      z-index: -1;
+      background:
+        radial-gradient(circle at 30% 18%, rgba(247, 239, 227, 0.30), transparent 13rem),
+        radial-gradient(circle at 80% 76%, rgba(98, 50, 60, 0.36), transparent 20rem),
+        linear-gradient(180deg, transparent, rgba(7, 5, 10, 0.62));
+    }
+
+    .seal {
+      position: absolute;
+      top: 28px;
+      left: 28px;
+      width: 80px;
+      height: 80px;
+      font-size: 36px;
+      background: rgba(7, 5, 10, 0.36);
+    }
+
+    .room-card {
+      position: absolute;
+      right: 26px;
+      bottom: 28px;
+      width: min(390px, calc(100% - 52px));
+      min-height: 360px;
+      overflow: hidden;
+      border: 1px solid rgba(216, 193, 139, 0.22);
+      border-radius: 30px;
+      background:
+        linear-gradient(160deg, rgba(247, 239, 227, 0.13), rgba(247, 239, 227, 0.035) 48%, rgba(7, 5, 10, 0.18)),
+        rgba(21, 13, 23, 0.82);
+      box-shadow: 0 26px 86px rgba(0, 0, 0, 0.42);
+    }
+
+    .room-card::before {
+      content: "";
+      position: absolute;
+      inset: 0;
+      opacity: 0.30;
+      background:
+        radial-gradient(circle at 38% 20%, rgba(247, 239, 227, 0.22), transparent 10rem),
+        repeating-linear-gradient(0deg, rgba(247, 239, 227, 0.04) 0 1px, transparent 1px 7px);
+    }
+
+    .room-card::after {
+      content: "";
+      position: absolute;
+      left: 50%;
+      bottom: 64px;
+      width: 220px;
+      height: 138px;
+      transform: translateX(-50%) rotate(-5deg);
+      border: 1px solid rgba(216, 193, 139, 0.18);
+      border-radius: 18px;
+      background:
+        linear-gradient(135deg, rgba(247, 239, 227, 0.16), rgba(216, 193, 139, 0.045)),
+        #181017;
+      box-shadow: 0 18px 54px rgba(0, 0, 0, 0.44);
+    }
+
+    .room-copy {
+      position: absolute;
+      left: 28px;
+      bottom: 30px;
+      max-width: 250px;
+      color: rgba(247, 239, 227, 0.78);
+      font-family: var(--serif);
+      font-size: 23px;
+      line-height: 1.18;
+    }
+
+    .room-copy span {
+      display: block;
+      margin-bottom: 10px;
+      color: var(--champagne);
+      font-family: var(--mono);
+      font-size: 10px;
+      letter-spacing: 0.16em;
+      text-transform: uppercase;
+    }
+
+    .availability {
+      position: absolute;
+      left: 28px;
+      right: 28px;
+      top: 126px;
+      display: grid;
+      gap: 10px;
+      max-width: 315px;
+    }
+
+    .availability-row {
+      display: flex;
+      justify-content: space-between;
+      gap: 14px;
+      padding: 12px 14px;
+      border: 1px solid rgba(247, 239, 227, 0.09);
+      border-radius: 16px;
+      color: rgba(247, 239, 227, 0.72);
+      font-size: 12px;
+      background: rgba(7, 5, 10, 0.22);
+    }
+
+    .availability-row strong {
+      color: var(--ivory);
+      font-weight: 650;
+    }
+
+    .section {
+      position: relative;
+      padding: 78px 0;
+    }
+
+    .section-header {
+      display: grid;
+      gap: 18px;
+      margin-bottom: 34px;
+    }
+
+    .eyebrow {
+      margin-bottom: 14px;
+    }
+
+    .section-title {
+      margin-bottom: 0;
+      max-width: 760px;
+      font-family: var(--serif);
+      font-size: clamp(36px, 9vw, 68px);
+      line-height: 0.98;
+      letter-spacing: 0;
+      font-weight: 400;
+    }
+
+    .section-lede {
+      max-width: 560px;
+      margin-bottom: 0;
+      color: rgba(222, 208, 189, 0.76);
+      font-size: 16px;
+      line-height: 1.76;
+    }
+
+    .intro-grid {
+      display: grid;
+      gap: 16px;
+    }
+
+    .intro-card {
+      padding: 24px;
+      border: 1px solid rgba(216, 193, 139, 0.14);
+      border-radius: 28px;
+      background: rgba(247, 239, 227, 0.045);
+      box-shadow: var(--shadow-soft);
+    }
+
+    .intro-card strong {
+      display: block;
+      margin-bottom: 10px;
+      font-family: var(--serif);
+      font-size: 27px;
+      font-weight: 400;
+    }
+
+    .intro-card p {
+      margin-bottom: 0;
+      color: rgba(222, 208, 189, 0.72);
+      font-size: 15px;
+    }
+
+    .advisor-grid {
+      display: grid;
+      gap: 20px;
+    }
+
+    .advisor {
+      position: relative;
+      display: grid;
+      overflow: hidden;
+      border: 1px solid rgba(216, 193, 139, 0.16);
+      border-radius: 32px;
+      background: rgba(247, 239, 227, 0.045);
+      box-shadow: var(--shadow-soft);
+      transition: transform 480ms ease, border-color 480ms ease, background 480ms ease;
+    }
+
+    .advisor:hover {
+      transform: translateY(-5px);
+      border-color: rgba(216, 193, 139, 0.33);
+      background: rgba(247, 239, 227, 0.064);
+    }
+
+    .portrait {
+      position: relative;
+      min-height: 360px;
+      overflow: hidden;
+      isolation: isolate;
+      background:
+        radial-gradient(ellipse at 24% 12%, rgba(247, 239, 227, 0.24), transparent 8rem),
+        radial-gradient(ellipse at 72% 72%, rgba(98, 50, 60, 0.30), transparent 14rem),
+        linear-gradient(145deg, rgba(98, 50, 60, 0.42), rgba(28, 16, 30, 0.88)),
+        #130c16;
+    }
+
+    .portrait::before {
+      content: "";
+      position: absolute;
+      inset: 0;
+      background:
+        linear-gradient(105deg, rgba(247, 239, 227, 0.18) 0 10%, transparent 10% 38%, rgba(247, 239, 227, 0.075) 38% 39%, transparent 39%),
+        repeating-linear-gradient(90deg, rgba(247, 239, 227, 0.032) 0 1px, transparent 1px 18px);
+      opacity: 0.72;
+      mix-blend-mode: screen;
+      z-index: 1;
+      pointer-events: none;
+    }
+
+    .portrait::after {
+      content: "";
+      position: absolute;
+      inset: 0;
+      background:
+        radial-gradient(circle at 50% 36%, transparent 0 10rem, rgba(7, 5, 10, 0.20) 15rem),
+        linear-gradient(180deg, transparent 56%, rgba(7, 5, 10, 0.46));
+      z-index: 3;
+      pointer-events: none;
+    }
+
+    .portrait-light {
+      position: absolute;
+      inset: 0;
+      z-index: 2;
+      opacity: 0.22;
+      background:
+        radial-gradient(circle at 38% 18%, rgba(247, 239, 227, 0.34), transparent 8rem),
+        linear-gradient(110deg, rgba(247, 239, 227, 0.20), transparent 28%);
+      pointer-events: none;
+    }
+
+    .portrait svg {
+      position: absolute;
+      inset: 0;
+      width: 100%;
+      height: 100%;
+      display: block;
+      z-index: 2;
+      filter: saturate(0.96) contrast(1.03);
+    }
+
+    .portrait-grain {
+      position: absolute;
+      inset: 0;
+      z-index: 4;
+      opacity: 0.12;
+      background-image:
+        radial-gradient(circle at 20% 20%, rgba(247, 239, 227, 0.50) 0 1px, transparent 1.2px),
+        radial-gradient(circle at 70% 30%, rgba(7, 5, 10, 0.80) 0 1px, transparent 1.4px),
+        radial-gradient(circle at 45% 80%, rgba(247, 239, 227, 0.36) 0 1px, transparent 1.3px);
+      background-size: 11px 11px, 17px 17px, 23px 23px;
+      mix-blend-mode: overlay;
+      pointer-events: none;
+    }
+
+    .advisor:nth-child(2) .portrait {
+      background:
+        radial-gradient(ellipse at 28% 12%, rgba(247, 239, 227, 0.20), transparent 8rem),
+        radial-gradient(ellipse at 76% 76%, rgba(53, 43, 54, 0.46), transparent 14rem),
+        linear-gradient(145deg, rgba(38, 31, 42, 0.90), rgba(27, 14, 23, 0.94)),
+        #130c16;
+    }
+
+    .advisor:nth-child(3) .portrait {
+      background:
+        radial-gradient(ellipse at 24% 14%, rgba(247, 239, 227, 0.22), transparent 8rem),
+        radial-gradient(ellipse at 76% 76%, rgba(88, 49, 63, 0.36), transparent 14rem),
+        linear-gradient(145deg, rgba(88, 49, 63, 0.42), rgba(20, 13, 25, 0.90)),
+        #130c16;
+    }
+
+    .portrait-caption {
+      position: absolute;
+      left: 18px;
+      bottom: 18px;
+      right: 18px;
+      display: flex;
+      justify-content: space-between;
+      gap: 12px;
+      padding: 12px 14px;
+      border: 1px solid rgba(247, 239, 227, 0.08);
+      border-radius: 18px;
+      color: rgba(247, 239, 227, 0.68);
+      font-size: 12px;
+      background: rgba(7, 5, 10, 0.34);
+      backdrop-filter: blur(14px);
+      z-index: 5;
+    }
+
+    .advisor-content {
+      padding: 24px;
+    }
+
+    .advisor-role {
+      display: block;
+      margin-bottom: 12px;
+      color: var(--champagne);
+      font-size: 11px;
+      letter-spacing: 0.16em;
+      text-transform: uppercase;
+      font-weight: 750;
+    }
+
+    .advisor h3 {
+      margin-bottom: 12px;
+      font-family: var(--serif);
+      font-size: 40px;
+      line-height: 1;
+      font-weight: 400;
+    }
+
+    .advisor p {
+      margin-bottom: 18px;
+      color: rgba(247, 239, 227, 0.76);
+      font-size: 15px;
+    }
+
+    .advisor-meta {
+      display: grid;
+      gap: 8px;
+      margin-bottom: 20px;
+      color: rgba(222, 208, 189, 0.70);
+      font-size: 13px;
+    }
+
+    .advisor-meta span {
+      position: relative;
+      padding-left: 18px;
+    }
+
+    .advisor-meta span::before {
+      content: "";
+      position: absolute;
+      left: 0;
+      top: 0.78em;
+      width: 7px;
+      height: 1px;
+      background: var(--champagne);
+    }
+
+    .steps {
+      display: grid;
+      gap: 16px;
+    }
+
+    .step {
+      position: relative;
+      padding: 26px;
+      border: 1px solid rgba(216, 193, 139, 0.14);
+      border-radius: 28px;
+      background: rgba(247, 239, 227, 0.045);
+      box-shadow: var(--shadow-soft);
+    }
+
+    .step-number {
+      display: block;
+      margin-bottom: 34px;
+      color: var(--champagne);
+      font-family: var(--mono);
+      font-size: 11px;
+      letter-spacing: 0.12em;
+    }
+
+    .step h3 {
+      margin-bottom: 10px;
+      font-family: var(--serif);
+      font-size: 29px;
+      font-weight: 400;
+    }
+
+    .step p {
+      margin-bottom: 0;
+      color: rgba(222, 208, 189, 0.72);
+      font-size: 15px;
+    }
+
+    .questions {
+      background:
+        radial-gradient(circle at 16% 20%, rgba(98, 50, 60, 0.20), transparent 21rem),
+        rgba(247, 239, 227, 0.016);
+    }
+
+    .question-grid {
+      display: grid;
+      gap: 12px;
+    }
+
+    .question-card {
+      min-height: 120px;
+      display: flex;
+      align-items: flex-end;
+      padding: 20px;
+      border: 1px solid rgba(216, 193, 139, 0.13);
+      border-radius: 24px;
+      color: rgba(247, 239, 227, 0.82);
+      font-family: var(--serif);
+      font-size: 23px;
+      line-height: 1.18;
+      background:
+        linear-gradient(145deg, rgba(247, 239, 227, 0.070), rgba(247, 239, 227, 0.026)),
+        rgba(247, 239, 227, 0.025);
+    }
+
+    .pricing-grid {
+      display: grid;
+      gap: 16px;
+    }
+
+    .price-card {
+      position: relative;
+      padding: 26px;
+      overflow: hidden;
+      border: 1px solid rgba(216, 193, 139, 0.14);
+      border-radius: 30px;
+      background: rgba(247, 239, 227, 0.045);
+      box-shadow: var(--shadow-soft);
+      transition: transform 420ms ease, border-color 420ms ease, background 420ms ease;
+    }
+
+    .price-card:hover {
+      transform: translateY(-4px);
+      border-color: rgba(216, 193, 139, 0.30);
+      background: rgba(247, 239, 227, 0.060);
+    }
+
+    .price-card.featured {
+      border-color: rgba(216, 193, 139, 0.32);
+      background:
+        linear-gradient(160deg, rgba(216, 193, 139, 0.14), rgba(247, 239, 227, 0.052)),
+        rgba(247, 239, 227, 0.052);
+    }
+
+    .price-label {
+      margin-bottom: 18px;
+      color: var(--champagne);
+      font-size: 11px;
+      letter-spacing: 0.16em;
+      text-transform: uppercase;
+      font-weight: 750;
+    }
+
+    .price {
+      display: flex;
+      align-items: flex-end;
+      gap: 8px;
+      margin-bottom: 12px;
+      font-family: var(--serif);
+      font-size: 48px;
+      line-height: 1;
+    }
+
+    .price span {
+      padding-bottom: 7px;
+      color: rgba(222, 208, 189, 0.68);
+      font-family: var(--sans);
+      font-size: 13px;
+    }
+
+    .price-card p {
+      color: rgba(247, 239, 227, 0.76);
+    }
+
+    .feature-list {
+      display: grid;
+      gap: 10px;
+      padding: 0;
+      margin: 22px 0 24px;
+      color: rgba(222, 208, 189, 0.72);
+      font-size: 14px;
+      list-style: none;
+    }
+
+    .feature-list li {
+      position: relative;
+      padding-left: 18px;
+    }
+
+    .feature-list li::before {
+      content: "";
+      position: absolute;
+      left: 0;
+      top: 0.8em;
+      width: 8px;
+      height: 1px;
+      background: var(--champagne);
+    }
+
+    .notice {
+      margin-top: 16px;
+      padding: 18px;
+      border: 1px solid rgba(216, 193, 139, 0.14);
+      border-radius: 24px;
+      color: rgba(222, 208, 189, 0.72);
+      font-size: 14px;
+      background: rgba(247, 239, 227, 0.036);
+    }
+
+    .responsible-layout {
+      display: grid;
+      gap: 18px;
+    }
+
+    .responsible-panel {
+      position: relative;
+      padding: 34px;
+      overflow: hidden;
+      border: 1px solid rgba(216, 193, 139, 0.16);
+      border-radius: 34px;
+      background: rgba(247, 239, 227, 0.050);
+      box-shadow: var(--shadow-soft);
+    }
+
+    .responsible-panel::before {
+      content: "";
+      position: absolute;
+      inset: 22px 22px auto auto;
+      width: 112px;
+      height: 112px;
+      border: 1px solid rgba(216, 193, 139, 0.18);
+      border-radius: 50%;
+    }
+
+    .responsible-panel h2 {
+      max-width: 650px;
+      margin-bottom: 18px;
+      font-family: var(--serif);
+      font-size: clamp(36px, 8vw, 64px);
+      line-height: 0.98;
+      font-weight: 400;
+    }
+
+    .responsible-panel p {
+      max-width: 650px;
+      margin-bottom: 24px;
+      color: rgba(222, 208, 189, 0.76);
+      font-size: 16px;
+    }
+
+    .proof-list {
+      display: grid;
+      gap: 14px;
+    }
+
+    .proof-item {
+      padding: 22px;
+      border: 1px solid rgba(216, 193, 139, 0.14);
+      border-radius: 24px;
+      background: rgba(247, 239, 227, 0.045);
+      box-shadow: var(--shadow-soft);
+    }
+
+    .proof-item strong {
+      display: block;
+      margin-bottom: 8px;
+      color: var(--ivory);
+      font-family: var(--serif);
+      font-size: 24px;
+      font-weight: 400;
+    }
+
+    .proof-item span {
+      color: rgba(222, 208, 189, 0.72);
+      font-size: 14px;
+    }
+
+    .journal-grid {
+      display: grid;
+      gap: 16px;
+    }
+
+    .journal-card {
+      min-height: 250px;
+      display: flex;
+      flex-direction: column;
+      justify-content: space-between;
+      padding: 24px;
+      border: 1px solid rgba(216, 193, 139, 0.14);
+      border-radius: 28px;
+      background: rgba(247, 239, 227, 0.045);
+      box-shadow: var(--shadow-soft);
+      transition: transform 420ms ease, border-color 420ms ease, background 420ms ease;
+    }
+
+    .journal-card:hover {
+      transform: translateY(-4px);
+      border-color: rgba(216, 193, 139, 0.30);
+      background: rgba(247, 239, 227, 0.060);
+    }
+
+    .journal-card span {
+      color: var(--champagne);
+      font-size: 11px;
+      letter-spacing: 0.16em;
+      text-transform: uppercase;
+      font-weight: 750;
+    }
+
+    .journal-card h3 {
+      margin-bottom: 12px;
+      font-family: var(--serif);
+      font-size: 31px;
+      line-height: 1.05;
+      font-weight: 400;
+    }
+
+    .journal-card p {
+      margin-bottom: 0;
+      color: rgba(222, 208, 189, 0.72);
+      font-size: 14px;
+    }
+
+    .faq-list {
+      display: grid;
+      gap: 12px;
+    }
+
+    .faq-list details {
+      padding: 2px 20px;
+      border: 1px solid rgba(216, 193, 139, 0.14);
+      border-radius: 22px;
+      background: rgba(247, 239, 227, 0.045);
+      box-shadow: var(--shadow-soft);
+    }
+
+    .faq-list summary {
+      min-height: 66px;
+      display: flex;
+      align-items: center;
+      color: var(--ivory);
+      font-family: var(--serif);
+      font-size: 21px;
+      cursor: pointer;
+    }
+
+    .faq-list p {
+      margin-bottom: 20px;
+      color: rgba(222, 208, 189, 0.72);
+      font-size: 14px;
+    }
+
+    .footer {
+      padding: 64px 0 110px;
+      border-top: 1px solid rgba(247, 239, 227, 0.08);
+      background: rgba(7, 5, 10, 0.60);
+    }
+
+    .footer-grid {
+      display: grid;
+      gap: 32px;
+    }
+
+    .footer-brand h2 {
+      margin-bottom: 12px;
+      font-family: var(--serif);
+      font-size: 48px;
+      font-weight: 400;
+    }
+
+    .footer-brand p {
+      max-width: 430px;
+      color: rgba(222, 208, 189, 0.70);
+    }
+
+    .footer-links {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 24px;
+    }
+
+    .footer-links strong {
+      display: block;
+      margin-bottom: 12px;
+      color: var(--champagne);
+      font-size: 11px;
+      letter-spacing: 0.16em;
+      text-transform: uppercase;
+    }
+
+    .footer-links a {
+      display: block;
+      padding: 6px 0;
+      color: rgba(247, 239, 227, 0.68);
+      font-size: 14px;
+    }
+
+    .footer-bottom {
+      display: grid;
+      gap: 10px;
+      margin-top: 42px;
+      padding-top: 22px;
+      border-top: 1px solid rgba(247, 239, 227, 0.08);
+      color: rgba(222, 208, 189, 0.54);
+      font-size: 12px;
+    }
+
+    .mobile-sticky {
+      position: fixed;
+      left: 12px;
+      right: 12px;
+      bottom: 12px;
+      z-index: 40;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      padding: 10px 10px 10px 16px;
+      border: 1px solid rgba(216, 193, 139, 0.22);
+      border-radius: 999px;
+      background: rgba(13, 8, 17, 0.90);
+      backdrop-filter: blur(22px);
+      box-shadow: 0 18px 60px rgba(0, 0, 0, 0.45);
+    }
+
+    .mobile-sticky span {
+      color: rgba(247, 239, 227, 0.80);
+      font-family: var(--serif);
+      font-size: 14px;
+      line-height: 1.18;
+    }
+
+    .mobile-sticky .button {
+      min-height: 42px;
+      padding: 0 18px;
+      white-space: nowrap;
+    }
+
+    @media (min-width: 700px) {
+      .hero-actions {
+        flex-direction: row;
+      }
+
+      .hero-actions .button {
+        width: auto;
+      }
+
+      .intro-grid,
+      .steps,
+      .question-grid,
+      .pricing-grid,
+      .journal-grid {
+        grid-template-columns: repeat(3, 1fr);
+      }
+
+      .advisor {
+        grid-template-columns: minmax(250px, 0.82fr) 1fr;
+      }
+
+      .advisor:nth-child(even) {
+        grid-template-columns: 1fr minmax(250px, 0.82fr);
+      }
+
+      .advisor:nth-child(even) .portrait {
+        order: 2;
+      }
+
+      .responsible-layout {
+        grid-template-columns: 1.1fr 0.9fr;
+        align-items: start;
+      }
+
+      .footer-grid {
+        grid-template-columns: 1.05fr 0.75fr;
+      }
+    }
+
+    @media (min-width: 960px) {
+      .desktop-nav,
+      .header-cta {
+        display: inline-flex;
+      }
+
+      .mobile-menu {
+        display: none;
+      }
+
+      .hero {
+        padding: 72px 0 104px;
+      }
+
+      .hero-grid {
+        grid-template-columns: minmax(0, 0.98fr) minmax(420px, 0.72fr);
+        align-items: center;
+        gap: 56px;
+      }
+
+      h1 {
+        font-size: clamp(78px, 7.7vw, 122px);
+      }
+
+      .hero-visual {
+        min-height: 680px;
+        border-radius: 44px;
+      }
+
+      .section {
+        padding: 108px 0;
+      }
+
+      .section-header {
+        grid-template-columns: 1.08fr 0.72fr;
+        align-items: end;
+        margin-bottom: 48px;
+      }
+
+      .advisor-grid {
+        gap: 24px;
+      }
+
+      .advisor-content {
+        padding: 36px;
+        display: flex;
+        flex-direction: column;
+        justify-content: center;
+      }
+
+      .mobile-sticky {
+        display: none;
+      }
+
+      .footer {
+        padding-bottom: 58px;
+      }
+    }
+
+    @media (max-width: 430px) {
+      .container {
+        width: min(100% - 28px, 1180px);
+      }
+
+      .top-note {
+        text-align: center;
+        font-size: 10px;
+      }
+
+      .header-inner {
+        min-height: 68px;
+      }
+
+      .brand-word span {
+        display: none;
+      }
+
+      h1 {
+        font-size: clamp(48px, 14.5vw, 64px);
+      }
+
+      .hero-visual {
+        min-height: 510px;
+        border-radius: 28px;
+      }
+
+      .seal {
+        top: 22px;
+        left: 22px;
+        width: 64px;
+        height: 64px;
+      }
+
+      .availability {
+        top: 102px;
+        left: 18px;
+        right: 18px;
+      }
+
+      .room-card {
+        right: 18px;
+        bottom: 88px;
+        width: calc(100% - 36px);
+        min-height: 250px;
+      }
+
+      .room-copy {
+        left: 22px;
+        bottom: 24px;
+        max-width: 250px;
+        font-size: 20px;
+      }
+
+      .portrait {
+        min-height: 315px;
+      }
+
+      .section {
+        padding: 68px 0;
+      }
+
+      .price {
+        font-size: 42px;
+      }
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+      *,
+      *::before,
+      *::after {
+        scroll-behavior: auto !important;
+        transition-duration: 0.01ms !important;
+        animation-duration: 0.01ms !important;
+      }
+    }
+  </style>
+</head>
+<body>
+  <div class="page">
+    <div class="top-note">Preview autonome production - nouveau fichier de démonstration uniquement</div>
+
+    <header class="site-header">
+      <div class="header-inner">
+        <a class="brand" href="#top" aria-label="Auryel">
+          <span class="brand-mark">A</span>
+          <span class="brand-word">
+            <strong>Auryel</strong>
+            <span>Cabinet digital</span>
+          </span>
+        </a>
+
+        <nav class="desktop-nav" aria-label="Navigation principale">
+          <a href="#conseilleres">Conseillères</a>
+          <a href="#fonctionnement">Fonctionnement</a>
+          <a href="#tarifs">Tarifs</a>
+          <a href="#cadre">Cadre</a>
+          <a href="#faq">FAQ</a>
+        </nav>
+
+        <a class="button button-primary header-cta" href="#conseilleres">Choisir une conseillère</a>
+
+        <details class="mobile-menu">
+          <summary>Menu</summary>
+          <div class="mobile-panel">
+            <a href="#conseilleres">Conseillères</a>
+            <a href="#fonctionnement">Fonctionnement</a>
+            <a href="#tarifs">Tarifs</a>
+            <a href="#cadre">Cadre</a>
+            <a href="#faq">FAQ</a>
+          </div>
+        </details>
+      </div>
+    </header>
+
+    <main id="top">
+      <section class="hero" aria-labelledby="hero-title">
+        <div class="container hero-grid">
+          <div>
+            <p class="kicker">Guidance personnelle confidentielle</p>
+            <h1 id="hero-title">Un espace privé pour clarifier ce qui vous traverse.</h1>
+            <p class="hero-lede">Auryel vous met en relation avec une conseillère choisie pour son écoute, son ton et sa manière d’éclairer les questions intimes.</p>
+            <p class="hero-copy">Vous choisissez une approche, une formule claire, puis vous continuez en privé sur WhatsApp. Aucun discours alarmiste, aucune promesse absolue : seulement un cadre calme pour formuler votre question et recevoir un retour posé.</p>
+            <div class="hero-actions">
+              <a class="button button-primary" href="#conseilleres">Choisir ma conseillère</a>
+              <a class="button button-secondary" href="#fonctionnement">Voir comment ça marche</a>
+            </div>
+            <div class="trust-row" aria-label="Garanties principales">
+              <div class="trust-item">Prix visibles avant l’accès au service, sans frais cachés dans cette proposition.</div>
+              <div class="trust-item">Accompagnement symbolique et personnel, ne remplaçant pas un avis médical, juridique ou financier.</div>
+              <div class="trust-item">Annulation expliquée dans le parcours, sans compte à rebours ni pression commerciale.</div>
+            </div>
+          </div>
+
+          <div class="hero-visual" aria-label="Ambiance de cabinet privé Auryel">
+            <div class="seal">A</div>
+            <div class="availability" aria-label="Aperçu du service">
+              <div class="availability-row"><strong>Canal</strong><span>WhatsApp privé</span></div>
+              <div class="availability-row"><strong>Délai</strong><span>Réponse selon disponibilité</span></div>
+              <div class="availability-row"><strong>Cadre</strong><span>Confidentiel et explicite</span></div>
+            </div>
+            <div class="room-card"></div>
+            <p class="room-copy"><span>Cabinet nocturne</span>Une interface qui donne la sensation d’entrer dans un lieu calme, pas dans un tunnel de vente.</p>
+          </div>
+        </div>
+      </section>
+
+      <section class="section" id="service">
+        <div class="container">
+          <div class="section-header">
+            <div>
+              <p class="eyebrow">Ce que propose Auryel</p>
+              <h2 class="section-title">Une guidance humaine, structurée et simple à commencer.</h2>
+            </div>
+            <p class="section-lede">Auryel s’adresse aux moments où une question reste ouverte : relation, choix, période de transition, besoin de recul. L’expérience reste concrète, lisible et responsable.</p>
+          </div>
+
+          <div class="intro-grid">
+            <article class="intro-card">
+              <strong>Une vraie personne</strong>
+              <p>Vous choisissez une conseillère selon son approche, son ton et le type de question que vous souhaitez déposer.</p>
+            </article>
+            <article class="intro-card">
+              <strong>Un cadre clair</strong>
+              <p>Le prix, le canal, les limites et les conditions sont visibles avant de poursuivre. Rien n’est caché derrière l’émotion.</p>
+            </article>
+            <article class="intro-card">
+              <strong>Un échange privé</strong>
+              <p>La suite se déroule sur WhatsApp, dans un cadre plus direct et plus personnel, sans transformer le canal en argument agressif.</p>
+            </article>
+          </div>
+        </div>
+      </section>
+
+      <section class="section" id="conseilleres">
+        <div class="container">
+          <div class="section-header">
+            <div>
+              <p class="eyebrow">Conseillères</p>
+              <h2 class="section-title">Choisissez la présence qui correspond à votre question.</h2>
+            </div>
+            <p class="section-lede">Chaque profil est présenté comme une personne de confiance : une spécialité, une manière d’écouter, un rythme et une posture. Le choix se fait sans classement artificiel.</p>
+          </div>
+
+          <div class="advisor-grid">
+            <article class="advisor">
+              <div class="portrait" aria-label="Portrait éditorial de Selena">
+                <span class="portrait-light"></span>
+                <svg viewBox="0 0 520 640" role="img" aria-label="Selena, conseillère relationnelle au regard doux">
+                  <defs>
+                    <linearGradient id="selena-bg" x1="0" x2="1" y1="0" y2="1">
+                      <stop offset="0" stop-color="#4f2b32"/>
+                      <stop offset="0.55" stop-color="#201421"/>
+                      <stop offset="1" stop-color="#0b0710"/>
+                    </linearGradient>
+                    <radialGradient id="selena-skin" cx="42%" cy="26%" r="74%">
+                      <stop offset="0" stop-color="#e3b99f"/>
+                      <stop offset="0.48" stop-color="#ba806d"/>
+                      <stop offset="1" stop-color="#6f3e3b"/>
+                    </radialGradient>
+                    <linearGradient id="selena-hair" x1="0" x2="1" y1="0" y2="1">
+                      <stop offset="0" stop-color="#3b2320"/>
+                      <stop offset="0.55" stop-color="#1d1112"/>
+                      <stop offset="1" stop-color="#090608"/>
+                    </linearGradient>
+                    <linearGradient id="selena-coat" x1="0" x2="1" y1="0" y2="1">
+                      <stop offset="0" stop-color="#5d3b3c"/>
+                      <stop offset="0.62" stop-color="#25151b"/>
+                      <stop offset="1" stop-color="#0b0710"/>
+                    </linearGradient>
+                    <filter id="selena-soft" x="-20%" y="-20%" width="140%" height="140%">
+                      <feGaussianBlur stdDeviation="0.45"/>
+                    </filter>
+                  </defs>
+                  <rect width="520" height="640" fill="url(#selena-bg)"/>
+                  <path d="M68 0h76l-38 640H0V0z" fill="#f7efe3" opacity="0.10"/>
+                  <path d="M112 0h20L88 640H52z" fill="#f7efe3" opacity="0.07"/>
+                  <ellipse cx="285" cy="582" rx="202" ry="122" fill="#07050a" opacity="0.46"/>
+                  <path d="M116 602c24-130 81-190 160-190 89 0 148 64 172 190z" fill="url(#selena-coat)"/>
+                  <path d="M222 406c5 44 1 70-18 96 39 30 88 30 124 0-21-28-24-55-18-96z" fill="url(#selena-skin)"/>
+                  <path d="M143 292c-10-104 49-192 137-194 94-2 153 76 149 185-4 98-45 176-142 179-87 3-134-70-144-170z" fill="url(#selena-hair)"/>
+                  <path d="M179 274c2-88 42-142 105-142 65 0 108 57 108 141 0 97-45 157-108 157-62 0-105-61-105-156z" fill="url(#selena-skin)"/>
+                  <path d="M184 274c30-6 55-23 76-59 28 35 66 52 127 55-8-78-43-129-103-130-58-1-94 48-100 134z" fill="url(#selena-hair)"/>
+                  <path d="M176 292c-22 0-31 18-26 44 5 25 19 37 36 32z" fill="#a56c5f"/>
+                  <path d="M391 292c22 0 31 18 26 44-5 25-19 37-36 32z" fill="#9a6359"/>
+                  <path d="M226 297c19-10 39-10 58-1" stroke="#2a1718" stroke-width="7" stroke-linecap="round" opacity="0.82"/>
+                  <path d="M318 297c18-10 37-10 55-1" stroke="#2a1718" stroke-width="7" stroke-linecap="round" opacity="0.82"/>
+                  <ellipse cx="256" cy="319" rx="6" ry="4" fill="#1d1112"/>
+                  <ellipse cx="341" cy="319" rx="6" ry="4" fill="#1d1112"/>
+                  <path d="M295 323c-7 23-12 39-4 48 6 6 17 5 27-1" stroke="#74443f" stroke-width="5" stroke-linecap="round" fill="none" opacity="0.75"/>
+                  <path d="M257 392c25 17 59 17 83-1" stroke="#743f42" stroke-width="6" stroke-linecap="round" fill="none"/>
+                  <path d="M210 248c-16 58-10 137 16 188-47-30-76-90-70-164z" fill="#10090d" opacity="0.38"/>
+                  <path d="M388 252c12 55 5 133-26 184 50-32 78-93 70-164z" fill="#10090d" opacity="0.36"/>
+                  <path d="M202 505c36 26 70 38 102 36 33-2 65-15 98-39" stroke="#d8c18b" stroke-width="2" opacity="0.32" fill="none"/>
+                  <path d="M0 0h520v640H0z" fill="none" stroke="#d8c18b" stroke-opacity="0.05"/>
+                  <circle cx="208" cy="190" r="72" fill="#f7efe3" opacity="0.055" filter="url(#selena-soft)"/>
+                </svg>
+                <span class="portrait-grain"></span>
+                <div class="portrait-caption"><span>Selena</span><span>Relationnel</span></div>
+              </div>
+              <div class="advisor-content">
+                <span class="advisor-role">Amour, attachement, clarification</span>
+                <h3>Selena</h3>
+                <p>Selena accompagne les questions affectives avec douceur et précision. Son approche aide à mettre des mots sur un silence, une rupture, une attente ou une hésitation relationnelle.</p>
+                <div class="advisor-meta">
+                  <span>Ton calme, chaleureux, direct quand c’est nécessaire</span>
+                  <span>Pour les ruptures, les retours possibles, les choix amoureux</span>
+                  <span>Idéal si vous avez besoin d’être entendu avant d’être orienté</span>
+                </div>
+                <a class="button button-ghost" href="#tarifs">Continuer avec Selena</a>
+              </div>
+            </article>
+
+            <article class="advisor">
+              <div class="portrait" aria-label="Portrait éditorial de Thea">
+                <span class="portrait-light"></span>
+                <svg viewBox="0 0 520 640" role="img" aria-label="Thea, conseillère analytique à la présence calme">
+                  <defs>
+                    <linearGradient id="thea-bg" x1="0" x2="1" y1="0" y2="1">
+                      <stop offset="0" stop-color="#332b36"/>
+                      <stop offset="0.56" stop-color="#1b131d"/>
+                      <stop offset="1" stop-color="#08060a"/>
+                    </linearGradient>
+                    <radialGradient id="thea-skin" cx="44%" cy="24%" r="76%">
+                      <stop offset="0" stop-color="#d8a985"/>
+                      <stop offset="0.50" stop-color="#a36d55"/>
+                      <stop offset="1" stop-color="#5b332d"/>
+                    </radialGradient>
+                    <linearGradient id="thea-hair" x1="0" x2="1" y1="0" y2="1">
+                      <stop offset="0" stop-color="#21191a"/>
+                      <stop offset="0.58" stop-color="#0f0b0d"/>
+                      <stop offset="1" stop-color="#050405"/>
+                    </linearGradient>
+                    <linearGradient id="thea-jacket" x1="0" x2="1" y1="0" y2="1">
+                      <stop offset="0" stop-color="#35313a"/>
+                      <stop offset="0.58" stop-color="#19131a"/>
+                      <stop offset="1" stop-color="#07050a"/>
+                    </linearGradient>
+                  </defs>
+                  <rect width="520" height="640" fill="url(#thea-bg)"/>
+                  <path d="M72 0h70L98 640H0V0z" fill="#f7efe3" opacity="0.095"/>
+                  <path d="M152 0h16l-40 640H96z" fill="#f7efe3" opacity="0.045"/>
+                  <ellipse cx="270" cy="586" rx="210" ry="116" fill="#050407" opacity="0.52"/>
+                  <path d="M105 604c26-128 86-188 169-188 84 0 146 61 174 188z" fill="url(#thea-jacket)"/>
+                  <path d="M219 402c6 48 0 75-23 102 43 26 92 26 134-1-24-29-29-57-22-101z" fill="url(#thea-skin)"/>
+                  <path d="M167 271c-5-104 43-174 119-178 83-4 132 68 126 178-6 103-48 169-124 170-76 2-117-65-121-170z" fill="url(#thea-hair)"/>
+                  <path d="M188 266c5-83 42-133 98-135 59-2 99 50 101 134 2 100-39 163-99 164-60 1-105-62-100-163z" fill="url(#thea-skin)"/>
+                  <path d="M189 267c34-7 71-31 98-72 23 37 54 56 100 62-4-76-41-125-100-125-57 0-92 49-98 135z" fill="url(#thea-hair)"/>
+                  <path d="M184 291c-20 0-29 17-24 42 5 23 18 35 34 31z" fill="#905d4d"/>
+                  <path d="M385 291c20 0 29 17 24 42-5 23-18 35-34 31z" fill="#88564a"/>
+                  <path d="M224 296c18-8 38-8 57 0" stroke="#1d1515" stroke-width="7" stroke-linecap="round" opacity="0.85"/>
+                  <path d="M318 296c17-8 36-8 53-1" stroke="#1d1515" stroke-width="7" stroke-linecap="round" opacity="0.85"/>
+                  <ellipse cx="255" cy="318" rx="5.5" ry="4" fill="#161012"/>
+                  <ellipse cx="340" cy="318" rx="5.5" ry="4" fill="#161012"/>
+                  <path d="M299 322c-6 24-11 38-3 47 7 7 17 5 27-1" stroke="#684039" stroke-width="5" stroke-linecap="round" fill="none" opacity="0.72"/>
+                  <path d="M262 390c21 12 54 12 76-1" stroke="#63353a" stroke-width="5.5" stroke-linecap="round" fill="none"/>
+                  <path d="M208 510c31 17 59 25 85 24 26-1 53-10 83-27" stroke="#d8c18b" stroke-width="2" opacity="0.28" fill="none"/>
+                  <path d="M209 534l-28 70M377 530l34 74" stroke="#0d090e" stroke-width="16" stroke-linecap="round" opacity="0.72"/>
+                  <path d="M0 0h520v640H0z" fill="none" stroke="#d8c18b" stroke-opacity="0.05"/>
+                </svg>
+                <span class="portrait-grain"></span>
+                <div class="portrait-caption"><span>Thea</span><span>Décision</span></div>
+              </div>
+              <div class="advisor-content">
+                <span class="advisor-role">Cycles, timing, choix personnels</span>
+                <h3>Thea</h3>
+                <p>Thea privilégie une lecture structurée. Elle aide à comprendre un moment charnière, distinguer les options et retrouver une ligne de décision plus nette.</p>
+                <div class="advisor-meta">
+                  <span>Ton posé, analytique, sans dramatisation</span>
+                  <span>Pour les choix professionnels, transitions, directions de vie</span>
+                  <span>Idéal si vous cherchez de la clarté plutôt qu’une prédiction</span>
+                </div>
+                <a class="button button-ghost" href="#tarifs">Continuer avec Thea</a>
+              </div>
+            </article>
+
+            <article class="advisor">
+              <div class="portrait" aria-label="Portrait éditorial de Maia">
+                <span class="portrait-light"></span>
+                <svg viewBox="0 0 520 640" role="img" aria-label="Maia, conseillère introspective et sensible">
+                  <defs>
+                    <linearGradient id="maia-bg" x1="0" x2="1" y1="0" y2="1">
+                      <stop offset="0" stop-color="#51303e"/>
+                      <stop offset="0.56" stop-color="#1c1120"/>
+                      <stop offset="1" stop-color="#08060a"/>
+                    </linearGradient>
+                    <radialGradient id="maia-skin" cx="40%" cy="24%" r="78%">
+                      <stop offset="0" stop-color="#e1b492"/>
+                      <stop offset="0.50" stop-color="#b8795e"/>
+                      <stop offset="1" stop-color="#704038"/>
+                    </radialGradient>
+                    <linearGradient id="maia-hair" x1="0" x2="1" y1="0" y2="1">
+                      <stop offset="0" stop-color="#34221f"/>
+                      <stop offset="0.55" stop-color="#181012"/>
+                      <stop offset="1" stop-color="#060405"/>
+                    </linearGradient>
+                    <linearGradient id="maia-knit" x1="0" x2="1" y1="0" y2="1">
+                      <stop offset="0" stop-color="#6a4646"/>
+                      <stop offset="0.56" stop-color="#2a1820"/>
+                      <stop offset="1" stop-color="#0a070b"/>
+                    </linearGradient>
+                  </defs>
+                  <rect width="520" height="640" fill="url(#maia-bg)"/>
+                  <path d="M66 0h78l-40 640H0V0z" fill="#f7efe3" opacity="0.10"/>
+                  <path d="M130 0h24l-38 640H76z" fill="#f7efe3" opacity="0.045"/>
+                  <ellipse cx="276" cy="584" rx="212" ry="118" fill="#060409" opacity="0.50"/>
+                  <path d="M109 606c24-132 82-194 171-194 88 0 148 62 174 194z" fill="url(#maia-knit)"/>
+                  <path d="M220 404c5 48-1 76-24 104 43 28 94 28 136-1-24-30-29-58-22-103z" fill="url(#maia-skin)"/>
+                  <path d="M144 284c-8-118 54-196 144-198 89-2 143 74 135 190-8 111-53 177-135 180-82 3-136-64-144-172z" fill="url(#maia-hair)"/>
+                  <path d="M183 270c3-84 42-135 103-137 62-2 101 50 103 137 2 100-39 164-101 166-63 2-109-62-105-166z" fill="url(#maia-skin)"/>
+                  <path d="M185 270c41-6 75-28 104-70 27 42 59 60 98 66-6-80-43-132-101-132-59 0-96 51-101 136z" fill="url(#maia-hair)"/>
+                  <path d="M179 295c-21 1-30 18-25 43 5 24 18 36 35 31z" fill="#9e6654"/>
+                  <path d="M388 295c21 1 30 18 25 43-5 24-18 36-35 31z" fill="#955d4f"/>
+                  <path d="M222 299c18-9 39-9 58 0" stroke="#211415" stroke-width="7" stroke-linecap="round" opacity="0.82"/>
+                  <path d="M317 298c18-9 38-9 56-1" stroke="#211415" stroke-width="7" stroke-linecap="round" opacity="0.82"/>
+                  <ellipse cx="254" cy="322" rx="5.8" ry="4" fill="#1a1012"/>
+                  <ellipse cx="340" cy="321" rx="5.8" ry="4" fill="#1a1012"/>
+                  <path d="M295 326c-7 24-12 39-3 48 6 7 17 6 28-1" stroke="#70423a" stroke-width="5" stroke-linecap="round" fill="none" opacity="0.72"/>
+                  <path d="M260 393c23 14 55 14 79-1" stroke="#704046" stroke-width="5.5" stroke-linecap="round" fill="none"/>
+                  <path d="M190 526c34 21 69 31 105 29 36-1 70-13 103-33" stroke="#d8c18b" stroke-width="2" opacity="0.26" fill="none"/>
+                  <path d="M197 560c58 20 119 20 183-2" stroke="#4d3034" stroke-width="14" stroke-linecap="round" opacity="0.40"/>
+                  <path d="M0 0h520v640H0z" fill="none" stroke="#d8c18b" stroke-opacity="0.05"/>
+                </svg>
+                <span class="portrait-grain"></span>
+                <div class="portrait-caption"><span>Maia</span><span>Recentrage</span></div>
+              </div>
+              <div class="advisor-content">
+                <span class="advisor-role">Introspection, émotions, recentrage</span>
+                <h3>Maia</h3>
+                <p>Maia accompagne les périodes de fatigue intérieure, de doute ou de confusion émotionnelle. Son approche aide à reformuler ce qui pèse et à retrouver une perspective plus respirable.</p>
+                <div class="advisor-meta">
+                  <span>Ton lent, sensible, protecteur</span>
+                  <span>Pour l’intuition, les émotions, les passages personnels</span>
+                  <span>Idéal si vous avez besoin d’un espace doux et contenu</span>
+                </div>
+                <a class="button button-ghost" href="#tarifs">Continuer avec Maia</a>
+              </div>
+            </article>
+          </div>
+        </div>
+      </section>
+
+      <section class="section" id="fonctionnement">
+        <div class="container">
+          <div class="section-header">
+            <div>
+              <p class="eyebrow">Fonctionnement</p>
+              <h2 class="section-title">Un parcours court, sans pression, jusqu’à l’échange privé.</h2>
+            </div>
+            <p class="section-lede">Le parcours est conçu pour être compréhensible en quelques secondes. L’utilisateur sait ce qu’il choisit, ce qu’il paie et ce qu’il reçoit.</p>
+          </div>
+
+          <div class="steps">
+            <article class="step">
+              <span class="step-number">ÉTAPE 01</span>
+              <h3>Choisissez une conseillère</h3>
+              <p>Sélectionnez la personne dont le ton et l’approche correspondent le mieux à votre question.</p>
+            </article>
+            <article class="step">
+              <span class="step-number">ÉTAPE 02</span>
+              <h3>Sélectionnez une formule</h3>
+              <p>Les prix sont affichés clairement. Vous voyez ce qui est inclus avant de poursuivre.</p>
+            </article>
+            <article class="step">
+              <span class="step-number">ÉTAPE 03</span>
+              <h3>Continuez sur WhatsApp</h3>
+              <p>Vous accédez au canal privé pour formuler votre question et recevoir un retour dans le cadre indiqué.</p>
+            </article>
+          </div>
+        </div>
+      </section>
+
+      <section class="section questions" id="questions">
+        <div class="container">
+          <div class="section-header">
+            <div>
+              <p class="eyebrow">Exemples de questions</p>
+              <h2 class="section-title">Des sujets intimes, formulés avec sobriété.</h2>
+            </div>
+            <p class="section-lede">Auryel ne transforme pas la vulnérabilité en spectacle. Les questions restent humaines, concrètes et accompagnées avec prudence.</p>
+          </div>
+
+          <div class="question-grid">
+            <div class="question-card">“Je n’arrive pas à comprendre ce qui s’est fermé entre nous.”</div>
+            <div class="question-card">“Je sens que je dois choisir, mais je repousse encore.”</div>
+            <div class="question-card">“J’ai besoin d’un regard extérieur sans être brusqué.”</div>
+          </div>
+        </div>
+      </section>
+
+      <section class="section" id="tarifs">
+        <div class="container">
+          <div class="section-header">
+            <div>
+              <p class="eyebrow">Tarifs</p>
+              <h2 class="section-title">Des formules accessibles, présentées avec sérieux.</h2>
+            </div>
+            <p class="section-lede">Le prix ne doit jamais donner une impression de piège. Chaque formule indique le niveau d’accès, la durée et les conditions essentielles.</p>
+          </div>
+
+          <div class="pricing-grid">
+            <article class="price-card">
+              <div class="price-label">Découverte</div>
+              <div class="price">4,90 € <span>/ mois</span></div>
+              <p>Pour découvrir l’expérience et poser une première question dans un cadre privé.</p>
+              <ul class="feature-list">
+                <li>Accès au parcours de choix conseillère</li>
+                <li>Ouverture du canal privé selon la formule</li>
+                <li>Annulation expliquée dans le parcours</li>
+              </ul>
+              <a class="button button-secondary" href="#cadre">Voir le cadre</a>
+            </article>
+
+            <article class="price-card featured">
+              <div class="price-label">Accompagnement</div>
+              <div class="price">19,90 € <span>/ 6 mois</span></div>
+              <p>Pour revenir à plusieurs moments de l’année quand une question demande du recul.</p>
+              <ul class="feature-list">
+                <li>Choix libre de la conseillère</li>
+                <li>Accès prolongé à l’espace privé</li>
+                <li>Conditions et renouvellement visibles</li>
+              </ul>
+              <a class="button button-primary" href="#conseilleres">Choisir une conseillère</a>
+            </article>
+
+            <article class="price-card">
+              <div class="price-label">Continuité</div>
+              <div class="price">29,90 € <span>/ an</span></div>
+              <p>Pour garder un repère confidentiel disponible au fil des transitions personnelles.</p>
+              <ul class="feature-list">
+                <li>Accès longue durée</li>
+                <li>Cadre responsable rappelé à chaque étape</li>
+                <li>Support et informations de résiliation accessibles</li>
+              </ul>
+              <a class="button button-secondary" href="#faq">Lire la FAQ</a>
+            </article>
+          </div>
+
+          <div class="notice">Cette preview présente une structure de tarification claire. En production, les conditions exactes, modalités de renouvellement, rétractation et résiliation doivent être alignées avec les pages légales du site.</div>
+        </div>
+      </section>
+
+      <section class="section" id="cadre">
+        <div class="container responsible-layout">
+          <div class="responsible-panel">
+            <p class="eyebrow">Cadre responsable</p>
+            <h2>La confiance se construit avant le clic.</h2>
+            <p>Auryel doit rester un espace d’accompagnement symbolique et personnel. Le service ne remplace pas un professionnel de santé, un conseil juridique, financier ou psychologique. Cette limite doit être visible, compréhensible et répétée aux bons moments.</p>
+            <a class="button button-primary" href="#faq">Lire les questions fréquentes</a>
+          </div>
+          <div class="proof-list">
+            <div class="proof-item">
+              <strong>Confidentialité</strong>
+              <span>Les sujets abordés peuvent être sensibles. Le design privilégie la discrétion, la lisibilité et l’absence d’exposition inutile.</span>
+            </div>
+            <div class="proof-item">
+              <strong>Transparence</strong>
+              <span>Prix, durée, conditions et limites du service doivent être expliqués avant l’engagement.</span>
+            </div>
+            <div class="proof-item">
+              <strong>Pas de pression</strong>
+              <span>Aucun faux compteur, aucune rareté artificielle, aucun message qui pousse à agir par peur.</span>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section class="section" id="journal">
+        <div class="container">
+          <div class="section-header">
+            <div>
+              <p class="eyebrow">Journal</p>
+              <h2 class="section-title">Un contenu plus utile, plus intime, moins racoleur.</h2>
+            </div>
+            <p class="section-lede">Le journal peut devenir une preuve de sérieux : articles courts, angles humains, langage clair, pas de promesse spectaculaire.</p>
+          </div>
+
+          <div class="journal-grid">
+            <article class="journal-card">
+              <span>Relations</span>
+              <div>
+                <h3>Pourquoi une rupture laisse parfois une question ouverte.</h3>
+                <p>Un article pour comprendre sans attendre une réponse magique.</p>
+              </div>
+            </article>
+            <article class="journal-card">
+              <span>Décision</span>
+              <div>
+                <h3>Quand demander un éclairage extérieur peut aider à choisir.</h3>
+                <p>Un angle concret sur le doute, les options et le besoin de recul.</p>
+              </div>
+            </article>
+            <article class="journal-card">
+              <span>Cadre</span>
+              <div>
+                <h3>Ce qu’une guidance responsable peut dire, et ne doit pas promettre.</h3>
+                <p>Une ligne éditoriale qui renforce la crédibilité de la marque.</p>
+              </div>
+            </article>
+          </div>
+        </div>
+      </section>
+
+      <section class="section" id="faq">
+        <div class="container">
+          <div class="section-header">
+            <div>
+              <p class="eyebrow">Questions fréquentes</p>
+              <h2 class="section-title">Les réponses qui rendent le service plus clair.</h2>
+            </div>
+          </div>
+
+          <div class="faq-list">
+            <details open>
+              <summary>Qu’est-ce qu’Auryel exactement ?</summary>
+              <p>Auryel est un cabinet digital de guidance personnelle. Il propose un accompagnement symbolique et humain autour de questions relationnelles, personnelles ou émotionnelles. Il ne s’agit pas d’un service médical, juridique, financier ou psychologique.</p>
+            </details>
+            <details>
+              <summary>Comment fonctionne le passage sur WhatsApp ?</summary>
+              <p>Après le choix d’une conseillère et d’une formule, l’utilisateur est orienté vers un canal WhatsApp privé. Le canal sert à formuler la question et à poursuivre l’échange dans le cadre indiqué par le service.</p>
+            </details>
+            <details>
+              <summary>Que reçoit l’utilisateur ?</summary>
+              <p>Il reçoit un cadre d’échange, une écoute orientée par le profil choisi et un retour formulé avec prudence. La réponse doit aider à clarifier une situation, pas promettre un résultat certain.</p>
+            </details>
+            <details>
+              <summary>Comment annuler ou résilier ?</summary>
+              <p>La résiliation doit être accessible depuis les informations de compte ou les pages légales prévues. Cette preview recommande de rendre les conditions visibles avant paiement et de les rappeler dans la FAQ.</p>
+            </details>
+            <details>
+              <summary>Pourquoi le site évite les promesses fortes ?</summary>
+              <p>Parce qu’un service crédible protège l’utilisateur. Auryel doit rassurer par son cadre, sa clarté et son ton, pas par des certitudes impossibles à garantir.</p>
+            </details>
+          </div>
+        </div>
+      </section>
+    </main>
+
+    <footer class="footer">
+      <div class="container">
+        <div class="footer-grid">
+          <div class="footer-brand">
+            <h2>Auryel</h2>
+            <p>Cabinet digital de guidance personnelle. Une expérience calme, confidentielle et responsable pour les questions qui demandent du recul.</p>
+          </div>
+          <div class="footer-links">
+            <div>
+              <strong>Service</strong>
+              <a href="#conseilleres">Conseillères</a>
+              <a href="#fonctionnement">Fonctionnement</a>
+              <a href="#tarifs">Tarifs</a>
+            </div>
+            <div>
+              <strong>Confiance</strong>
+              <a href="#cadre">Cadre responsable</a>
+              <a href="#journal">Journal</a>
+              <a href="#faq">FAQ</a>
+            </div>
+          </div>
+        </div>
+        <div class="footer-bottom">
+          <small>Preview autonome dans un nouveau fichier. Aucun fichier existant du site n’est modifié.</small>
+          <small>Direction : cabinet nocturne, portraits éditoriaux simulés, encre profonde, ivoire chaud, champagne discret.</small>
+        </div>
+      </div>
+    </footer>
+
+    <div class="mobile-sticky" aria-label="Action rapide mobile">
+      <span>Prêt à commencer ?<br>Choisir une conseillère</span>
+      <a class="button button-primary" href="#conseilleres">Entrer</a>
+    </div>
+  </div>
+</body>
+</html>

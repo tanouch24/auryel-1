@@ -11,6 +11,37 @@
     X-XSS-Protection = "1; mode=block"
     X-Content-Type-Options = "nosniff"
 
+# Clean URLs — pages principales sans .html
+[[redirects]]
+  from = "/tarifs"
+  to = "/tarifs.html"
+  status = 200
+
+[[redirects]]
+  from = "/conseillers"
+  to = "/conseillers.html"
+  status = 200
+
+[[redirects]]
+  from = "/inscription"
+  to = "/inscription.html"
+  status = 200
+
+[[redirects]]
+  from = "/blog"
+  to = "/blog.html"
+  status = 200
+
+[[redirects]]
+  from = "/comment-ca-marche"
+  to = "/comment-ca-marche.html"
+  status = 200
+
+[[redirects]]
+  from = "/recrutement"
+  to = "/recrutement.html"
+  status = 200
+
 # Ignorer les fichiers Python côté Netlify
 [[redirects]]
   from = "/auryel_bot.py"
