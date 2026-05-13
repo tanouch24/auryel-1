@@ -3,49 +3,13 @@
 <meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1.0">
 <title>Blog Auryel — Voyance, Tarot, Numérologie &amp; Guidance Spirituelle</title>
 <meta name="description" content="Articles sur la voyance en ligne, le tarot amour, la numérologie et la guidance spirituelle. Conseils et guides gratuits.">
+<meta property="og:image" content="https://images.unsplash.com/photo-1604085792867-8f0de9f6bbd1?auto=format&fit=crop&w=1200&h=630&q=80">
 <meta name="robots" content="index, follow">
 <link rel="canonical" href="https://auryel.com/blog">
+<link rel="icon" href="favicon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="style.css">
 <link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin><link href="https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@0,400;0,500;1,400;1,500&family=Tenor+Sans&family=Raleway:wght@200;300;400;500&display=swap" rel="stylesheet">
-<style>:root{--void:#05040A;--deep:#09070F;--surface:#0E0C18;--card:#120F1E;--card-h:#181427;--gold:#C8A96E;--gold-b:#E2C98A;--gold-m:#7A6340;--cream:#F0EBE0;--cs:#BDB5A6;--cd:#7A7268;--bdr:rgba(200,169,110,0.1);--bdrm:rgba(200,169,110,0.2);--fd:'Playfair Display',Georgia,serif;--fs:'Tenor Sans',sans-serif;--fb:'Raleway',sans-serif}
-*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
-html{scroll-behavior:smooth}
-body{background:var(--void);color:var(--cream);font-family:var(--fb);font-weight:300;line-height:1.75;overflow-x:hidden}
-body::after{content:'';position:fixed;inset:0;pointer-events:none;z-index:9998;opacity:.18;background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='200' height='200'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.75' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='200' height='200' filter='url(%23n)' opacity='1'/%3E%3C/svg%3E")}
-.cursor{width:8px;height:8px;background:var(--gold);border-radius:50%;position:fixed;pointer-events:none;z-index:9999;transform:translate(-50%,-50%);transition:width .3s,height .3s;mix-blend-mode:screen}
-nav{position:fixed;top:0;left:0;right:0;z-index:100;display:flex;align-items:center;justify-content:space-between;padding:28px 64px;transition:all .5s}
-nav.sc{padding:18px 64px;background:rgba(5,4,10,.96);backdrop-filter:blur(24px);border-bottom:1px solid var(--bdr)}
-.n-logo{font-family:var(--fs);font-size:17px;letter-spacing:.5em;color:var(--gold);text-decoration:none;text-transform:uppercase}
-.n-links{display:flex;gap:40px;list-style:none;position:absolute;left:50%;transform:translateX(-50%)}
-.n-links a{font-family:var(--fb);font-size:11px;font-weight:400;letter-spacing:.18em;text-transform:uppercase;color:var(--cs);text-decoration:none;transition:color .3s}
-.n-links a:hover,.n-links a.active{color:var(--gold-b)}
-.n-btn{font-family:var(--fb);font-size:10px;font-weight:500;letter-spacing:.2em;text-transform:uppercase;color:var(--void);background:var(--gold);border:none;padding:12px 28px;cursor:pointer;text-decoration:none;transition:all .3s;display:inline-block}
-.n-btn:hover{background:var(--gold-b);transform:translateY(-1px)}
-.ey{font-family:var(--fs);font-size:10px;letter-spacing:.5em;text-transform:uppercase;color:var(--gold);margin-bottom:20px;display:block}
-.rule{width:48px;height:1px;background:linear-gradient(to right,var(--gold),transparent);margin:28px 0}
-footer{background:var(--void);border-top:1px solid var(--bdr);padding:100px 64px 48px}
-.ft{max-width:1280px;margin:0 auto;display:grid;grid-template-columns:2fr 1fr 1fr 1fr;gap:72px;margin-bottom:72px}
-.fl2{font-family:var(--fs);font-size:17px;letter-spacing:.5em;color:var(--gold);margin-bottom:20px;display:block;text-transform:uppercase}
-.ftag{font-family:var(--fd);font-style:italic;font-size:17px;color:var(--cs);line-height:1.6;margin-bottom:20px}
-.fdesc{font-size:12px;color:var(--cd);line-height:1.8}
-.fct{font-family:var(--fs);font-size:9px;letter-spacing:.4em;text-transform:uppercase;color:var(--gold);margin-bottom:24px;display:block}
-.fli{list-style:none}
-.fli li{margin-bottom:12px}
-.fli a{font-size:13px;font-weight:300;color:var(--cd);text-decoration:none;transition:color .3s}
-.fli a:hover{color:var(--gold-b)}
-.fb2{max-width:1280px;margin:0 auto;display:flex;justify-content:space-between;align-items:center;padding-top:40px;border-top:1px solid var(--bdr)}
-.fcp{font-size:11px;color:var(--cd);opacity:.5}
-.fdi{font-size:10px;color:var(--cd);opacity:.4;max-width:520px;text-align:right;line-height:1.7}
-.ck-bar{position:fixed;bottom:0;left:0;right:0;background:rgba(9,7,15,.97);backdrop-filter:blur(20px);border-top:1px solid var(--bdr);padding:24px 64px;display:flex;align-items:center;justify-content:space-between;gap:40px;z-index:150;transform:translateY(110%);transition:transform .6s cubic-bezier(.25,.46,.45,.94)}
-.ck-bar.show{transform:translateY(0)}
-.ck-txt{font-size:13px;font-weight:300;color:var(--cs);flex:1;line-height:1.7}
-.ck-txt a{color:var(--gold);text-decoration:none;cursor:pointer}
-.ck-btns{display:flex;gap:10px;flex-shrink:0}
-.ck-ok{background:linear-gradient(135deg,var(--gold),var(--gold-b));color:var(--void);border:none;padding:12px 32px;font-family:var(--fb);font-size:10px;font-weight:500;letter-spacing:.2em;text-transform:uppercase;cursor:pointer}
-.ck-no{background:transparent;color:var(--cd);border:1px solid var(--bdr);padding:12px 24px;font-family:var(--fb);font-size:10px;letter-spacing:.15em;text-transform:uppercase;cursor:pointer;transition:border-color .3s}
-.ck-no:hover{border-color:var(--gold-m)}
-@media(max-width:1100px){nav{padding:20px 32px}nav.sc{padding:16px 32px}.n-links{display:none}.ft{grid-template-columns:1fr 1fr;gap:40px}}
-@media(max-width:640px){.ft{grid-template-columns:1fr}.ck-bar{flex-direction:column;padding:20px}}
-.blog-hero{padding:180px 64px 100px;position:relative;overflow:hidden;background:var(--deep)}
+<style>.blog-hero{padding:180px 64px 100px;position:relative;overflow:hidden;background:var(--deep)}
 .blog-hero::before{content:"";position:absolute;inset:0;background:radial-gradient(ellipse 70% 60% at 50% 100%,rgba(123,94,167,.2) 0%,transparent 60%)}
 .orb{position:absolute;border-radius:50%;filter:blur(80px);pointer-events:none}
 .o1{width:500px;height:500px;background:radial-gradient(circle,rgba(123,94,167,.12),transparent 70%);bottom:-100px;left:-80px}
@@ -109,7 +73,8 @@ footer{background:var(--void);border-top:1px solid var(--bdr);padding:100px 64px
 </style>
 </head><body>
 <div class="cursor" id="cur"></div>
-<nav id="nav"><a href="index.html" class="n-logo">Auryel</a><ul class="n-links"><li><a href="index.html">Accueil</a></li><li><a href="conseillers.html">Conseillers</a></li><li><a href="comment-ca-marche.html">Comment ca marche</a></li><li><a href="tarifs.html">Tarifs</a></li><li><a href="blog.html" class=active>Blog</a></li><li><a href="recrutement.html">Recrutement</a></li></ul><a href="inscription.html" class="n-btn">Commencer</a></nav>
+<nav id="nav"><a href="index.html" class="n-logo">Auryel</a><ul class="n-links"><li><a href="index.html">Accueil</a></li><li><a href="conseillers.html">Conseillers</a></li><li><a href="comment-ca-marche.html">Comment ca marche</a></li><li><a href="tarifs.html">Tarifs</a></li><li><a href="blog.html" class="active">Blog</a></li><li><a href="recrutement.html">Recrutement</a></li></ul><a href="inscription.html" class="n-btn">Commencer</a><button class="n-ham" onclick="document.getElementById('nmob').classList.toggle('open')" aria-label="Menu"><span></span><span></span><span></span></button></nav>
+<div class="n-mob" id="nmob"><button class="n-mob-close" onclick="document.getElementById('nmob').classList.remove('open')">✕ Fermer</button><a href="index.html">Accueil</a><a href="conseillers.html">Conseillers</a><a href="comment-ca-marche.html">Comment ça marche</a><a href="tarifs.html">Tarifs</a><a href="blog.html">Blog</a><a href="recrutement.html">Recrutement</a><a href="inscription.html" class="n-btn">Commencer</a></div>
 
 <section class="blog-hero">
   <div class="orb o1"></div><div class="orb o2"></div>

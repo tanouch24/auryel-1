@@ -12,6 +12,8 @@
 <meta property="og:image" content="https://images.unsplash.com/photo-1572478570012-c4e6e5b3d7e2?auto=format&fit=crop&w=1200&h=630&q=80">
 <meta property="og:type" content="article">
 <meta property="og:url" content="https://auryel.com/tarot-de-marseille-en-ligne.html">
+<link rel="icon" href="favicon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="style.css">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@0,400;0,500;1,400;1,500&family=Tenor+Sans&family=Raleway:wght@200;300;400;500&display=swap" rel="stylesheet">
@@ -118,7 +120,8 @@ footer{background:var(--deep);border-top:1px solid var(--bdr);padding:40px 64px;
     <li><a href="/blog.html" class="active">Blog</a></li>
   </ul>
   <a href="/inscription.html" class="n-btn">Essai gratuit</a>
-</nav>
+<button class="n-ham" onclick="document.getElementById('nmob').classList.toggle('open')" aria-label="Menu"><span></span><span></span><span></span></button></nav>
+<div class="n-mob" id="nmob"><button class="n-mob-close" onclick="document.getElementById('nmob').classList.remove('open')">✕ Fermer</button><a href="index.html">Accueil</a><a href="conseillers.html">Conseillers</a><a href="comment-ca-marche.html">Comment ça marche</a><a href="tarifs.html">Tarifs</a><a href="blog.html">Blog</a><a href="recrutement.html">Recrutement</a><a href="inscription.html" class="n-btn">Commencer</a></div>
 
 <header class="art-hero">
   <img src="https://images.unsplash.com/photo-1572478570012-c4e6e5b3d7e2?auto=format&fit=crop&w=1400&h=700&q=80" alt="Tarot de Marseille en ligne : guide complet des 22 arcanes majeurs" class="art-hero-img" loading="eager">

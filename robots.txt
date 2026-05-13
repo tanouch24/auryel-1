@@ -1,0 +1,11 @@
+User-agent: *
+Allow: /
+
+Disallow: /auryel_bot.py
+Disallow: /requirements.txt
+Disallow: /Procfile
+Disallow: /runtime.txt
+Disallow: /preview-auryel-redesign.html
+Disallow: /preview-auryel-production.html
+
+Sitemap: https://auryel.com/sitemap.xml

@@ -9,77 +9,14 @@
 <link rel="canonical" href="https://auryel.com/">
 <meta property="og:title" content="Auryel — Voyance & Coaching Spirituel 24h/24">
 <meta property="og:description" content="10 conseillers experts disponibles 24h/24. Guidance personnalisée en voyance, numérologie, tarot et coaching spirituel.">
+<meta property="og:image" content="https://images.unsplash.com/photo-1509228468518-180dd4864904?auto=format&fit=crop&w=1200&h=630&q=80">
 <meta property="og:type" content="website"><meta property="og:url" content="https://auryel.com/"><meta property="og:locale" content="fr_FR"><meta property="og:site_name" content="Auryel">
 <meta name="twitter:card" content="summary_large_image">
 <script type="application/ld+json">{"@context":"https://schema.org","@type":"Organization","name":"Auryel","url":"https://auryel.com","description":"Plateforme de voyance et coaching spirituel, 10 conseillers disponibles 24h/24","offers":{"@type":"AggregateOffer","lowPrice":"4.90","highPrice":"29.90","priceCurrency":"EUR"}}</script>
+<link rel="icon" href="favicon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="style.css">
 <link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin><link href="https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@0,400;0,500;1,400;1,500&family=Tenor+Sans&family=Raleway:wght@200;300;400;500&display=swap" rel="stylesheet">
-<style>:root{--void:#05040A;--deep:#09070F;--surface:#0E0C18;--card:#120F1E;--card-h:#181427;--gold:#C8A96E;--gold-b:#E2C98A;--gold-m:#7A6340;--cream:#F0EBE0;--cs:#BDB5A6;--cd:#7A7268;--bdr:rgba(200,169,110,0.1);--bdrm:rgba(200,169,110,0.2);--fd:'Playfair Display',Georgia,serif;--fs:'Tenor Sans',sans-serif;--fb:'Raleway',sans-serif}
-*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
-html{scroll-behavior:smooth}
-body{background:var(--void);color:var(--cream);font-family:var(--fb);font-weight:300;line-height:1.75;overflow-x:hidden}
-body::after{content:'';position:fixed;inset:0;pointer-events:none;z-index:9998;opacity:.18;background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='200' height='200'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.75' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='200' height='200' filter='url(%23n)' opacity='1'/%3E%3C/svg%3E")}
-.cursor{width:8px;height:8px;background:var(--gold);border-radius:50%;position:fixed;pointer-events:none;z-index:9999;transform:translate(-50%,-50%);transition:width .3s,height .3s;mix-blend-mode:screen}
-/* NAV */
-nav{position:fixed;top:0;left:0;right:0;z-index:100;display:flex;align-items:center;justify-content:space-between;padding:28px 64px;transition:all .5s}
-nav.sc{padding:18px 64px;background:rgba(5,4,10,.96);backdrop-filter:blur(24px);border-bottom:1px solid var(--bdr)}
-.n-logo{font-family:var(--fs);font-size:17px;letter-spacing:.5em;color:var(--gold);text-decoration:none;text-transform:uppercase}
-.n-links{display:flex;gap:40px;list-style:none;position:absolute;left:50%;transform:translateX(-50%)}
-.n-links a{font-family:var(--fb);font-size:11px;font-weight:400;letter-spacing:.18em;text-transform:uppercase;color:var(--cs);text-decoration:none;transition:color .3s}
-.n-links a:hover,.n-links a.active{color:var(--gold-b)}
-.n-btn{font-family:var(--fb);font-size:10px;font-weight:500;letter-spacing:.2em;text-transform:uppercase;color:var(--void);background:var(--gold);border:none;padding:12px 28px;cursor:pointer;text-decoration:none;transition:all .3s;display:inline-block}
-.n-btn:hover{background:var(--gold-b);transform:translateY(-1px)}
-/* COMMON */
-.ey{font-family:var(--fs);font-size:10px;letter-spacing:.5em;text-transform:uppercase;color:var(--gold);margin-bottom:20px;display:block}
-.hd{font-family:var(--fd);font-size:clamp(36px,4.5vw,60px);font-weight:400;line-height:1.1;color:var(--cream);margin-bottom:20px}
-.hd em{font-style:italic;color:var(--gold-b)}
-.bt{font-size:14px;font-weight:300;color:var(--cs);line-height:1.85;max-width:500px}
-.rule{width:48px;height:1px;background:linear-gradient(to right,var(--gold),transparent);margin:28px 0}
-.cta-p{background:linear-gradient(135deg,var(--gold),var(--gold-b));color:var(--void);border:none;padding:18px 52px;font-family:var(--fb);font-size:11px;font-weight:500;letter-spacing:.25em;text-transform:uppercase;cursor:pointer;text-decoration:none;display:inline-block;transition:all .4s}
-.cta-p:hover{transform:translateY(-3px);box-shadow:0 20px 60px rgba(200,169,110,.35);filter:brightness(1.08)}
-.cta-g{background:transparent;color:var(--cs);border:1px solid var(--bdrm);padding:18px 44px;font-family:var(--fb);font-size:11px;letter-spacing:.2em;text-transform:uppercase;cursor:pointer;text-decoration:none;display:inline-block;transition:all .4s}
-.cta-g:hover{border-color:var(--gold-m);color:var(--cream);transform:translateY(-3px)}
-.la{display:inline-flex;align-items:center;gap:10px;font-family:var(--fb);font-size:11px;letter-spacing:.2em;text-transform:uppercase;color:var(--gold);text-decoration:none;transition:gap .3s}
-.la:hover{gap:16px}
-/* FOOTER */
-footer{background:var(--void);border-top:1px solid var(--bdr);padding:100px 64px 48px}
-.ft{max-width:1280px;margin:0 auto;display:grid;grid-template-columns:2fr 1fr 1fr 1fr;gap:72px;margin-bottom:72px}
-.fl2{font-family:var(--fs);font-size:17px;letter-spacing:.5em;color:var(--gold);margin-bottom:20px;display:block;text-transform:uppercase}
-.ftag{font-family:var(--fd);font-style:italic;font-size:17px;color:var(--cs);line-height:1.6;margin-bottom:20px}
-.fdesc{font-size:12px;color:var(--cd);line-height:1.8}
-.fct{font-family:var(--fs);font-size:9px;letter-spacing:.4em;text-transform:uppercase;color:var(--gold);margin-bottom:24px;display:block}
-.fli{list-style:none}
-.fli li{margin-bottom:12px}
-.fli a{font-size:13px;font-weight:300;color:var(--cd);text-decoration:none;transition:color .3s}
-.fli a:hover{color:var(--gold-b)}
-.fb2{max-width:1280px;margin:0 auto;display:flex;justify-content:space-between;align-items:center;padding-top:40px;border-top:1px solid var(--bdr)}
-.fcp{font-size:11px;color:var(--cd);opacity:.5}
-.fdi{font-size:10px;color:var(--cd);opacity:.4;max-width:520px;text-align:right;line-height:1.7}
-/* LEGAL OVERLAY */
-.leg-ov{display:none;position:fixed;inset:0;background:var(--void);z-index:200;overflow-y:auto}
-.leg-ov.open{display:block}
-.leg-cl{position:fixed;top:30px;right:44px;background:transparent;border:1px solid var(--bdrm);color:var(--cd);padding:10px 22px;font-family:var(--fb);font-size:10px;letter-spacing:.2em;text-transform:uppercase;cursor:pointer;transition:all .3s;z-index:201}
-.leg-cl:hover{border-color:var(--gold);color:var(--gold)}
-.leg-cnt{max-width:800px;margin:0 auto;padding:130px 60px 100px}
-.leg-h1{font-family:var(--fd);font-size:50px;font-weight:400;color:var(--cream);margin-bottom:10px}
-.leg-dt{font-size:11px;color:var(--cd);letter-spacing:.1em;margin-bottom:64px;display:block}
-.lb{margin-bottom:48px}
-.lb h2{font-family:var(--fs);font-size:10px;letter-spacing:.4em;text-transform:uppercase;color:var(--gold);margin-bottom:18px}
-.lb p,.lb li{font-size:14px;font-weight:300;color:var(--cs);line-height:1.9;margin-bottom:12px}
-.lb ul{padding-left:18px}
-/* COOKIE */
-.ck-bar{position:fixed;bottom:0;left:0;right:0;background:rgba(9,7,15,.97);backdrop-filter:blur(20px);border-top:1px solid var(--bdr);padding:24px 64px;display:flex;align-items:center;justify-content:space-between;gap:40px;z-index:150;transform:translateY(110%);transition:transform .6s cubic-bezier(.25,.46,.45,.94)}
-.ck-bar.show{transform:translateY(0)}
-.ck-txt{font-size:13px;font-weight:300;color:var(--cs);flex:1;line-height:1.7}
-.ck-txt a{color:var(--gold);text-decoration:none;cursor:pointer}
-.ck-btns{display:flex;gap:10px;flex-shrink:0}
-.ck-ok{background:linear-gradient(135deg,var(--gold),var(--gold-b));color:var(--void);border:none;padding:12px 32px;font-family:var(--fb);font-size:10px;font-weight:500;letter-spacing:.2em;text-transform:uppercase;cursor:pointer}
-.ck-no{background:transparent;color:var(--cd);border:1px solid var(--bdr);padding:12px 24px;font-family:var(--fb);font-size:10px;letter-spacing:.15em;text-transform:uppercase;cursor:pointer;transition:border-color .3s}
-.ck-no:hover{border-color:var(--gold-m)}
-/* RESPONSIVE */
-@media(max-width:1100px){nav{padding:20px 32px}nav.sc{padding:16px 32px}.n-links{display:none}.ft{grid-template-columns:1fr 1fr;gap:40px}}
-@media(max-width:640px){.ft{grid-template-columns:1fr}.ck-bar{flex-direction:column;padding:20px}}
-
-.hero{min-height:100vh;display:flex;align-items:center;justify-content:center;position:relative;overflow:hidden;padding:140px 40px 80px}
+<style>.hero{min-height:100vh;display:flex;align-items:center;justify-content:center;position:relative;overflow:hidden;padding:140px 40px 80px}
 .h-atm{position:absolute;inset:0;background:radial-gradient(ellipse 80% 60% at 50% 100%,rgba(123,94,167,.22) 0%,transparent 60%),radial-gradient(ellipse 50% 40% at 20% 50%,rgba(196,120,138,.08) 0%,transparent 50%),radial-gradient(ellipse 50% 40% at 80% 30%,rgba(123,94,167,.12) 0%,transparent 50%)}
 .orb{position:absolute;border-radius:50%;filter:blur(80px);pointer-events:none}
 .o1{width:500px;height:500px;background:radial-gradient(circle,rgba(123,94,167,.2),transparent 70%);bottom:-120px;left:-80px;animation:forb 14s ease-in-out infinite}
@@ -189,7 +126,8 @@ footer{background:var(--void);border-top:1px solid var(--bdr);padding:100px 64px
 </style>
 </head><body>
 <div class="cursor" id="cur"></div>
-<nav id="nav"><a href="index.html" class="n-logo">Auryel</a><ul class="n-links"><li><a href="index.html" class=active>Accueil</a></li><li><a href="conseillers.html">Conseillers</a></li><li><a href="comment-ca-marche.html">Comment ça marche</a></li><li><a href="tarifs.html">Tarifs</a></li><li><a href="blog.html">Blog</a></li><li><a href="recrutement.html">Recrutement</a></li></ul><a href="inscription.html" class="n-btn">Consultation WhatsApp</a></nav>
+<nav id="nav"><a href="index.html" class="n-logo">Auryel</a><ul class="n-links"><li><a href="index.html" class="active">Accueil</a></li><li><a href="conseillers.html">Conseillers</a></li><li><a href="comment-ca-marche.html">Comment ça marche</a></li><li><a href="tarifs.html">Tarifs</a></li><li><a href="blog.html">Blog</a></li><li><a href="recrutement.html">Recrutement</a></li></ul><a href="inscription.html" class="n-btn">Consultation WhatsApp</a><button class="n-ham" onclick="document.getElementById('nmob').classList.toggle('open')" aria-label="Menu"><span></span><span></span><span></span></button></nav>
+<div class="n-mob" id="nmob"><button class="n-mob-close" onclick="document.getElementById('nmob').classList.remove('open')">✕ Fermer</button><a href="index.html">Accueil</a><a href="conseillers.html">Conseillers</a><a href="comment-ca-marche.html">Comment ça marche</a><a href="tarifs.html">Tarifs</a><a href="blog.html">Blog</a><a href="recrutement.html">Recrutement</a><a href="inscription.html" class="n-btn">Commencer</a></div>
 <section class="hero">
   <div class="h-atm"></div><div class="orb o1"></div><div class="orb o2"></div><div class="orb o3"></div>
   <svg class="constellation" viewBox="0 0 1400 900" preserveAspectRatio="xMidYMid slice"><g stroke="rgba(200,169,110,0.15)" stroke-width="0.5" fill="none"><line x1="200" y1="150" x2="400" y2="300"/><line x1="400" y1="300" x2="700" y2="200"/><line x1="700" y1="200" x2="1000" y2="350"/><line x1="1000" y1="350" x2="1200" y2="200"/><line x1="300" y1="600" x2="600" y2="500"/><line x1="600" y1="500" x2="800" y2="650"/><line x1="800" y1="650" x2="1100" y2="550"/></g><g fill="rgba(200,169,110,0.4)"><circle cx="200" cy="150" r="2"/><circle cx="400" cy="300" r="1.5"/><circle cx="700" cy="200" r="2"/><circle cx="1000" cy="350" r="1.5"/><circle cx="1200" cy="200" r="2"/><circle cx="300" cy="600" r="1.5"/><circle cx="600" cy="500" r="2"/><circle cx="800" cy="650" r="1.5"/><circle cx="1100" cy="550" r="2"/></g></svg>
@@ -258,9 +196,9 @@ footer{background:var(--void);border-top:1px solid var(--bdr);padding:100px 64px
   <div class="bl-in">
     <div class="bl-hd"><div><span class="ey">Nos articles</span><h2 class="hd">Guides & <em>Insights</em></h2></div><a href="blog.html" class="la">Tous les articles →</a></div>
     <div class="bl-grid">
-      <a href="blog.html" class="bc feat"><div class="bc-img"><div class="bc-ii" style="background:linear-gradient(135deg,#1A0D2E,#2E1A0D)"><span class="bc-g" style="font-size:44px">◎</span></div></div><div class="bc-body"><div class="bc-cat">Numérologie</div><h3 class="bc-title">Comment calculer votre chemin de vie et comprendre votre destinée</h3><p class="bc-ex">La numérologie offre un éclairage unique sur votre personnalité et vos cycles de vie.</p><div class="bc-meta">21 Avril 2026 · 8 min</div><span class="bc-read">Lire l'article →</span></div></a>
-      <a href="blog.html" class="bc"><div class="bc-img"><div class="bc-ii" style="background:linear-gradient(135deg,#0D1A2E,#1A2E0D)"><span class="bc-g">♥</span></div></div><div class="bc-body"><div class="bc-cat">Amour</div><h3 class="bc-title">Les 5 signes que votre relation est alignée avec votre destin</h3><div class="bc-meta">20 Avril · 5 min</div><span class="bc-read">Lire →</span></div></a>
-      <a href="blog.html" class="bc"><div class="bc-img"><div class="bc-ii" style="background:linear-gradient(135deg,#2E0D1A,#0D2E2E)"><span class="bc-g">✦</span></div></div><div class="bc-body"><div class="bc-cat">Tarot</div><h3 class="bc-title">La signification des 22 arcanes majeurs du tarot de Marseille</h3><div class="bc-meta">19 Avril · 12 min</div><span class="bc-read">Lire →</span></div></a>
+      <a href="numerologie-date-naissance-chemin-de-vie.html" class="bc feat"><div class="bc-img"><div class="bc-ii" style="background:linear-gradient(135deg,#1A0D2E,#2E1A0D)"><span class="bc-g" style="font-size:44px">◎</span></div></div><div class="bc-body"><div class="bc-cat">Numérologie</div><h3 class="bc-title">Comment calculer votre chemin de vie et comprendre votre destinée</h3><p class="bc-ex">La numérologie offre un éclairage unique sur votre personnalité et vos cycles de vie.</p><div class="bc-meta">21 Avril 2026 · 8 min</div><span class="bc-read">Lire l'article →</span></div></a>
+      <a href="voyance-amour-gratuite.html" class="bc"><div class="bc-img"><div class="bc-ii" style="background:linear-gradient(135deg,#0D1A2E,#1A2E0D)"><span class="bc-g">♥</span></div></div><div class="bc-body"><div class="bc-cat">Amour</div><h3 class="bc-title">Les 5 signes que votre relation est alignée avec votre destin</h3><div class="bc-meta">20 Avril · 5 min</div><span class="bc-read">Lire →</span></div></a>
+      <a href="signification-des-lames-du-tarot.html" class="bc"><div class="bc-img"><div class="bc-ii" style="background:linear-gradient(135deg,#2E0D1A,#0D2E2E)"><span class="bc-g">✦</span></div></div><div class="bc-body"><div class="bc-cat">Tarot</div><h3 class="bc-title">La signification des 22 arcanes majeurs du tarot de Marseille</h3><div class="bc-meta">19 Avril · 12 min</div><span class="bc-read">Lire →</span></div></a>
     </div>
   </div>
 </section>
