@@ -73,6 +73,8 @@ footer{background:var(--void);border-top:1px solid var(--bdr);padding:100px 64px
 .ck-ok{background:linear-gradient(135deg,var(--gold),var(--gold-b));color:var(--void);border:none;padding:12px 32px;font-family:'Cinzel',Georgia,serif;font-size:10px;font-weight:600;letter-spacing:.2em;text-transform:uppercase;cursor:pointer}
 .ck-no{background:transparent;color:var(--cd);border:1px solid var(--bdr);padding:12px 24px;font-family:'Cinzel',Georgia,serif;font-size:10px;letter-spacing:.15em;text-transform:uppercase;cursor:pointer;transition:border-color .3s}
 .ck-no:hover{border-color:var(--gold-m)}
+/* ADVISOR DESC */
+.ac-desc{font-family:'Lora',Georgia,serif;font-size:11px;font-weight:300;font-style:italic;color:var(--cs);line-height:1.6;margin-top:8px;opacity:.85}
 /* RESPONSIVE */
 @media(max-width:1100px){nav{padding:20px 32px}nav.sc{padding:16px 32px}nav.solid{padding:16px 32px}.n-links{display:none}.n-ham{display:flex}.ft{grid-template-columns:1fr 1fr;gap:40px}}
 @media(max-width:640px){footer{padding:60px 24px 36px}.ft{grid-template-columns:1fr}.ck-bar{flex-direction:column;padding:20px}}
