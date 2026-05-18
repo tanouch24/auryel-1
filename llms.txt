@@ -1,50 +1,55 @@
 # Auryel
 
-> Plateforme de voyance et guidance spirituelle 24h/24 — consultations personnalisées via WhatsApp avec 5 conseillers experts en tarot, numérologie, astrologie et coaching spirituel.
+> Espace privé de guidance relationnelle et émotionnelle, disponible 24h/24 via WhatsApp — 10 conseillères spécialisées, accompagnement personnalisé, confidentiel et sans attente.
 
 ## À propos
 
-Auryel est une plateforme française de voyance en ligne proposant des consultations disponibles 24h/24, 7j/7. Chaque consultation est délivrée via WhatsApp par l'un de nos 5 conseillers spécialisés, abonnement mensuel à partir de 4,90€/mois avec 7 jours d'essai gratuit.
+Auryel est une plateforme française d'accompagnement émotionnel et relationnel en ligne. Chaque consultation est délivrée via WhatsApp par l'une de nos 10 conseillères, disponibles 24h/24, 7j/7. Abonnement à partir de 4,90€/mois avec 7 jours d'essai gratuit. Espace confidentiel — aucune réponse publique, aucune diffusion.
 
-## Nos conseillers
+## Nos 10 conseillères
 
-- **Séraphine** — Spécialiste amour et émotions, guidance douce et maternelle
-- **Myriam** — Psaumes et foi, guidance biblique apaisante
-- **Naomi** — Transformation et renouveau, approche directe et puissante
-- **Élias** — Abondance et chance, énergie sereine et confiante
-- **Ezra** — Tarot et mystères, lecture mystérieuse et cosmique
+- **Séléna** — Relations et sentiments, écoute active et regard direct
+- **Myriam** — Situations familiales complexes, guidance douce et posée
+- **Maïa** — Accompagnement émotionnel, présence chaleureuse et bienveillante
+- **Orion** — Parcours professionnel et décisions de vie, analyse structurée
+- **Ezra** — Lecture de situation, regard neutre et précis
+- **Luna** — Périodes de transition, accompagnement progressif
+- **Théa** — Questions amoureuses et relationnelles, approche directe
+- **Cassandre** — Situations de crise, clarté et perspective extérieure
+- **Kaël** — Changements et ruptures, accompagnement respectueux du rythme
+- **Raphaël** — Décisions importantes, regard stable et bienveillant
 
-## Domaines d'expertise
+## Domaines d'accompagnement
 
-- Voyance et guidance spirituelle
-- Tarot de Marseille et arcanes majeurs
-- Numérologie et chemin de vie
-- Astrologie et thème astral
-- Coaching spirituel et développement personnel
-- Questions amoureuses et relationnelles
-- Orientation professionnelle et financière
-- Psaumes et protection spirituelle
+- Relations amoureuses et sentimentales
+- Situations familiales et conflits relationnels
+- Décisions professionnelles et orientations de carrière
+- Périodes de doute ou de transition
+- Besoin d'un regard extérieur et confidentiel
+- Questions financières et choix de vie
+- Deuil, séparation, reconstruction
 
 ## Tarifs
 
 - Mensuel : 4,90€/mois — 7 jours d'essai gratuit inclus
 - Semestriel : 19,90€ pour 6 mois (3,32€/mois, économisez 32%) — 7 jours d'essai gratuit
 - Annuel : 29,90€ pour 12 mois (2,49€/mois, meilleur tarif) — 7 jours d'essai gratuit
-- Résiliation possible à tout moment
+- Résiliation possible à tout moment, sans engagement
 
 ## Liens utiles
 
-- [Accueil](https://auryel.com/)
-- [Nos conseillers](https://auryel.com/conseillers)
-- [Tarifs et abonnements](https://auryel.com/tarifs)
-- [Blog spiritualité](https://auryel.com/blog)
-- [Comment ça marche](https://auryel.com/comment-ca-marche.html)
-- [Inscription gratuite](https://auryel.com/inscription)
+- [Accueil](https://www.auryelvoyance.com/)
+- [Nos conseillères](https://www.auryelvoyance.com/conseillers)
+- [Tarifs et abonnements](https://www.auryelvoyance.com/tarifs)
+- [Comment ça marche](https://www.auryelvoyance.com/comment-ca-marche)
+- [Inscription gratuite](https://www.auryelvoyance.com/inscription)
+- [Blog guidance](https://www.auryelvoyance.com/blog)
 
 ## Articles récents
 
-- [Numérologie : calculez votre chemin de vie](https://auryel.com/blog/numerologie-date-naissance-chemin-de-vie)
-- [Tirage tarot amour](https://auryel.com/blog/tarot-amour-gratuit-en-ligne)
-- [Voyance sérieuse en ligne : guide 2026](https://auryel.com/voyance-serieuse-en-ligne.html)
-- [Signification des lames du tarot de Marseille](https://auryel.com/signification-des-lames-du-tarot.html)
-- [Ascendant astrologique : calculez le vôtre](https://auryel.com/ascendant-astrologique.html)
+- [Numérologie : calculez votre chemin de vie](https://www.auryelvoyance.com/numerologie-date-naissance-chemin-de-vie)
+- [Tirage tarot amour gratuit en ligne](https://www.auryelvoyance.com/tarot-amour-gratuit-en-ligne)
+- [Voyance sérieuse en ligne : guide 2026](https://www.auryelvoyance.com/voyance-serieuse-en-ligne)
+- [Signification des lames du tarot de Marseille](https://www.auryelvoyance.com/signification-des-lames-du-tarot)
+- [Ascendant astrologique : calculez le vôtre](https://www.auryelvoyance.com/ascendant-astrologique)
+- [Compatibilité amoureuse selon les signes](https://www.auryelvoyance.com/compatibilite-amoureuse-signe-astrologique)

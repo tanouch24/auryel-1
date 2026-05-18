@@ -1,5 +1,5 @@
-# Netlify déploie uniquement les fichiers HTML/CSS/JS
-# Le fichier auryel_bot.py est ignoré par Netlify (c'est pour Railway)
+# Netlify — auryelvoyance.com
+# Backend Flask sur Railway (auryel_bot.py ignoré par Netlify)
 
 [build]
   publish = "."
@@ -10,8 +10,15 @@
     X-Frame-Options = "DENY"
     X-XSS-Protection = "1; mode=block"
     X-Content-Type-Options = "nosniff"
+    Referrer-Policy = "strict-origin-when-cross-origin"
 
-# Clean URLs — pages principales sans .html
+# ── Redirects 301 : nettoyage index.html ────────────────────────────────────
+[[redirects]]
+  from = "/index.html"
+  to = "/"
+  status = 301
+
+# ── Clean URLs : pages principales (200 rewrite) ────────────────────────────
 [[redirects]]
   from = "/tarifs"
   to = "/tarifs.html"
@@ -42,7 +49,215 @@
   to = "/recrutement.html"
   status = 200
 
-# Ignorer les fichiers Python côté Netlify
+# ── Clean URLs : pages légales (200 rewrite) ────────────────────────────────
+[[redirects]]
+  from = "/mentions-legales"
+  to = "/mentions-legales.html"
+  status = 200
+
+[[redirects]]
+  from = "/confidentialite"
+  to = "/confidentialite.html"
+  status = 200
+
+[[redirects]]
+  from = "/cgu"
+  to = "/cgu.html"
+  status = 200
+
+[[redirects]]
+  from = "/cgv"
+  to = "/cgv.html"
+  status = 200
+
+[[redirects]]
+  from = "/cookies"
+  to = "/cookies.html"
+  status = 200
+
+# ── Clean URLs : articles SEO (200 rewrite) ─────────────────────────────────
+[[redirects]]
+  from = "/ascendant-astrologique"
+  to = "/ascendant-astrologique.html"
+  status = 200
+
+[[redirects]]
+  from = "/avenir-sentimental-gratuit"
+  to = "/avenir-sentimental-gratuit.html"
+  status = 200
+
+[[redirects]]
+  from = "/calcul-numerologie-prenom"
+  to = "/calcul-numerologie-prenom.html"
+  status = 200
+
+[[redirects]]
+  from = "/chakras-et-energie"
+  to = "/chakras-et-energie.html"
+  status = 200
+
+[[redirects]]
+  from = "/comment-choisir-son-voyant-en-ligne"
+  to = "/comment-choisir-son-voyant-en-ligne.html"
+  status = 200
+
+[[redirects]]
+  from = "/compatibilite-amoureuse-signe-astrologique"
+  to = "/compatibilite-amoureuse-signe-astrologique.html"
+  status = 200
+
+[[redirects]]
+  from = "/interpretation-reves-symbolique"
+  to = "/interpretation-reves-symbolique.html"
+  status = 200
+
+[[redirects]]
+  from = "/medium-gratuit-premiere-consultation"
+  to = "/medium-gratuit-premiere-consultation.html"
+  status = 200
+
+[[redirects]]
+  from = "/mon-ex-va-t-il-revenir-voyance"
+  to = "/mon-ex-va-t-il-revenir-voyance.html"
+  status = 200
+
+[[redirects]]
+  from = "/numerologie-date-naissance-chemin-de-vie"
+  to = "/numerologie-date-naissance-chemin-de-vie.html"
+  status = 200
+
+[[redirects]]
+  from = "/oracle-gratuit-en-ligne"
+  to = "/oracle-gratuit-en-ligne.html"
+  status = 200
+
+[[redirects]]
+  from = "/pierre-de-protection-esoterisme"
+  to = "/pierre-de-protection-esoterisme.html"
+  status = 200
+
+[[redirects]]
+  from = "/previsions-astrologiques-2026"
+  to = "/previsions-astrologiques-2026.html"
+  status = 200
+
+[[redirects]]
+  from = "/que-signifie-rever-de-mort"
+  to = "/que-signifie-rever-de-mort.html"
+  status = 200
+
+[[redirects]]
+  from = "/retour-affectif-voyance"
+  to = "/retour-affectif-voyance.html"
+  status = 200
+
+[[redirects]]
+  from = "/reves-et-leur-signification"
+  to = "/reves-et-leur-signification.html"
+  status = 200
+
+[[redirects]]
+  from = "/signification-des-lames-du-tarot"
+  to = "/signification-des-lames-du-tarot.html"
+  status = 200
+
+[[redirects]]
+  from = "/signification-reves-voyance"
+  to = "/signification-reves-voyance.html"
+  status = 200
+
+[[redirects]]
+  from = "/tarot-amour-gratuit-en-ligne"
+  to = "/tarot-amour-gratuit-en-ligne.html"
+  status = 200
+
+[[redirects]]
+  from = "/tarot-de-marseille-en-ligne"
+  to = "/tarot-de-marseille-en-ligne.html"
+  status = 200
+
+[[redirects]]
+  from = "/tarot-oui-non-reponse-immediate"
+  to = "/tarot-oui-non-reponse-immediate.html"
+  status = 200
+
+[[redirects]]
+  from = "/theme-astral-gratuit"
+  to = "/theme-astral-gratuit.html"
+  status = 200
+
+[[redirects]]
+  from = "/voyance-amour-gratuite"
+  to = "/voyance-amour-gratuite.html"
+  status = 200
+
+[[redirects]]
+  from = "/voyance-argent-et-finances"
+  to = "/voyance-argent-et-finances.html"
+  status = 200
+
+[[redirects]]
+  from = "/voyance-avenir-professionnel"
+  to = "/voyance-avenir-professionnel.html"
+  status = 200
+
+[[redirects]]
+  from = "/voyance-par-chat-sans-attente"
+  to = "/voyance-par-chat-sans-attente.html"
+  status = 200
+
+[[redirects]]
+  from = "/voyance-serieuse-en-ligne"
+  to = "/voyance-serieuse-en-ligne.html"
+  status = 200
+
+[[redirects]]
+  from = "/voyance-tchat-en-ligne"
+  to = "/voyance-tchat-en-ligne.html"
+  status = 200
+
+# ── Redirects 301 : anciennes URLs /blog/... ────────────────────────────────
+[[redirects]]
+  from = "/blog/comment-choisir-son-voyant-en-ligne"
+  to = "/comment-choisir-son-voyant-en-ligne"
+  status = 301
+
+[[redirects]]
+  from = "/blog/compatibilite-amoureuse-signe-astrologique"
+  to = "/compatibilite-amoureuse-signe-astrologique"
+  status = 301
+
+[[redirects]]
+  from = "/blog/mon-ex-va-t-il-revenir-voyance"
+  to = "/mon-ex-va-t-il-revenir-voyance"
+  status = 301
+
+[[redirects]]
+  from = "/blog/numerologie-date-naissance-chemin-de-vie"
+  to = "/numerologie-date-naissance-chemin-de-vie"
+  status = 301
+
+[[redirects]]
+  from = "/blog/signification-reves-voyance"
+  to = "/signification-reves-voyance"
+  status = 301
+
+[[redirects]]
+  from = "/blog/tarot-amour-gratuit-en-ligne"
+  to = "/tarot-amour-gratuit-en-ligne"
+  status = 301
+
+[[redirects]]
+  from = "/blog/tarot-oui-non-reponse-immediate"
+  to = "/tarot-oui-non-reponse-immediate"
+  status = 301
+
+[[redirects]]
+  from = "/blog/voyance-avenir-professionnel"
+  to = "/voyance-avenir-professionnel"
+  status = 301
+
+# ── Blocage fichiers sensibles ───────────────────────────────────────────────
 [[redirects]]
   from = "/auryel_bot.py"
   to = "/404"
