@@ -77,184 +77,230 @@
 
 # ── Clean URLs : articles SEO (200 rewrite) ─────────────────────────────────
 [[redirects]]
-  from = "/ascendant-astrologique"
-  to = "/ascendant-astrologique.html"
+  from = "/blog/ascendant-astrologique"
+  to = "/blog/ascendant-astrologique.html"
   status = 200
-
 [[redirects]]
-  from = "/avenir-sentimental-gratuit"
-  to = "/avenir-sentimental-gratuit.html"
+  from = "/blog/avenir-sentimental-gratuit"
+  to = "/blog/avenir-sentimental-gratuit.html"
   status = 200
-
 [[redirects]]
-  from = "/calcul-numerologie-prenom"
-  to = "/calcul-numerologie-prenom.html"
+  from = "/blog/calcul-numerologie-prenom"
+  to = "/blog/calcul-numerologie-prenom.html"
   status = 200
-
 [[redirects]]
-  from = "/chakras-et-energie"
-  to = "/chakras-et-energie.html"
+  from = "/blog/chakras-et-energie"
+  to = "/blog/chakras-et-energie.html"
   status = 200
-
-[[redirects]]
-  from = "/comment-choisir-son-voyant-en-ligne"
-  to = "/comment-choisir-son-voyant-en-ligne.html"
-  status = 200
-
-[[redirects]]
-  from = "/compatibilite-amoureuse-signe-astrologique"
-  to = "/compatibilite-amoureuse-signe-astrologique.html"
-  status = 200
-
-[[redirects]]
-  from = "/interpretation-reves-symbolique"
-  to = "/interpretation-reves-symbolique.html"
-  status = 200
-
-[[redirects]]
-  from = "/medium-gratuit-premiere-consultation"
-  to = "/medium-gratuit-premiere-consultation.html"
-  status = 200
-
-[[redirects]]
-  from = "/mon-ex-va-t-il-revenir-voyance"
-  to = "/mon-ex-va-t-il-revenir-voyance.html"
-  status = 200
-
-[[redirects]]
-  from = "/numerologie-date-naissance-chemin-de-vie"
-  to = "/numerologie-date-naissance-chemin-de-vie.html"
-  status = 200
-
-[[redirects]]
-  from = "/oracle-gratuit-en-ligne"
-  to = "/oracle-gratuit-en-ligne.html"
-  status = 200
-
-[[redirects]]
-  from = "/pierre-de-protection-esoterisme"
-  to = "/pierre-de-protection-esoterisme.html"
-  status = 200
-
-[[redirects]]
-  from = "/previsions-astrologiques-2026"
-  to = "/previsions-astrologiques-2026.html"
-  status = 200
-
-[[redirects]]
-  from = "/que-signifie-rever-de-mort"
-  to = "/que-signifie-rever-de-mort.html"
-  status = 200
-
-[[redirects]]
-  from = "/retour-affectif-voyance"
-  to = "/retour-affectif-voyance.html"
-  status = 200
-
-[[redirects]]
-  from = "/reves-et-leur-signification"
-  to = "/reves-et-leur-signification.html"
-  status = 200
-
-[[redirects]]
-  from = "/signification-des-lames-du-tarot"
-  to = "/signification-des-lames-du-tarot.html"
-  status = 200
-
-[[redirects]]
-  from = "/signification-reves-voyance"
-  to = "/signification-reves-voyance.html"
-  status = 200
-
-[[redirects]]
-  from = "/tarot-amour-gratuit-en-ligne"
-  to = "/tarot-amour-gratuit-en-ligne.html"
-  status = 200
-
-[[redirects]]
-  from = "/tarot-de-marseille-en-ligne"
-  to = "/tarot-de-marseille-en-ligne.html"
-  status = 200
-
-[[redirects]]
-  from = "/tarot-oui-non-reponse-immediate"
-  to = "/tarot-oui-non-reponse-immediate.html"
-  status = 200
-
-[[redirects]]
-  from = "/theme-astral-gratuit"
-  to = "/theme-astral-gratuit.html"
-  status = 200
-
-[[redirects]]
-  from = "/voyance-amour-gratuite"
-  to = "/voyance-amour-gratuite.html"
-  status = 200
-
-[[redirects]]
-  from = "/voyance-argent-et-finances"
-  to = "/voyance-argent-et-finances.html"
-  status = 200
-
-[[redirects]]
-  from = "/voyance-avenir-professionnel"
-  to = "/voyance-avenir-professionnel.html"
-  status = 200
-
-[[redirects]]
-  from = "/voyance-par-chat-sans-attente"
-  to = "/voyance-par-chat-sans-attente.html"
-  status = 200
-
-[[redirects]]
-  from = "/voyance-serieuse-en-ligne"
-  to = "/voyance-serieuse-en-ligne.html"
-  status = 200
-
-[[redirects]]
-  from = "/voyance-tchat-en-ligne"
-  to = "/voyance-tchat-en-ligne.html"
-  status = 200
-
-# ── Redirects 301 : anciennes URLs /blog/... ────────────────────────────────
 [[redirects]]
   from = "/blog/comment-choisir-son-voyant-en-ligne"
-  to = "/comment-choisir-son-voyant-en-ligne"
-  status = 301
-
+  to = "/blog/comment-choisir-son-voyant-en-ligne.html"
+  status = 200
 [[redirects]]
   from = "/blog/compatibilite-amoureuse-signe-astrologique"
-  to = "/compatibilite-amoureuse-signe-astrologique"
-  status = 301
-
+  to = "/blog/compatibilite-amoureuse-signe-astrologique.html"
+  status = 200
+[[redirects]]
+  from = "/blog/interpretation-reves-symbolique"
+  to = "/blog/interpretation-reves-symbolique.html"
+  status = 200
+[[redirects]]
+  from = "/blog/medium-gratuit-premiere-consultation"
+  to = "/blog/medium-gratuit-premiere-consultation.html"
+  status = 200
 [[redirects]]
   from = "/blog/mon-ex-va-t-il-revenir-voyance"
-  to = "/mon-ex-va-t-il-revenir-voyance"
-  status = 301
-
+  to = "/blog/mon-ex-va-t-il-revenir-voyance.html"
+  status = 200
 [[redirects]]
   from = "/blog/numerologie-date-naissance-chemin-de-vie"
-  to = "/numerologie-date-naissance-chemin-de-vie"
-  status = 301
-
+  to = "/blog/numerologie-date-naissance-chemin-de-vie.html"
+  status = 200
+[[redirects]]
+  from = "/blog/oracle-gratuit-en-ligne"
+  to = "/blog/oracle-gratuit-en-ligne.html"
+  status = 200
+[[redirects]]
+  from = "/blog/pierre-de-protection-esoterisme"
+  to = "/blog/pierre-de-protection-esoterisme.html"
+  status = 200
+[[redirects]]
+  from = "/blog/previsions-astrologiques-2026"
+  to = "/blog/previsions-astrologiques-2026.html"
+  status = 200
+[[redirects]]
+  from = "/blog/que-signifie-rever-de-mort"
+  to = "/blog/que-signifie-rever-de-mort.html"
+  status = 200
+[[redirects]]
+  from = "/blog/retour-affectif-voyance"
+  to = "/blog/retour-affectif-voyance.html"
+  status = 200
+[[redirects]]
+  from = "/blog/reves-et-leur-signification"
+  to = "/blog/reves-et-leur-signification.html"
+  status = 200
+[[redirects]]
+  from = "/blog/signification-des-lames-du-tarot"
+  to = "/blog/signification-des-lames-du-tarot.html"
+  status = 200
 [[redirects]]
   from = "/blog/signification-reves-voyance"
-  to = "/signification-reves-voyance"
-  status = 301
-
+  to = "/blog/signification-reves-voyance.html"
+  status = 200
 [[redirects]]
   from = "/blog/tarot-amour-gratuit-en-ligne"
-  to = "/tarot-amour-gratuit-en-ligne"
-  status = 301
-
+  to = "/blog/tarot-amour-gratuit-en-ligne.html"
+  status = 200
+[[redirects]]
+  from = "/blog/tarot-de-marseille-en-ligne"
+  to = "/blog/tarot-de-marseille-en-ligne.html"
+  status = 200
 [[redirects]]
   from = "/blog/tarot-oui-non-reponse-immediate"
-  to = "/tarot-oui-non-reponse-immediate"
-  status = 301
-
+  to = "/blog/tarot-oui-non-reponse-immediate.html"
+  status = 200
+[[redirects]]
+  from = "/blog/theme-astral-gratuit"
+  to = "/blog/theme-astral-gratuit.html"
+  status = 200
+[[redirects]]
+  from = "/blog/voyance-amour-gratuite"
+  to = "/blog/voyance-amour-gratuite.html"
+  status = 200
+[[redirects]]
+  from = "/blog/voyance-argent-et-finances"
+  to = "/blog/voyance-argent-et-finances.html"
+  status = 200
 [[redirects]]
   from = "/blog/voyance-avenir-professionnel"
-  to = "/voyance-avenir-professionnel"
+  to = "/blog/voyance-avenir-professionnel.html"
+  status = 200
+[[redirects]]
+  from = "/blog/voyance-par-chat-sans-attente"
+  to = "/blog/voyance-par-chat-sans-attente.html"
+  status = 200
+[[redirects]]
+  from = "/blog/voyance-serieuse-en-ligne"
+  to = "/blog/voyance-serieuse-en-ligne.html"
+  status = 200
+[[redirects]]
+  from = "/blog/voyance-tchat-en-ligne"
+  to = "/blog/voyance-tchat-en-ligne.html"
+  status = 200
+
+# ── Redirects 301 : anciennes URLs racine → /blog/ ─────────────────────────
+[[redirects]]
+  from = "/ascendant-astrologique"
+  to = "/blog/ascendant-astrologique"
+  status = 301
+[[redirects]]
+  from = "/avenir-sentimental-gratuit"
+  to = "/blog/avenir-sentimental-gratuit"
+  status = 301
+[[redirects]]
+  from = "/calcul-numerologie-prenom"
+  to = "/blog/calcul-numerologie-prenom"
+  status = 301
+[[redirects]]
+  from = "/chakras-et-energie"
+  to = "/blog/chakras-et-energie"
+  status = 301
+[[redirects]]
+  from = "/comment-choisir-son-voyant-en-ligne"
+  to = "/blog/comment-choisir-son-voyant-en-ligne"
+  status = 301
+[[redirects]]
+  from = "/compatibilite-amoureuse-signe-astrologique"
+  to = "/blog/compatibilite-amoureuse-signe-astrologique"
+  status = 301
+[[redirects]]
+  from = "/interpretation-reves-symbolique"
+  to = "/blog/interpretation-reves-symbolique"
+  status = 301
+[[redirects]]
+  from = "/medium-gratuit-premiere-consultation"
+  to = "/blog/medium-gratuit-premiere-consultation"
+  status = 301
+[[redirects]]
+  from = "/mon-ex-va-t-il-revenir-voyance"
+  to = "/blog/mon-ex-va-t-il-revenir-voyance"
+  status = 301
+[[redirects]]
+  from = "/numerologie-date-naissance-chemin-de-vie"
+  to = "/blog/numerologie-date-naissance-chemin-de-vie"
+  status = 301
+[[redirects]]
+  from = "/oracle-gratuit-en-ligne"
+  to = "/blog/oracle-gratuit-en-ligne"
+  status = 301
+[[redirects]]
+  from = "/pierre-de-protection-esoterisme"
+  to = "/blog/pierre-de-protection-esoterisme"
+  status = 301
+[[redirects]]
+  from = "/previsions-astrologiques-2026"
+  to = "/blog/previsions-astrologiques-2026"
+  status = 301
+[[redirects]]
+  from = "/que-signifie-rever-de-mort"
+  to = "/blog/que-signifie-rever-de-mort"
+  status = 301
+[[redirects]]
+  from = "/retour-affectif-voyance"
+  to = "/blog/retour-affectif-voyance"
+  status = 301
+[[redirects]]
+  from = "/reves-et-leur-signification"
+  to = "/blog/reves-et-leur-signification"
+  status = 301
+[[redirects]]
+  from = "/signification-des-lames-du-tarot"
+  to = "/blog/signification-des-lames-du-tarot"
+  status = 301
+[[redirects]]
+  from = "/signification-reves-voyance"
+  to = "/blog/signification-reves-voyance"
+  status = 301
+[[redirects]]
+  from = "/tarot-amour-gratuit-en-ligne"
+  to = "/blog/tarot-amour-gratuit-en-ligne"
+  status = 301
+[[redirects]]
+  from = "/tarot-de-marseille-en-ligne"
+  to = "/blog/tarot-de-marseille-en-ligne"
+  status = 301
+[[redirects]]
+  from = "/tarot-oui-non-reponse-immediate"
+  to = "/blog/tarot-oui-non-reponse-immediate"
+  status = 301
+[[redirects]]
+  from = "/theme-astral-gratuit"
+  to = "/blog/theme-astral-gratuit"
+  status = 301
+[[redirects]]
+  from = "/voyance-amour-gratuite"
+  to = "/blog/voyance-amour-gratuite"
+  status = 301
+[[redirects]]
+  from = "/voyance-argent-et-finances"
+  to = "/blog/voyance-argent-et-finances"
+  status = 301
+[[redirects]]
+  from = "/voyance-avenir-professionnel"
+  to = "/blog/voyance-avenir-professionnel"
+  status = 301
+[[redirects]]
+  from = "/voyance-par-chat-sans-attente"
+  to = "/blog/voyance-par-chat-sans-attente"
+  status = 301
+[[redirects]]
+  from = "/voyance-serieuse-en-ligne"
+  to = "/blog/voyance-serieuse-en-ligne"
+  status = 301
+[[redirects]]
+  from = "/voyance-tchat-en-ligne"
+  to = "/blog/voyance-tchat-en-ligne"
   status = 301
 
 # ── Blocage fichiers sensibles ───────────────────────────────────────────────
