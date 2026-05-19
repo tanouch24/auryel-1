@@ -134,6 +134,20 @@
 /* Disable conflicting reveal on ac cards */
 .ac.reveal{opacity:1!important;transform:none!important}
 
+/* ── ADVISOR SELECTION PANEL ── */
+.ac-sel-panel{display:none;position:fixed;inset:0;z-index:600;background:rgba(4,2,10,.94);backdrop-filter:blur(20px);align-items:center;justify-content:center;padding:24px}
+.ac-sel-panel.open{display:flex}
+.ac-sel-inner{background:rgba(255,255,255,.03);border:1px solid rgba(212,175,55,.22);border-radius:8px;padding:52px 44px;max-width:400px;width:100%;text-align:center}
+.ac-sel-photo{width:108px;height:108px;border-radius:50%;object-fit:cover;object-position:top center;border:2px solid rgba(212,175,55,.3);margin:0 auto 22px;display:block}
+.ac-sel-fb{width:108px;height:108px;border-radius:50%;background:linear-gradient(160deg,#1A0830,#0D1230);border:2px solid rgba(212,175,55,.18);margin:0 auto 22px;display:flex;align-items:center;justify-content:center}
+.ac-sel-init{font-family:'Cinzel',serif;font-size:44px;color:rgba(212,175,55,.2)}
+.ac-sel-name{font-family:'Cinzel',serif;font-size:26px;font-weight:400;color:var(--cream);margin-bottom:8px}
+.ac-sel-spec{font-family:'Cinzel',serif;font-size:10px;letter-spacing:.2em;text-transform:uppercase;color:var(--gold);margin-bottom:36px}
+.ac-sel-btn{display:block;font-family:'Cinzel',serif;font-size:11px;font-weight:700;letter-spacing:.14em;text-transform:uppercase;background:linear-gradient(135deg,var(--gold),var(--gold-b));color:var(--void);padding:16px 28px;border-radius:2px;text-decoration:none;margin-bottom:16px;transition:filter .3s}
+.ac-sel-btn:hover{filter:brightness(1.1)}
+.ac-sel-back{font-family:'Lora',serif;font-size:13px;color:rgba(253,246,227,.35);background:none;border:none;cursor:pointer;transition:color .2s;padding:0;letter-spacing:.02em;display:block;margin:0 auto}
+.ac-sel-back:hover{color:var(--gold)}
+
 /* ── HIW ── */
 .hiw{padding:120px 64px;background:var(--void);position:relative}
 .hiw::before{content:'';position:absolute;top:0;left:0;right:0;height:1px;background:linear-gradient(to right,transparent,var(--gold-m),transparent)}
@@ -468,6 +482,35 @@ document.getElementById('adv-grid').innerHTML=adv.map((a,i)=>`
   <div class="ac-cta"><a href="inscription" class="btn-bk">Commencer avec ${a.name}</a></div>
 </div>`).join('');
 setInterval(()=>{const n=6+Math.floor(Math.random()*3);const idx=[...Array(10).keys()].sort(()=>Math.random()-.5).slice(0,n);document.querySelectorAll('.ac').forEach((c,i)=>{const av=idx.includes(i);c.querySelector('.bd').className='bd'+(av?'':' bz');const t=c.querySelector('.bt2');t.className='bt2'+(av?'':' bz');t.textContent=av?'Disponible':'Occupé·e';});},180000);
+
+// ── ADVISOR SELECTION PANEL ──
+(function(){
+  const panel=document.createElement('div');
+  panel.id='ac-sel-panel';
+  panel.className='ac-sel-panel';
+  panel.innerHTML='<div class="ac-sel-inner"><div id="ac-sel-ph"></div><div class="ac-sel-name" id="ac-sel-name"></div><div class="ac-sel-spec" id="ac-sel-spec"></div><a href="/inscription" class="ac-sel-btn" id="ac-sel-btn">Démarrer ma consultation</a><button class="ac-sel-back" id="ac-sel-back">← Changer de conseiller</button></div>';
+  document.body.appendChild(panel);
+  function closePanel(){panel.classList.remove('open')}
+  document.getElementById('ac-sel-back').addEventListener('click',closePanel);
+  panel.addEventListener('click',function(e){if(e.target===panel)closePanel()});
+  document.addEventListener('keydown',function(e){if(e.key==='Escape')closePanel()});
+  document.querySelectorAll('.ac').forEach(function(card,i){
+    card.addEventListener('click',function(e){
+      if(e.target.closest('a'))return;
+      const a=adv[i];
+      const ph=document.getElementById('ac-sel-ph');
+      ph.innerHTML=a.photo
+        ?('<img class="ac-sel-photo" src="'+a.photo+'" alt="'+a.name+'">')
+        :('<div class="ac-sel-fb"><span class="ac-sel-init">'+a.name[0]+'</span></div>');
+      document.getElementById('ac-sel-name').textContent=a.name;
+      document.getElementById('ac-sel-spec').textContent=a.spec;
+      const btn=document.getElementById('ac-sel-btn');
+      btn.textContent='Démarrer ma consultation avec '+a.name;
+      btn.href='/inscription';
+      panel.classList.add('open');
+    });
+  });
+})();
 </script>
 <div class="ft-trust"><div class="ft-trust-in"><div class="ft-trust-item"><span class="ft-ti-label">Confidentialité</span><span class="ft-ti-val">Échanges privés · Jamais partagés</span></div><div class="ft-trust-item"><span class="ft-ti-label">RGPD</span><span class="ft-ti-val">Données protégées · Résiliation libre</span></div><div class="ft-trust-item"><span class="ft-ti-label">Éthique</span><span class="ft-ti-val">Pas de prédictions · Accompagnement seul</span></div><div class="ft-trust-item"><span class="ft-ti-label">Disponibilité</span><span class="ft-ti-val">10 conseillers · 24h/24 · 7j/7</span></div></div></div>
 <footer><div class="ft"><div><span class="fl2">Auryel</span><p class="ftag">Un espace privé pour retrouver<br>clarté et apaisement.</p><p class="fdesc">Guidance émotionnelle · Relations · Décisions<br>Confidentiel · Sans engagement</p></div><div><span class="fct">Navigation</span><ul class="fli"><li><a href="index.html">Accueil</a></li><li><a href="conseillers.html">Conseillers</a></li><li><a href="comment-ca-marche.html">Comment ça marche</a></li><li><a href="tarifs.html">Tarifs</a></li><li><a href="blog.html">Blog</a></li><li><a href="recrutement.html">Recrutement</a></li></ul></div><div><span class="fct">Légal</span><ul class="fli"><li><a href="mentions-legales.html">Mentions légales</a></li><li><a href="cgu.html">CGU</a></li><li><a href="cgv.html">CGV</a></li><li><a href="confidentialite.html">Confidentialité</a></li><li><a href="cookies.html">Cookies</a></li></ul></div><div><span class="fct">Contact</span><ul class="fli"><li><a href="mailto:contact@auryelvoyance.com">contact@auryelvoyance.com</a></li><li><a href="inscription">Commencer gratuitement</a></li><li><a href="https://instagram.com/auryel_voyance" target="_blank">@auryel_voyance</a></li></ul></div></div><div class="fb2"><div class="fcp">© 2026 Auryel Inc. Tous droits réservés. · Consultations fournies à titre de guidance personnelle uniquement.</div><div class="fdi"><a href="mentions-legales.html" style="color:var(--cd);opacity:.5;font-size:10px;letter-spacing:.05em;text-decoration:none">Mentions légales</a></div></div></footer>
