@@ -7,5 +7,7 @@ Disallow: /Procfile
 Disallow: /runtime.txt
 Disallow: /preview-auryel-redesign.html
 Disallow: /preview-auryel-production.html
+Disallow: /.claude/
+Disallow: /scripts/
 
 Sitemap: https://www.auryelvoyance.com/sitemap.xml
