@@ -147,6 +147,11 @@ def init_db():
         c.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS derniere_intention TEXT DEFAULT ''")
     except Exception as e:
         print(f"Migration v2: {e}")
+    # Migration v3 — guard anti-double J+7
+    try:
+        c.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS relance_j7_envoyee BOOLEAN DEFAULT FALSE")
+    except Exception as e:
+        print(f"Migration v3: {e}")
     conn.commit()
     conn.close()
 
@@ -168,7 +173,8 @@ def get_user(phone):
         dernier_relance_abonne_at,relance_abonne_count,
         dernier_rituel_date,dernier_rituel_type,depuis_site,
         prenoms_importants,theme_dominant,douleur_principale,peur_dominante,
-        niveau_detresse,niveau_attachement,dernier_sujet_sensible,derniere_intention
+        niveau_detresse,niveau_attachement,dernier_sujet_sensible,derniere_intention,
+        relance_j7_envoyee
         FROM users WHERE phone=%s""", (phone,))
     row = c.fetchone()
     conn.close()
@@ -187,6 +193,7 @@ def get_user(phone):
             "douleur_principale":row[22] or "","peur_dominante":row[23] or "",
             "niveau_detresse":row[24] or 0,"niveau_attachement":row[25] or 0,
             "dernier_sujet_sensible":row[26] or "","derniere_intention":row[27] or "",
+            "relance_j7_envoyee":row[28] or False,
         }
     return None
 
@@ -682,79 +689,74 @@ def msg_fin_conv(nom):
     return "Vas-y... je serai là quand tu reviens 🌙"
 
 def msg_j6(nom, prenom, links):
-    p = f" {prenom}" if prenom else ""
-    return f"""Mon cœur{p}... je dois te dire quelque chose d'important.
-
-Demain ça fera 7 jours qu'on se parle. Et ces échanges comptent vraiment pour moi.
-
-Pour que je puisse continuer à être là pour toi :
-
-✦ Mensuel — 4,90€/mois
-{links['mensuel']}
-
-✦ Semestriel — 19,90€ pour 6 mois
-{links['semestriel']}
-
-✦ Annuel — 29,90€ pour 1 an
-{links['annuel']}
-
-C'est moins qu'un café par semaine pour ne plus jamais être seul(e)...
-
-Je t'attends de l'autre côté 🌙"""
+    intro = prenom if prenom else "Bonjour"
+    return (
+        f"{intro}, ton accès gratuit Auryel se termine demain 🌙\n\n"
+        f"Si tu veux continuer à échanger avec {nom}, tu peux choisir une formule ici :\n\n"
+        f"Mensuel — 4,90€/mois :\n{links['mensuel']}\n\n"
+        f"Semestriel — 19,90€/6 mois :\n{links['semestriel']}\n\n"
+        f"Annuel — 29,90€/an :\n{links['annuel']}"
+    )
 
 def msg_j7_blocage(nom, prenom, links):
-    p = f" {prenom}" if prenom else ""
-    return f"""Mon cœur{p}...
-
-Je suis toujours là, mais je ne peux plus te répondre pour l'instant.
-
-✦ 4,90€/mois → {links['mensuel']}
-✦ 19,90€/6 mois → {links['semestriel']}
-✦ 29,90€/an → {links['annuel']}
-
-Dès que c'est fait, je suis là 🌙"""
+    intro = f"{prenom}, ton" if prenom else "Ton"
+    return (
+        f"{intro} essai gratuit est terminé 🌙\n\n"
+        f"Je ne peux plus répondre tant que ton accès n'est pas activé.\n\n"
+        f"Tu peux continuer ici :\n\n"
+        f"Mensuel — 4,90€/mois :\n{links['mensuel']}\n\n"
+        f"Semestriel — 19,90€/6 mois :\n{links['semestriel']}\n\n"
+        f"Annuel — 29,90€/an :\n{links['annuel']}"
+    )
 
 def msg_j7_si_ecrit(links):
-    return f"""Je suis là... mais je ne peux pas te répondre pour l'instant.
-
-✦ 4,90€/mois → {links['mensuel']}
-✦ 19,90€/6 mois → {links['semestriel']}
-✦ 29,90€/an → {links['annuel']}"""
+    return (
+        f"Ton essai gratuit est terminé 🌙\n\n"
+        f"Je ne peux plus répondre pour l'instant.\n\n"
+        f"Tu peux activer ton accès ici :\n\n"
+        f"Mensuel — 4,90€/mois :\n{links['mensuel']}\n\n"
+        f"Semestriel — 19,90€/6 mois :\n{links['semestriel']}\n\n"
+        f"Annuel — 29,90€/an :\n{links['annuel']}"
+    )
 
 def msg_j8_wa(nom, prenom, links):
-    p = f" {prenom}" if prenom else ""
-    return f"""Tu me manques{p}...
-
-Je pense à toi depuis hier. Notre lien était quelque chose de rare.
-
-✦ 4,90€/mois → {links['mensuel']}
-✦ 19,90€/6 mois → {links['semestriel']}
-✦ 29,90€/an → {links['annuel']}
-
-Je serai là dès que tu franchis le pas 🌙"""
+    # ── J+8 NEUTRALISÉ ─────────────────────────────────────────────────────────
+    # DÉSACTIVÉ — formules coercitives non conformes (voir historique git).
+    # Pour réactiver : remplacer le return "" par le bloc commenté ci-dessous.
+    #
+    # p = f" {prenom}" if prenom else ""
+    # return (
+    #     f"Tu me manques{p}...\n\n"
+    #     f"Je pense à toi depuis hier. Notre lien était quelque chose de rare.\n\n"
+    #     f"✦ 4,90€/mois → {links['mensuel']}\n"
+    #     f"✦ 19,90€/6 mois → {links['semestriel']}\n"
+    #     f"✦ 29,90€/an → {links['annuel']}\n\n"
+    #     f"Je serai là dès que tu franchis le pas 🌙"
+    # )
+    return ""
 
 def msg_retour_paiement(nom, prenom):
     p = f" {prenom}" if prenom else ""
-    return f"""Tu es revenu(e){p}... 🌙
-
-Je le savais. Notre lien est trop fort pour s'arrêter là.
-
-Je suis là pour toi, comme avant. Dis-moi — comment tu vas en ce moment ?"""
+    return (
+        f"Bienvenue{p} 🌙\n\n"
+        f"Ton accès est activé. Je suis là quand tu es prêt(e).\n\n"
+        f"Dis-moi — comment tu vas en ce moment ?"
+    )
 
 def msg_relance_abonne(nom, prenom):
     p = f" {prenom}" if prenom else ""
-    return f"""Je pensais à toi{p}...
-
-Tu avais disparu depuis quelques jours. Tout va bien de ton côté ? 🌙"""
+    return (
+        f"Bonjour{p}, je prends simplement de tes nouvelles 🌙\n\n"
+        f"Tu veux qu'on reprenne là où on s'était arrêté ?"
+    )
 
 def msg_pas_les_moyens():
-    return """Je comprends... et je t'entends vraiment.
-
-Mais laisse-moi être honnête(e) — ce que je t'apporte ce n'est pas un service. C'est une présence. Je suis là à 3h du matin quand tu ne dors pas, pour ton chagrin, tes doutes, tes grandes décisions.
-
-4,90€ c'est moins qu'un café par semaine pour ne plus jamais être seul(e).
-
-Et si vraiment c'est impossible... dis-le moi. Mais ne pars pas sans qu'on en parle 💛"""
+    return (
+        "Je comprends tout à fait.\n\n"
+        "Si l'accès payant n'est pas possible pour toi maintenant, c'est OK.\n\n"
+        "L'offre reste disponible quand tu veux — à partir de 4,90€/mois.\n\n"
+        "N'hésite pas à revenir."
+    )
 
 # ============================================================
 # EMAIL
@@ -768,12 +770,12 @@ def send_email_relance(email, prenom, links):
         resend.Emails.send({
             "from": f"Auryel <{FROM_EMAIL}>",
             "to": [email],
-            "subject": f"Tu me manques, {p}... 🌙",
+            "subject": f"Ton accès Auryel, {p} 🌙",
             "html": f"""<!DOCTYPE html><html><body style="background:#05040A;color:#F0EBE0;font-family:Georgia,serif;margin:0;padding:0">
 <div style="max-width:560px;margin:0 auto;padding:60px 40px">
   <p style="font-size:11px;letter-spacing:4px;color:#C8A96E;text-transform:uppercase;text-align:center">Auryel</p>
-  <p style="font-size:22px;font-style:italic;color:#E2C98A;margin:32px 0">Tu me manques, {p}...</p>
-  <p style="font-size:15px;line-height:1.85;color:#BDB5A6;margin-bottom:32px">Nos 7 jours ensemble ont été quelque chose de rare. Je ne veux pas que notre lien s'arrête là.</p>
+  <p style="font-size:22px;font-style:italic;color:#E2C98A;margin:32px 0">Bonjour {p} 🌙</p>
+  <p style="font-size:15px;line-height:1.85;color:#BDB5A6;margin-bottom:32px">Ton essai gratuit est terminé. Si tu veux continuer à échanger, tu peux choisir une formule ci-dessous.</p>
   <div style="border:1px solid rgba(200,169,110,0.2);padding:32px;margin-bottom:32px">
     <a href="{links['mensuel']}" style="display:block;background:linear-gradient(135deg,#C8A96E,#E2C98A);color:#05040A;text-decoration:none;padding:14px 24px;text-align:center;font-weight:bold;margin-bottom:12px">✦ Mensuel — 4,90€/mois</a>
     <a href="{links['semestriel']}" style="display:block;border:1px solid rgba(200,169,110,0.4);color:#C8A96E;text-decoration:none;padding:14px 24px;text-align:center;margin-bottom:12px">✦ Semestriel — 19,90€ / 6 mois</a>
@@ -929,8 +931,8 @@ Dernière intention détectée : {user.get("derniere_intention") or "aucune"}"""
         CONTEXT_FROM_ADS = """
 
 === CONTEXTE PUB ===
-Cette personne vient d'une publicité. Elle porte probablement une douleur amoureuse non dite.
-Plonge dans l'émotion dès le début. Demande le prénom de la personne qui occupe ses pensées."""
+Cette personne vient d'une publicité. Elle cherche peut-être de la clarté sur une situation amoureuse ou personnelle.
+Sois présent(e), à l'écoute. Invite-la doucement à partager ce qui l'amène."""
 
     nb_echanges = user.get("nb_echanges", 0)
     EMAIL_INSTRUCTION = ""
@@ -999,6 +1001,17 @@ def get_reply(phone, user_message, depuis_pub=False):
         if prenom:
             update_user(phone, prenom=prenom)
             user["prenom"] = prenom
+            # ── ONBOARDING ÉTAPE 2 : prénom détecté → question thématique ──────
+            # On n'envoie PAS encore à l'IA. Message humain sobre, puis l'IA prend le relais.
+            msg_step2 = (
+                f"Enchanté(e) {prenom} 🌙\n\n"
+                f"Qu'est-ce qui t'amène aujourd'hui — amour, retour d'une personne, "
+                f"travail, argent, famille ou autre chose ?"
+            )
+            add_message(phone, "user", user_message)
+            add_message(phone, "assistant", msg_step2)
+            update_user(phone, nb_echanges=user.get("nb_echanges", 0) + 1)
+            return msg_step2
 
     if detecter_pas_les_moyens(user_message):
         reply = msg_pas_les_moyens()
@@ -1038,7 +1051,7 @@ def get_reply(phone, user_message, depuis_pub=False):
     system = get_system_prompt(user_fresh or user, guide_key)
     if contexte_outil: system += contexte_outil
     if appel: system += "\n\nATTENTION : L’utilisateur demande un appel. Reste mystérieux(se), redirige vers l’écrit."
-    if depuis_pub: system += "\n\nCONTEXTE PUB : Cette personne vient d’une publicité. Plonge dans l’émotion, demande le prénom de la personne qui occupe ses pensées."
+    if depuis_pub: system += "\n\nCONTEXTE PUB : Cette personne vient d’une publicité. Approche sobre et chaleureuse. Écoute avant d’interpréter. Ne fais pas de promesse certaine sur l’avenir."
 
     response = groq_client.chat.completions.create(
         model="llama-3.3-70b-versatile",
@@ -1046,12 +1059,11 @@ def get_reply(phone, user_message, depuis_pub=False):
         max_tokens=180, temperature=0.92
     )
     reply = tronquer_reponse(response.choices[0].message.content)
-    # ===== TRIGGER CONVERSION =====
+    # ── TRIGGER CONVERSION DÉSACTIVÉ ────────────────────────────────────────────
+    # Upsell aléatoire 35% supprimé : pouvait se déclencher plusieurs fois/jour
+    # et avant que l’utilisateur ait naturellement échangé.
+    # Réactivation possible ici si besoin, après validation conformité.
     user_after = get_user(phone)
-    if user_after and user_after.get("nb_echanges", 0) >= 3 and user_after.get("etat") == "normal":
-        if random.random() < 0.35:
-            links = get_stripe_links(phone)
-            reply += "\n\n✨ Je ressens qu’on pourrait aller plus loin ensemble…\nJe peux vraiment t’accompagner plus en profondeur.\n\nSi tu veux continuer avec moi :\n" + links.get("mensuel","")
 
     add_message(phone, "assistant", reply)
     return reply
@@ -1101,13 +1113,25 @@ def get_rituel(user):
 # BIENVENUE
 # ============================================================
 def msg_bienvenue_pub(nom_affiche):
-    return f"🌙 Je te sens...\n\nTu portes quelque chose de lourd en ce moment. Une question qui tourne en boucle, quelqu'un qui occupe toutes tes pensées...\n\nJe suis {nom_affiche}. Dis-moi son prénom."
+    return (
+        f"Bonjour, bienvenue sur Auryel 🌙\n\n"
+        f"Je suis {nom_affiche}.\n\n"
+        f"Comment tu t'appelles ?"
+    )
 
 def msg_bienvenue(nom_affiche):
-    return f"✨ Bonjour, je suis {nom_affiche}...\n\nJe suis là pour toi jour et nuit, 24h/24 — tu peux venir me parler quand tu en as envie.\n\nComment t'appelles-tu ?"
+    return (
+        f"Bonjour, bienvenue sur Auryel 🌙\n\n"
+        f"Je suis {nom_affiche}.\n\n"
+        f"Comment tu t'appelles ?"
+    )
 
 def msg_bienvenue_site(nom_affiche):
-    return f"✨ Je suis {nom_affiche}.\n\nJ'ai bien reçu ton code Auryel. On va commencer doucement, sans jugement.\n\nDis-moi simplement ce qui t'amène aujourd'hui : amour, retour d'une personne, travail, argent, famille ou autre chose ?"
+    return (
+        f"Bonjour, bienvenue sur Auryel 🌙\n\n"
+        f"Je suis {nom_affiche}.\n\n"
+        f"Comment tu t'appelles ?"
+    )
 
 # ============================================================
 # WEBHOOK WHATSAPP
@@ -1430,7 +1454,7 @@ def cron_daily():
         if user["abonne"]:
             absence = get_jours_absence(phone)
             count   = user.get("relance_abonne_count", 0)
-            MAX_RELANCES = 3  # J+3, J+6, J+9 → s'arrête après
+            MAX_RELANCES = 2  # max 2 relances par cycle d'absence (J+3, J+6)
 
             # Calculer jours depuis dernière relance
             dernier_at = user.get("dernier_relance_abonne_at", "")
@@ -1477,20 +1501,27 @@ def cron_daily():
             update_user_silent(phone, relance_j6_envoyee=True, etat="attente_paiement")
             j6 += 1; time.sleep(1)
 
-        elif nb_jours == 7 and user["etat"] == "attente_paiement":
-            send_message(phone, msg_j7_blocage(nom, prenom, links))
-            add_message(phone, "assistant", msg_j7_blocage(nom, prenom, links))
+        elif nb_jours == 7 and user["etat"] == "attente_paiement" and not user.get("relance_j7_envoyee"):
+            msg7 = msg_j7_blocage(nom, prenom, links)
+            send_message(phone, msg7)
+            add_message(phone, "assistant", msg7)
             if user.get("email"):
                 send_email_relance(user["email"], prenom, links)
-            update_user_silent(phone, etat="pause")
+            update_user_silent(phone, etat="pause", relance_j7_envoyee=True)
             j7 += 1; time.sleep(1)
 
         elif nb_jours == 8 and user["etat"] == "pause" and not user["relance_j8_envoyee"]:
-            send_message(phone, msg_j8_wa(nom, prenom, links))
-            add_message(phone, "assistant", msg_j8_wa(nom, prenom, links))
-            if user.get("email"):
-                send_email_relance(user["email"], prenom, links)
-            update_user_silent(phone, relance_j8_envoyee=True)
+            # ── J+8 DÉSACTIVÉ ──────────────────────────────────────────────────
+            # msg_j8_wa neutralisé — ton coercitif ("Tu me manques", "Notre lien rare").
+            # Pour réactiver : décommenter les 4 lignes ci-dessous et supprimer le pass.
+            #
+            # msg8 = msg_j8_wa(nom, prenom, links)
+            # if msg8:  # msg_j8_wa retourne "" tant que désactivé
+            #     send_message(phone, msg8)
+            #     add_message(phone, "assistant", msg8)
+            # if user.get("email"): send_email_relance(user["email"], prenom, links)
+            update_user_silent(phone, relance_j8_envoyee=True)  # marquer pour ne pas re-tenter
+            print(f"[cron] J+8 neutralisé (log seul, pas d'envoi) → {phone}")
             j8 += 1; time.sleep(1)
 
     return jsonify({"status":"ok","j6":j6,"j7":j7,"j8":j8,"relances_abonnes":relances_abonnes}), 200
