@@ -9,5 +9,7 @@ Disallow: /preview-auryel-redesign.html
 Disallow: /preview-auryel-production.html
 Disallow: /.claude/
 Disallow: /scripts/
+Disallow: /.git/
+Disallow: /node_modules/
 
 Sitemap: https://www.auryelvoyance.com/sitemap.xml
