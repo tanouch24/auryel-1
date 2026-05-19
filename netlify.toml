@@ -353,6 +353,116 @@
   to = "/blog/synchronicites-amour-signification.html"
   status = 200
 
+# ── Clean URLs : pages SEO racine (200 rewrite) ─────────────────────────────
+[[redirects]]
+  from = "/guidance-spirituelle"
+  to = "/guidance-spirituelle.html"
+  status = 200
+[[redirects]]
+  from = "/voyance-amour"
+  to = "/voyance-amour.html"
+  status = 200
+[[redirects]]
+  from = "/tirage-tarot"
+  to = "/tirage-tarot.html"
+  status = 200
+[[redirects]]
+  from = "/flamme-jumelle"
+  to = "/flamme-jumelle.html"
+  status = 200
+[[redirects]]
+  from = "/heure-miroir"
+  to = "/heure-miroir.html"
+  status = 200
+[[redirects]]
+  from = "/medium-serieux"
+  to = "/medium-serieux.html"
+  status = 200
+
+# ── Clean URLs : nouveaux articles blog batch 3 (200 rewrite) ────────────────
+[[redirects]]
+  from = "/blog/pourquoi-certaines-ruptures-obseident-autant"
+  to = "/blog/pourquoi-certaines-ruptures-obseident-autant.html"
+  status = 200
+[[redirects]]
+  from = "/blog/triangle-amoureux-que-faire"
+  to = "/blog/triangle-amoureux-que-faire.html"
+  status = 200
+[[redirects]]
+  from = "/blog/comment-sortir-d-une-relation-toxique"
+  to = "/blog/comment-sortir-d-une-relation-toxique.html"
+  status = 200
+[[redirects]]
+  from = "/blog/signes-d-une-vraie-connexion-spirituelle"
+  to = "/blog/signes-d-une-vraie-connexion-spirituelle.html"
+  status = 200
+[[redirects]]
+  from = "/blog/mercure-retrograde-et-relations-amoureuses"
+  to = "/blog/mercure-retrograde-et-relations-amoureuses.html"
+  status = 200
+[[redirects]]
+  from = "/blog/pleine-lune-effet-sur-les-emotions"
+  to = "/blog/pleine-lune-effet-sur-les-emotions.html"
+  status = 200
+[[redirects]]
+  from = "/blog/carte-du-tarot-le-jugement-signification"
+  to = "/blog/carte-du-tarot-le-jugement-signification.html"
+  status = 200
+[[redirects]]
+  from = "/blog/carte-du-tarot-le-soleil-signification"
+  to = "/blog/carte-du-tarot-le-soleil-signification.html"
+  status = 200
+[[redirects]]
+  from = "/blog/carte-du-tarot-l-amoureux-signification"
+  to = "/blog/carte-du-tarot-l-amoureux-signification.html"
+  status = 200
+[[redirects]]
+  from = "/blog/numerologie-11-nombre-maitre-signification"
+  to = "/blog/numerologie-11-nombre-maitre-signification.html"
+  status = 200
+
+# ── Clean URLs : nouveaux articles blog batch 4 (200 rewrite) ────────────────
+[[redirects]]
+  from = "/blog/numerologie-33-nombre-maitre-signification"
+  to = "/blog/numerologie-33-nombre-maitre-signification.html"
+  status = 200
+[[redirects]]
+  from = "/blog/chakra-du-coeur-comment-l-ouvrir"
+  to = "/blog/chakra-du-coeur-comment-l-ouvrir.html"
+  status = 200
+[[redirects]]
+  from = "/blog/nettoyage-energetique-rituel-complet"
+  to = "/blog/nettoyage-energetique-rituel-complet.html"
+  status = 200
+[[redirects]]
+  from = "/blog/protection-spirituelle-energies-negatives"
+  to = "/blog/protection-spirituelle-energies-negatives.html"
+  status = 200
+[[redirects]]
+  from = "/blog/signes-eveil-spirituel"
+  to = "/blog/signes-eveil-spirituel.html"
+  status = 200
+[[redirects]]
+  from = "/blog/intuition-feminine-comment-la-developper"
+  to = "/blog/intuition-feminine-comment-la-developper.html"
+  status = 200
+[[redirects]]
+  from = "/blog/reve-de-son-ex-signification-spirituelle"
+  to = "/blog/reve-de-son-ex-signification-spirituelle.html"
+  status = 200
+[[redirects]]
+  from = "/blog/voir-des-papillons-signification-spirituelle"
+  to = "/blog/voir-des-papillons-signification-spirituelle.html"
+  status = 200
+[[redirects]]
+  from = "/blog/ange-numero-111-signification"
+  to = "/blog/ange-numero-111-signification.html"
+  status = 200
+[[redirects]]
+  from = "/blog/ange-numero-333-signification"
+  to = "/blog/ange-numero-333-signification.html"
+  status = 200
+
 # ── Blocage fichiers sensibles ───────────────────────────────────────────────
 [[redirects]]
   from = "/auryel_bot.py"
