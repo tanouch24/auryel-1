@@ -303,6 +303,56 @@
   to = "/blog/voyance-tchat-en-ligne"
   status = 301
 
+[[redirects]]
+  from = "/blog/pourquoi-mon-ex-revient-puis-repart"
+  to = "/blog/pourquoi-mon-ex-revient-puis-repart.html"
+  status = 200
+
+[[redirects]]
+  from = "/blog/il-ne-repond-plus-que-faire"
+  to = "/blog/il-ne-repond-plus-que-faire.html"
+  status = 200
+
+[[redirects]]
+  from = "/blog/comment-oublier-quelqu-un-qu-on-aime-encore"
+  to = "/blog/comment-oublier-quelqu-un-qu-on-aime-encore.html"
+  status = 200
+
+[[redirects]]
+  from = "/blog/vais-je-retrouver-l-amour-apres-une-rupture"
+  to = "/blog/vais-je-retrouver-l-amour-apres-une-rupture.html"
+  status = 200
+
+[[redirects]]
+  from = "/blog/pourquoi-je-pense-encore-a-lui"
+  to = "/blog/pourquoi-je-pense-encore-a-lui.html"
+  status = 200
+
+[[redirects]]
+  from = "/blog/dependance-affective-comment-s-en-sortir"
+  to = "/blog/dependance-affective-comment-s-en-sortir.html"
+  status = 200
+
+[[redirects]]
+  from = "/blog/silence-radio-amour-signification"
+  to = "/blog/silence-radio-amour-signification.html"
+  status = 200
+
+[[redirects]]
+  from = "/blog/heure-miroir-22h22-signification"
+  to = "/blog/heure-miroir-22h22-signification.html"
+  status = 200
+
+[[redirects]]
+  from = "/blog/relation-karmique-signes-signification"
+  to = "/blog/relation-karmique-signes-signification.html"
+  status = 200
+
+[[redirects]]
+  from = "/blog/synchronicites-amour-signification"
+  to = "/blog/synchronicites-amour-signification.html"
+  status = 200
+
 # ── Blocage fichiers sensibles ───────────────────────────────────────────────
 [[redirects]]
   from = "/auryel_bot.py"
