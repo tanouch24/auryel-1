@@ -1,4 +1,4 @@
-import os, time, requests, threading, psycopg2, stripe, re, random
+import os, time, requests, threading, psycopg2, stripe, re, random, hmac, hashlib
 from datetime import datetime, date, timezone
 from flask import Flask, request, jsonify, session, redirect
 from flask_cors import CORS
@@ -761,7 +761,36 @@ def msg_pas_les_moyens():
 # ============================================================
 # EMAIL
 # ============================================================
+def send_email_j6(email, prenom, links):
+    """Email J+6 : essai se termine demain — ton sobre, invite à continuer."""
+    if not email: return
+    try:
+        import resend
+        resend.api_key = RESEND_API_KEY
+        p = prenom or "toi"
+        resend.Emails.send({
+            "from": f"Auryel <{FROM_EMAIL}>",
+            "to": [email],
+            "subject": f"Ton accès Auryel se termine demain, {p} 🌙",
+            "html": f"""<!DOCTYPE html><html><body style="background:#05040A;color:#F0EBE0;font-family:Georgia,serif;margin:0;padding:0">
+<div style="max-width:560px;margin:0 auto;padding:60px 40px">
+  <p style="font-size:11px;letter-spacing:4px;color:#C8A96E;text-transform:uppercase;text-align:center">Auryel</p>
+  <p style="font-size:22px;font-style:italic;color:#E2C98A;margin:32px 0">Bonjour {p} 🌙</p>
+  <p style="font-size:15px;line-height:1.85;color:#BDB5A6;margin-bottom:32px">Ton accès gratuit Auryel se termine demain. Si tu veux continuer à échanger, tu peux choisir une formule ci-dessous.</p>
+  <div style="border:1px solid rgba(200,169,110,0.2);padding:32px;margin-bottom:32px">
+    <a href="{links['mensuel']}" style="display:block;background:linear-gradient(135deg,#C8A96E,#E2C98A);color:#05040A;text-decoration:none;padding:14px 24px;text-align:center;font-weight:bold;margin-bottom:12px">✦ Mensuel — 4,90€/mois</a>
+    <a href="{links['semestriel']}" style="display:block;border:1px solid rgba(200,169,110,0.4);color:#C8A96E;text-decoration:none;padding:14px 24px;text-align:center;margin-bottom:12px">✦ Semestriel — 19,90€ / 6 mois</a>
+    <a href="{links['annuel']}" style="display:block;border:1px solid rgba(200,169,110,0.2);color:#BDB5A6;text-decoration:none;padding:14px 24px;text-align:center">✦ Annuel — 29,90€ / an</a>
+  </div>
+  <p style="font-size:10px;color:#4A4060;text-align:center">© 2026 AURYEL — Consultations à titre de divertissement.</p>
+</div></body></html>"""
+        })
+        print(f"✉️ Email J+6 envoyé à {email}")
+    except Exception as e:
+        print(f"❌ Email J+6 error: {e}")
+
 def send_email_relance(email, prenom, links):
+    """Email J+7 : essai terminé — ton sobre, invite à activer l'accès."""
     if not email: return
     try:
         import resend
@@ -784,9 +813,9 @@ def send_email_relance(email, prenom, links):
   <p style="font-size:10px;color:#4A4060;text-align:center">© 2026 AURYEL — Consultations à titre de divertissement.</p>
 </div></body></html>"""
         })
-        print(f"✉️ Email envoyé à {email}")
+        print(f"✉️ Email J+7 envoyé à {email}")
     except Exception as e:
-        print(f"❌ Email error: {e}")
+        print(f"❌ Email J+7 error: {e}")
 
 # ============================================================
 # WHATSAPP
@@ -1144,6 +1173,19 @@ def verify():
 
 @app.route("/webhook", methods=["POST"])
 def receive():
+    # ── Vérification signature Meta X-Hub-Signature-256 ────────────────────────
+    meta_secret = os.environ.get("META_APP_SECRET", "")
+    if meta_secret:
+        sig_header = request.headers.get("X-Hub-Signature-256", "")
+        expected   = "sha256=" + hmac.new(
+            meta_secret.encode("utf-8"), request.get_data(), hashlib.sha256
+        ).hexdigest()
+        if not hmac.compare_digest(sig_header, expected):
+            print("[webhook] Signature Meta invalide — requête rejetée")
+            return jsonify({"error": "invalid signature"}), 403
+    else:
+        print("[webhook] ⚠️  META_APP_SECRET absent — vérification signature désactivée")
+
     data = request.get_json()
     try:
         value = data["entry"][0]["changes"][0]["value"]
@@ -1494,10 +1536,11 @@ def cron_daily():
         links = get_stripe_links(phone)
 
         if nb_jours == 6 and not user["relance_j6_envoyee"]:
-            send_message(phone, msg_j6(nom, prenom, links))
-            add_message(phone, "assistant", msg_j6(nom, prenom, links))
+            msg6 = msg_j6(nom, prenom, links)
+            send_message(phone, msg6)
+            add_message(phone, "assistant", msg6)
             if user.get("email"):
-                send_email_relance(user["email"], prenom, links)
+                send_email_j6(user["email"], prenom, links)
             update_user_silent(phone, relance_j6_envoyee=True, etat="attente_paiement")
             j6 += 1; time.sleep(1)
 
