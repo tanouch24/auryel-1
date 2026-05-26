@@ -7,7 +7,7 @@ from groq import Groq
 app = Flask(__name__)
 app.secret_key = os.environ.get("SECRET_KEY")
 
-CORS(app, resources={r"/stripe/*": {"origins": ["https://www.auryelvoyance.com"]}})
+CORS(app, resources={r"/stripe/*": {"origins": ["https://auryelvoyance.com"]}})
 
 WHATSAPP_TOKEN  = os.environ.get("WHATSAPP_TOKEN")
 PHONE_NUMBER_ID = os.environ.get("PHONE_NUMBER_ID")
@@ -19,7 +19,7 @@ STRIPE_SK       = os.environ.get("STRIPE_SK")
 STRIPE_WEBHOOK  = os.environ.get("STRIPE_WEBHOOK_SECRET")
 RESEND_API_KEY  = os.environ.get("RESEND_API_KEY")
 FROM_EMAIL      = "contact@auryelvoyance.com"
-SITE_URL        = "https://www.auryelvoyance.com"
+SITE_URL        = "https://auryelvoyance.com"
 CRON_SECRET     = os.environ.get("CRON_SECRET")
 # ── Vérification variables au démarrage ────────────────────
 _REQUIRED_ENV = [
@@ -1447,7 +1447,7 @@ def create_checkout():
             custom_text={
                 "terms_of_service_acceptance": {
                     "message": (
-                        "En continuant, vous acceptez les [CGV](https://www.auryelvoyance.com/cgv.html). "
+                        "En continuant, vous acceptez les [CGV](https://auryelvoyance.com/cgv.html). "
                         "7 jours gratuits, puis renouvellement automatique. "
                         "Annulable à tout moment avant la fin de l'essai."
                     ),
@@ -1848,7 +1848,7 @@ if __name__ == "__main__":
 
 GITHUB_TOKEN = os.environ.get("GITHUB_TOKEN")
 GITHUB_REPO  = os.environ.get("GITHUB_REPO", "tanouch24/auryel-1")
-SITE_BASE    = "https://www.auryelvoyance.com"
+SITE_BASE    = "https://auryelvoyance.com"
 
 SEO_KEYWORDS = [
     {"slug":"voyance-gratuite-sans-cb",       "kw":"voyance gratuite sans cb",            "cat":"guide",       "cat_label":"Guide"},
