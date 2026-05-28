@@ -7,3 +7,5 @@ __pycache__/
 tmp/
 .env.local
 .env.*.local
+venv/
+__pycache__/
