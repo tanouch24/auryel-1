@@ -1283,8 +1283,10 @@ def receive():
                     threading.Thread(target=send_welcome, args=(from_num, nom_affiche, est_depuis_pub), daemon=True).start()
             else:
                 user = get_user(from_num)
+                onboarding_ok = bool(user and user.get("onboarding_done"))
 
-                if user.get("etat") == "pause":
+                # Le flow onboarding doit toujours être exécuté avant toute logique métier ou émotionnelle.
+                if onboarding_ok and user.get("etat") == "pause":
                     def send_pause(num):
                         time.sleep(1)
                         links = get_stripe_links(num)
@@ -1296,6 +1298,13 @@ def receive():
 
                 def send_reply(num, text, depuis_pub, u, nom):
                     time.sleep(2)
+                    onboarding_ok = bool(u and u.get("onboarding_done"))
+
+                    if not onboarding_ok:
+                        reply = get_reply(num, text, depuis_pub=depuis_pub)
+                        print(f"🔮 {nom}: {reply}")
+                        send_message(num, reply)
+                        return
 
                     if detecter_fin_conversation(text):
                         reply = msg_fin_conv(nom)
