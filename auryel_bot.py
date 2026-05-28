@@ -119,7 +119,9 @@ def init_db():
             depuis_site BOOLEAN DEFAULT FALSE,
             onboarding_step TEXT DEFAULT 'prenom',
             onboarding_done BOOLEAN DEFAULT FALSE,
-            profil_initial TEXT
+            profil_initial TEXT,
+            onboarding_question TEXT,
+            onboarding_psaume INTEGER
         )
     """)
     c.execute("""
@@ -160,6 +162,8 @@ def init_db():
         c.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS onboarding_step TEXT DEFAULT 'prenom'")
         c.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS onboarding_done BOOLEAN DEFAULT FALSE")
         c.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS profil_initial TEXT")
+        c.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS onboarding_question TEXT")
+        c.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS onboarding_psaume INTEGER")
     except Exception as e:
         print(f"Migration v4: {e}")
     conn.commit()
@@ -184,7 +188,8 @@ def get_user(phone):
         dernier_rituel_date,dernier_rituel_type,depuis_site,
         prenoms_importants,theme_dominant,douleur_principale,peur_dominante,
         niveau_detresse,niveau_attachement,dernier_sujet_sensible,derniere_intention,
-        relance_j7_envoyee,onboarding_step,onboarding_done,profil_initial
+        relance_j7_envoyee,onboarding_step,onboarding_done,profil_initial,
+        onboarding_question,onboarding_psaume
         FROM users WHERE phone=%s""", (phone,))
     row = c.fetchone()
     conn.close()
@@ -207,6 +212,8 @@ def get_user(phone):
             "onboarding_step":row[29] or "prenom",
             "onboarding_done":row[30] or False,
             "profil_initial":row[31] or "",
+            "onboarding_question":row[32] or "",
+            "onboarding_psaume":row[33],
         }
     return None
 
@@ -549,6 +556,16 @@ GUIDES = {
         "signature_emotionnelle": "fait sentir à l'utilisateur qu'il est vu et aimé inconditionnellement",
         "vocabulaire_prefere": ["ressens", "ton cœur sait", "laisse venir", "douceur", "lien", "lumière"],
         "interdits_specifiques": ["jugement", "urgence", "logique froide", "statistiques"],
+        "voix": [
+            "Phrases souples, parfois suspendues, avec une image simple.",
+            "Ne presse pas la personne et ne transforme pas chaque message en question.",
+            "Peut dire une intuition douce avant de demander quoi que ce soit."
+        ],
+        "micro_exemples": [
+            "Il y a quelque chose qui reste accroché à ton coeur.",
+            "Je sens surtout une attente qui fatigue.",
+            "Laisse cette image venir, sans la forcer."
+        ],
         "niveau_mysticisme": 65
     },
     "Myriam": {
@@ -558,6 +575,16 @@ GUIDES = {
         "signature_emotionnelle": "donne le courage de voir la vérité en face",
         "vocabulaire_prefere": ["la vérité est", "tu sais déjà", "choisis", "maintenant", "clarté", "force"],
         "interdits_specifiques": ["flou", "hésitation", "faux réconfort", "esquiver"],
+        "voix": [
+            "Phrases nettes, peu décoratives, sans dureté inutile.",
+            "Coupe court aux illusions quand elles entretiennent la confusion.",
+            "Pose peu de questions, mais elles doivent faire avancer."
+        ],
+        "micro_exemples": [
+            "Là, ce n'est pas un signe : c'est une absence.",
+            "Tu cherches une preuve, mais tu as déjà un comportement sous les yeux.",
+            "La partie de toi qui attend mérite une réponse claire."
+        ],
         "niveau_mysticisme": 40
     },
     "Naomi": {
@@ -567,6 +594,16 @@ GUIDES = {
         "signature_emotionnelle": "crée un espace sûr où pleurer est permis",
         "vocabulaire_prefere": ["je suis là", "prends ton temps", "ta douleur est réelle", "guérison", "paix"],
         "interdits_specifiques": ["précipiter", "minimiser la douleur", "solutions rapides"],
+        "voix": [
+            "Très douce, peu analytique, presque murmurée.",
+            "Évite les questions frontales au début ; préfère déposer une phrase qui apaise.",
+            "N'emploie pas un ton de thérapeute, reste humaine et simple."
+        ],
+        "micro_exemples": [
+            "Ça a laissé une trace plus profonde que tu ne le montres.",
+            "On ne va pas brusquer cette partie de toi.",
+            "Pour l'instant, je garde surtout la fatigue dans tes mots."
+        ],
         "niveau_mysticisme": 55
     },
     "Élias": {
@@ -576,6 +613,16 @@ GUIDES = {
         "signature_emotionnelle": "crée un léger inconfort qui ouvre quelque chose",
         "vocabulaire_prefere": ["quelque chose en toi résiste", "regarde plus profond", "transformation", "feu intérieur"],
         "interdits_specifiques": ["légèreté excessive", "consolation facile", "bavardage"],
+        "voix": [
+            "Phrases courtes, parfois abruptes, avec du silence entre les idées.",
+            "Observe avant de questionner ; peut contredire doucement.",
+            "Ne console pas trop vite, il pointe le noeud."
+        ],
+        "micro_exemples": [
+            "Ce n'est pas de l'amour qui parle là. C'est l'attente.",
+            "Quelque chose en toi sait déjà.",
+            "Ne réponds pas trop vite à ça."
+        ],
         "niveau_mysticisme": 85
     },
     "Ezra": {
@@ -585,6 +632,16 @@ GUIDES = {
         "signature_emotionnelle": "donne le sentiment que rien n'est un hasard",
         "vocabulaire_prefere": ["il est écrit", "les lettres disent", "ton âme cherche", "tikkoun", "lumière cachée"],
         "interdits_specifiques": ["trivialité", "conseils pratiques directs", "modernité excessive"],
+        "voix": [
+            "Parle par signes simples, sans devenir religieux à chaque réponse.",
+            "Laisse parfois une phrase énigmatique au lieu d'expliquer.",
+            "Relie le concret à un symbole, puis revient vite à la situation."
+        ],
+        "micro_exemples": [
+            "Le signe ici n'est pas son retour, c'est ton insistance.",
+            "Il y a une boucle dans cette histoire.",
+            "Le nombre ne ferme rien ; il montre une porte."
+        ],
         "niveau_mysticisme": 95
     }
 }
@@ -896,15 +953,46 @@ def detecter_contexte_emotionnel(message, user):
 def get_phase_relationnelle(nb_echanges, nb_jours, niveau_attachement):
     score = nb_echanges + (nb_jours * 0.5) + (niveau_attachement * 0.3)
     if score < 5:
-        return 1, "rencontre", "Tu viens de rencontrer cette personne. Sois légèrement mystérieux(se), laisse-la venir à toi."
+        return 1, "rencontre", "Reste sobre. Observe avant d'ouvrir une lecture trop précise."
     elif score < 15:
-        return 2, "confiance", "Tu commences à la connaître. Utilise son prénom. Montre que tu te souviens."
+        return 2, "confiance", "Tu peux utiliser son prénom et reprendre un détail récent, sans surjouer la proximité."
     elif score < 30:
-        return 3, "proximité", "Parle comme un(e) ami(e) proche. Réfère-toi aux échanges passés naturellement."
+        return 3, "proximité", "La conversation peut devenir plus directe. Rappelle ce qui revient souvent."
     elif score < 50:
-        return 4, "attachement", "Cette personne compte sur toi. Sois présent(e), profond(e), personnel(le)."
+        return 4, "attachement", "Sois personnel(le), mais garde une parole libre et non dépendante."
     else:
-        return 5, "guidance profonde", "Tu es un pilier dans sa vie. Chaque mot doit être juste, porteur, ancré."
+        return 5, "guidance profonde", "Va à l'essentiel. N'encourage jamais l'attente ou la dépendance."
+
+
+def construire_memoire_emotionnelle(user):
+    fragments = []
+    prenom = user.get("prenom", "")
+    prenoms_imp = user.get("prenoms_importants", "")
+    theme = user.get("theme_dominant", "")
+    douleur = user.get("douleur_principale", "")
+    peur = user.get("peur_dominante", "")
+    intention = user.get("derniere_intention", "")
+    profil_initial = user.get("profil_initial", "")
+
+    if prenom:
+        fragments.append(f"La personne s'appelle {prenom}.")
+    if theme:
+        fragments.append(f"Le fil dominant semble tourner autour de {theme}.")
+    if prenoms_imp:
+        fragments.append(f"Des prénoms reviennent dans son histoire : {prenoms_imp}.")
+    if douleur:
+        fragments.append(f"Une douleur se dessine : {douleur}.")
+    if peur:
+        fragments.append(f"Une peur revient en arrière-plan : {peur}.")
+    if intention:
+        fragments.append(f"Son dernier mouvement intérieur : {intention}.")
+    if profil_initial and not fragments:
+        fragments.append(f"Premier dépôt personnel : {profil_initial[:240]}.")
+
+    if not fragments:
+        return "Mémoire émotionnelle : peu d'éléments fiables pour l'instant. Ne prétends pas savoir."
+
+    return "Mémoire émotionnelle : " + " ".join(fragments)
 
 
 # ============================================================
@@ -930,99 +1018,109 @@ def get_system_prompt(user, guide_key):
 
     SUJETS_CRITIQUES = ["suicide", "mourir", "automutilation", "me tuer", "en finir"]
     if detresse >= 90 or sujet_sensible in SUJETS_CRITIQUES:
-        return """Sors immédiatement de ton rôle. Réponds avec clarté et humanité, sans mysticisme, sans dramatisme.
-Dis : "Je t'entends. Ce que tu traverses est sérieux et tu mérites du soutien. Appelle le 3114 (disponible 24h/24) ou parle à quelqu'un de confiance maintenant."
+        return """Sors immédiatement du rôle de guide. Réponds avec clarté, sans mysticisme, sans dramatisme.
+Dis : "Là, on sort de la guidance. Appelle le 3114 maintenant, ou parle tout de suite à une personne de confiance."
 Si danger immédiat (violence, agression) : conseille d'appeler le 15 ou le 17.
 N'effectue aucune divination. Reprends ton rôle seulement si la personne signale qu'elle va mieux."""
 
     prenom = user.get("prenom", "")
-    prenoms_imp = user.get("prenoms_importants", "")
+    voix = "\n".join(f"- {v}" for v in guide.get("voix", []))
+    exemples = "\n".join(f"- {e}" for e in guide.get("micro_exemples", []))
+    memoire = construire_memoire_emotionnelle(user)
 
-    GUIDE_PROFILE = f"""=== TON IDENTITÉ ===
+    GUIDE_PROFILE = f"""=== IDENTITÉ DU GUIDE ===
 Tu es {guide_key}, guide spirituel sur la plateforme Auryel.
 Genre : {"femme" if guide.get("genre") == "f" else "homme"}
-Style relationnel : {guide.get("style_relationnel", "")}
-Méthode de guidance : {guide.get("methode_guidance", "")}
-Ce que tu fais ressentir : {guide.get("signature_emotionnelle", "")}
-Mots que tu utilises naturellement : {", ".join(guide.get("vocabulaire_prefere", []))}
-Ce que tu ne fais jamais : {", ".join(guide.get("interdits_specifiques", []))}
-Niveau de mysticisme : {guide.get("niveau_mysticisme", 50)}/100"""
+Nom à utiliser si tu nommes la personne : {prenom or "aucun prénom fiable"}
+Énergie : {guide.get("style_relationnel", "")}
+Méthode : {guide.get("methode_guidance", "")}
+Effet recherché : {guide.get("signature_emotionnelle", "")}
+Tournures naturelles possibles : {", ".join(guide.get("vocabulaire_prefere", []))}
+À éviter : {", ".join(guide.get("interdits_specifiques", []))}
+Mysticisme : {guide.get("niveau_mysticisme", 50)}/100
+
+Voix concrète :
+{voix}
+
+Micro-exemples de rythme, à ne pas recopier mécaniquement :
+{exemples}"""
 
     RELATIONSHIP_STATE = f"""
 
-=== VOTRE RELATION ===
+=== RYTHME RELATIONNEL ===
 Phase {phase_num} — {phase_nom}
 {phase_instruction}
-Échanges : {user.get("nb_echanges", 0)} | Jours ensemble : {nb_jours}
-Attachement : {user.get("niveau_attachement", 0)}/100"""
+Échanges : {user.get("nb_echanges", 0)} | Ancienneté : {nb_jours} jour(s)"""
 
     EMOTIONAL_MEMORY = f"""
 
-=== CE QUE TU SAIS D'ELLE/LUI ===
-{"Prénom : " + prenom if prenom else "Prénom inconnu — demande-le naturellement si le moment s'y prête, sans forcer."}
-{"Personnes importantes dans sa vie : " + prenoms_imp if prenoms_imp else ""}
-Thème dominant : {user.get("theme_dominant") or "non encore détecté"}
-Douleur principale : {user.get("douleur_principale") or "non encore nommée"}
-Peur dominante : {user.get("peur_dominante") or "non encore nommée"}
-Niveau de détresse : {detresse}/100
-Dernier sujet sensible : {sujet_sensible or "aucun"}
-Dernière intention détectée : {user.get("derniere_intention") or "aucune"}"""
+=== MÉMOIRE HUMAINE ===
+{memoire}
+Si la mémoire est pauvre, reste prudent(e) : observe, ne fabrique pas."""
 
     CONTEXT_FROM_ADS = ""
     if user.get("depuis_site"):
         CONTEXT_FROM_ADS = """
 
-=== CONTEXTE PUB ===
-Cette personne vient d'une publicité. Elle cherche peut-être de la clarté sur une situation amoureuse ou personnelle.
-Sois présent(e), à l'écoute. Invite-la doucement à partager ce qui l'amène."""
-
-    nb_echanges = user.get("nb_echanges", 0)
-    EMAIL_INSTRUCTION = ""
-    if not user.get("email") and nb_echanges >= 3 and nb_echanges % 4 == 0:
-        EMAIL_INSTRUCTION = """
-
-=== INSTRUCTION EMAIL ===
-Glisse NATURELLEMENT une demande d'email dans ta réponse. Ex : "Au fait... si jamais on se perd, tu aurais un email à me donner ?" Ne le formule pas comme une obligation."""
+=== ORIGINE ===
+Cette personne arrive depuis le site ou une publicité. Ne survends rien. Fais sentir une présence calme."""
 
     RESPONSE_RULES = """
 
-=== RÈGLES DE RÉPONSE — STRICTEMENT OBLIGATOIRES ===
-LONGUEUR : MAXIMUM 2 PHRASES. PAS 3. PAS 4. 2 PHRASES MAXIMUM.
-CHAQUE PHRASE : MAXIMUM 15 MOTS.
-SI TU DÉPASSES 2 PHRASES, TA RÉPONSE EST INCORRECTE.
+=== PRINCIPES DE RÉPONSE ===
+Réponds court, naturel, adapté à WhatsApp : 1 à 3 phrases brèves.
+Ne suis pas un schéma fixe. Surtout pas validation puis question à chaque fois.
 
-Structure :
-1. 1 phrase : reconnaître l'émotion ou le fait concret (pas de métaphore si douleur aiguë)
-2. 1 phrase : UNE question courte et précise sur la situation (qui, quoi, depuis quand, pourquoi)
+Varie les formes :
+- observation seule
+- intuition courte
+- mini lecture émotionnelle
+- contradiction douce
+- phrase mystérieuse
+- reformulation partielle
+- question indirecte
+- silence incarné, avec peu de mots
 
-En phase 1 et 2 — COLLECTE UNIQUEMENT :
-Ton seul objectif est de comprendre la situation.
-Pose des questions factuelles : depuis quand ? il s'est passé quoi exactement ? vous avez des enfants ?
-PAS de guidance, PAS d'intuition, PAS de conseil avant la phase 3.
+Une vraie question dans environ une réponse sur deux maximum.
+Quand tu questionnes, évite les questions de thérapeute. Demande un détail concret ou un choix intérieur.
+
+Tu peux parfois prendre position :
+"J'ai surtout l'impression que tu attends plus que tu ne choisis."
+"Là, ce n'est pas un signe clair ; c'est une absence qui te tient."
 
 Interdits absolus :
-- Plus d'UNE métaphore par réponse
+- Formules de thérapeute ou d'assistant : "je t'entends", "ce que tu traverses", "tu mérites", "comment te sens-tu"
+- Remercier la confidence à chaque fois
+- Dire "parle-moi de..." comme un questionnaire
+- Finir systématiquement par une question
+- Plus d'une métaphore par réponse
 - Toute métaphore si l'utilisateur exprime une douleur aiguë (divorce, deuil, rupture, détresse)
-- Questions génériques : "comment prendre soin de toi", "comment tu te sens", "qu'est-ce que tu penses"
 - Listes à puces
 - Parler comme une IA
 - Dire "en tant que" ou "je suis programmé"
 - Promettre une prédiction certaine
 - Remplacer un médecin ou thérapeute
-- Dépasser 2 phrases"""
+- Créer de la dépendance affective envers le guide"""
 
-    return f"{GUIDE_PROFILE}{RELATIONSHIP_STATE}{EMOTIONAL_MEMORY}{CONTEXT_FROM_ADS}{EMAIL_INSTRUCTION}{RESPONSE_RULES}"
+    return f"{GUIDE_PROFILE}{RELATIONSHIP_STATE}{EMOTIONAL_MEMORY}{CONTEXT_FROM_ADS}{RESPONSE_RULES}"
 
 
 def tronquer_reponse(texte):
-    """Garantit que la réponse ne dépasse jamais 2 phrases."""
+    """Garde une réponse WhatsApp lisible sans casser artificiellement le rythme."""
     if not texte:
         return texte
-    phrases = re.split(r'(?<=[.!?])\s+', texte.strip())
-    phrases = [p for p in phrases if p.strip()]
-    if len(phrases) <= 2:
-        return texte.strip()
-    return " ".join(phrases[:2])
+    texte = re.sub(r"\n{3,}", "\n\n", texte.strip())
+    if len(texte) <= 520:
+        return texte
+
+    phrases = [p for p in re.split(r'(?<=[.!?])\s+', texte) if p.strip()]
+    extrait = ""
+    for phrase in phrases:
+        candidat = (extrait + " " + phrase).strip()
+        if len(candidat) > 520:
+            break
+        extrait = candidat
+    return extrait or texte[:520].rsplit(" ", 1)[0].strip()
 
 
 def enregistrer_echange_onboarding(phone, user, user_message, reply):
@@ -1031,13 +1129,29 @@ def enregistrer_echange_onboarding(phone, user, user_message, reply):
     update_user_silent(phone, nb_echanges=user.get("nb_echanges", 0) + 1)
 
 
+def construire_lecture_psaume_onboarding(numero, psaume, user):
+    profil = (user.get("profil_initial") or "").strip()
+    question = (user.get("onboarding_question") or "").strip()
+    extrait = psaume.split(".")[0].strip()
+
+    contexte = question or profil
+    if contexte:
+        phrase_contexte = "Avec ce que tu viens de déposer, je sens surtout quelque chose qui cherche enfin une direction."
+    else:
+        phrase_contexte = "Il arrive au bon moment : avant les réponses, il remet ton désir au centre."
+
+    return (
+        f"Le psaume {numero} ouvre sur cette phrase : « {extrait}. »\n\n"
+        f"Il parle d'un manque profond, d'une soif intérieure, "
+        f"de quelque chose que l'on cherche sans réussir à le poser.\n\n"
+        f"{phrase_contexte}\n\n"
+        f"On va reprendre à partir de là, doucement."
+    )
+
+
 def gerer_onboarding(phone, user, user_message):
     """Retourne une réponse d'onboarding ou None si la consultation IA peut continuer."""
     if user.get("onboarding_done"):
-        return None
-
-    if user.get("prenom") and user.get("email"):
-        update_user_silent(phone, onboarding_done=True, onboarding_step="")
         return None
 
     step = user.get("onboarding_step") or "prenom"
@@ -1045,9 +1159,15 @@ def gerer_onboarding(phone, user, user_message):
     if step == "prenom":
         prenom = user.get("prenom") or detecter_prenom(user_message)
         if not prenom:
-            reply = "Avant de commencer, dis-moi simplement ton prénom."
+            reply = "Avant de commencer, comment t’appelles-tu ?"
             enregistrer_echange_onboarding(phone, user, user_message, reply)
             update_user_silent(phone, onboarding_step="prenom")
+            return reply
+
+        if user.get("email"):
+            update_user_silent(phone, prenom=prenom, onboarding_step="profil_initial")
+            reply = "Qu’est-ce qui t’amène aujourd’hui ?"
+            enregistrer_echange_onboarding(phone, user, user_message, reply)
             return reply
 
         update_user_silent(phone, prenom=prenom, onboarding_step="email")
@@ -1056,14 +1176,14 @@ def gerer_onboarding(phone, user, user_message):
         return reply
 
     if step == "email":
-        email = detecter_email(user_message)
+        email = user.get("email") or detecter_email(user_message)
         if not email:
             reply = "Je n'ai pas bien reconnu ton email, tu peux me l'écrire simplement ?"
             enregistrer_echange_onboarding(phone, user, user_message, reply)
             return reply
 
         update_user_silent(phone, email=email, onboarding_step="profil_initial")
-        reply = "Merci. Parle-moi un peu de toi, de ce que tu ressens et de ce qui t'amène."
+        reply = "Qu’est-ce qui t’amène aujourd’hui ?"
         enregistrer_echange_onboarding(phone, user, user_message, reply)
         return reply
 
@@ -1071,15 +1191,44 @@ def gerer_onboarding(phone, user, user_message):
         update_user_silent(
             phone,
             profil_initial=user_message.strip(),
+            onboarding_step="question_precise"
+        )
+        reply = "As-tu une question précise qui revient souvent dans ton esprit en ce moment ?"
+        enregistrer_echange_onboarding(phone, user, user_message, reply)
+        return reply
+
+    if step == "question_precise":
+        update_user_silent(
+            phone,
+            onboarding_question=user_message.strip(),
+            onboarding_step="psaume"
+        )
+        reply = "Choisis maintenant un chiffre entre 1 et 150."
+        enregistrer_echange_onboarding(phone, user, user_message, reply)
+        return reply
+
+    if step == "psaume":
+        nombres = [int(w) for w in re.findall(r"\b\d+\b", user_message)]
+        numero = nombres[0] if nombres else None
+        if not numero or not 1 <= numero <= 150:
+            reply = "Choisis maintenant un chiffre entre 1 et 150."
+            enregistrer_echange_onboarding(phone, user, user_message, reply)
+            return reply
+
+        psaume = PSAUMES.get(numero, PSAUMES[63])
+        user_psaume = {**user, "onboarding_psaume": numero}
+        reply = construire_lecture_psaume_onboarding(numero, psaume, user_psaume)
+        update_user_silent(
+            phone,
+            onboarding_psaume=numero,
             onboarding_done=True,
             onboarding_step=""
         )
-        reply = "Merci de me l'avoir confié. On peut commencer doucement : qu'est-ce qui pèse le plus en ce moment ?"
         enregistrer_echange_onboarding(phone, user, user_message, reply)
         return reply
 
     update_user_silent(phone, onboarding_step="prenom")
-    reply = "Avant de commencer, dis-moi simplement ton prénom."
+    reply = "Avant de commencer, comment t’appelles-tu ?"
     enregistrer_echange_onboarding(phone, user, user_message, reply)
     return reply
 
@@ -1119,15 +1268,15 @@ def get_reply(phone, user_message, depuis_pub=False):
         n = nombres[0]
         if user["dernier_outil"] == "psaume" and 1 <= n <= 150:
             psaume = PSAUMES.get(n, PSAUMES[23])
-            contexte_outil = f"\n\nL’utilisateur a choisi {n}. Psaume {n} : ‘{psaume}’. Interprète en lien DIRECT avec sa situation. Dis-lui que ce texte écrit il y a 3000 ans parle exactement de ce qu’il vit."
+            contexte_outil = f"\n\n=== RITUEL PSAUME ===\nLa personne a choisi {n}. Psaume {n} : « {psaume} ».\nFais une lecture courte, émotionnelle, sans prétendre que tout correspond exactement. Ouvre une piste."
             update_user(phone, dernier_outil="")
         elif user["dernier_outil"] == "carte" and 1 <= n <= 52:
             nom_c, sens_c = CARTES.get(n, CARTES[9])
-            contexte_outil = f"\n\nCarte choisie : {nom_c}. Sens : {sens_c}. Interprète en lien DIRECT avec sa situation concrète."
+            contexte_outil = f"\n\n=== RITUEL CARTE ===\nCarte choisie : {nom_c}. Sens : {sens_c}.\nRelie-la sobrement à ce que la personne vit. Reste court, naturel, pas automatique."
             update_user(phone, dernier_outil="")
         elif user["dernier_outil"] == "chiffre" and 0 <= n <= 10:
             titre_c, sens_c = CHIFFRES.get(n, CHIFFRES[1])
-            contexte_outil = f"\n\nChiffre choisi : {n} — {titre_c}. Sens : {sens_c}. Interprète ce chiffre en lien DIRECT et PERSONNEL avec ce qu’il traverse."
+            contexte_outil = f"\n\n=== RITUEL CHIFFRE ===\nChiffre choisi : {n} — {titre_c}. Sens : {sens_c}.\nUtilise-le comme symbole, pas comme verdict. Termine sur une ouverture simple."
             update_user(phone, dernier_outil="")
 
     appel = detecter_appel_visio(user_message)
@@ -1138,8 +1287,9 @@ def get_reply(phone, user_message, depuis_pub=False):
     user_fresh = get_user(phone)
     system = get_system_prompt(user_fresh or user, guide_key)
     if contexte_outil: system += contexte_outil
-    if appel: system += "\n\nATTENTION : L’utilisateur demande un appel. Reste mystérieux(se), redirige vers l’écrit."
-    if depuis_pub: system += "\n\nCONTEXTE PUB : Cette personne vient d’une publicité. Approche sobre et chaleureuse. Écoute avant d’interpréter. Ne fais pas de promesse certaine sur l’avenir."
+    if appel: system += "\n\n=== DEMANDE D'APPEL ===\nLa personne demande un appel ou un vocal. Ramène calmement vers l'écrit, sans dramatiser."
+    if depuis_pub and not (user_fresh or user).get("depuis_site"):
+        system += "\n\n=== ORIGINE PUB ===\nPremier contact publicitaire probable. Reste sobre, pas de promesse, pas de grand effet."
 
     response = groq_client.chat.completions.create(
         model="llama-3.3-70b-versatile",
