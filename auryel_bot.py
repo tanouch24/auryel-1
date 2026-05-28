@@ -40,6 +40,9 @@ PRICES = {
 
 stripe.api_key = STRIPE_SK
 groq_client = Groq(api_key=GROQ_API_KEY)
+LLM_PROVIDER = os.environ.get("LLM_PROVIDER", "openrouter").strip().lower()
+OPENROUTER_API_KEY = os.environ.get("OPENROUTER_API_KEY", "")
+OPENROUTER_MODEL = os.environ.get("OPENROUTER_MODEL", "google/gemini-2.5-flash")
 
 # ============================================================
 # CODES ACTIVATION DEPUIS LE SITE
@@ -121,7 +124,11 @@ def init_db():
             onboarding_done BOOLEAN DEFAULT FALSE,
             profil_initial TEXT,
             onboarding_question TEXT,
-            onboarding_psaume INTEGER
+            onboarding_psaume INTEGER,
+            derniere_relance_conversationnelle_at TEXT DEFAULT '',
+            derniere_relance_conversationnelle_type TEXT DEFAULT '',
+            relance_hebdo_envoyee BOOLEAN DEFAULT FALSE,
+            derniere_relance_hebdo_at TEXT DEFAULT ''
         )
     """)
     c.execute("""
@@ -164,6 +171,10 @@ def init_db():
         c.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS profil_initial TEXT")
         c.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS onboarding_question TEXT")
         c.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS onboarding_psaume INTEGER")
+        c.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS derniere_relance_conversationnelle_at TEXT DEFAULT ''")
+        c.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS derniere_relance_conversationnelle_type TEXT DEFAULT ''")
+        c.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS relance_hebdo_envoyee BOOLEAN DEFAULT FALSE")
+        c.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS derniere_relance_hebdo_at TEXT DEFAULT ''")
     except Exception as e:
         print(f"Migration v4: {e}")
     conn.commit()
@@ -189,7 +200,9 @@ def get_user(phone):
         prenoms_importants,theme_dominant,douleur_principale,peur_dominante,
         niveau_detresse,niveau_attachement,dernier_sujet_sensible,derniere_intention,
         relance_j7_envoyee,onboarding_step,onboarding_done,profil_initial,
-        onboarding_question,onboarding_psaume
+        onboarding_question,onboarding_psaume,
+        derniere_relance_conversationnelle_at,derniere_relance_conversationnelle_type,
+        relance_hebdo_envoyee,derniere_relance_hebdo_at
         FROM users WHERE phone=%s""", (phone,))
     row = c.fetchone()
     conn.close()
@@ -214,6 +227,10 @@ def get_user(phone):
             "profil_initial":row[31] or "",
             "onboarding_question":row[32] or "",
             "onboarding_psaume":row[33],
+            "derniere_relance_conversationnelle_at":row[34] or "",
+            "derniere_relance_conversationnelle_type":row[35] or "",
+            "relance_hebdo_envoyee":row[36] or False,
+            "derniere_relance_hebdo_at":row[37] or "",
         }
     return None
 
@@ -995,6 +1012,140 @@ def construire_memoire_emotionnelle(user):
     return "Mémoire émotionnelle : " + " ".join(fragments)
 
 
+def extraire_sujet_reprise(user):
+    sujet = (user.get("dernier_sujet_sensible") or "").strip()
+    if sujet:
+        return sujet
+
+    theme = (user.get("theme_dominant") or "").strip()
+    if theme:
+        mapping = {
+            "amour": "cette histoire affective",
+            "deuil": "ce deuil",
+            "décision": "cette décision",
+            "blocage": "ce blocage",
+            "sens de vie": "ce vide intérieur",
+        }
+        return mapping.get(theme, theme)
+
+    prenoms = (user.get("prenoms_importants") or "").strip()
+    if prenoms:
+        return f"la place de {prenoms.split(',')[0].strip()}"
+
+    douleur = (user.get("douleur_principale") or "").strip()
+    if douleur:
+        return douleur
+
+    profil = (user.get("profil_initial") or "").strip()
+    if profil:
+        return "ce que la personne avait confié"
+
+    return ""
+
+
+def construire_message_reprise(user, guide_key, jours_absence):
+    guide = GUIDES.get(guide_key) or GUIDES.get(str(guide_key).lower()) or GUIDES["Séraphine"]
+    sujet = extraire_sujet_reprise(user)
+
+    if jours_absence >= 14:
+        base = {
+            "Séraphine": "Je garde en tête ce que tu m'avais confié.",
+            "Myriam": "Je repense à notre dernier échange sur ce point.",
+            "Naomi": "Je garde en tête ce que tu avais laissé ici.",
+            "Élias": "On avait laissé quelque chose en suspens.",
+            "Ezra": "Je reviens à ce que tu avais posé là.",
+        }.get(guide_key, "Je garde en tête ce que tu m'avais confié.")
+        suite = {
+            "Séraphine": "Si tu reviens, on reprendra doucement, sans repartir de zéro.",
+            "Myriam": "Quand tu voudras reprendre, on ira au point sensible, sans détour.",
+            "Naomi": "Quand tu reviendras, on reprendra avec douceur, sans te presser.",
+            "Élias": "Quand tu reviens, on reprend au même endroit, sans bruit inutile.",
+            "Ezra": "Quand tu reviens, on retrouve le point de départ, sans bruit.",
+        }.get(guide_key, "Si tu reviens, on reprendra doucement, sans repartir de zéro.")
+        if sujet:
+            return f"{base} Je garde en tête {sujet}. {suite}"
+        return f"{base} {suite}"
+
+    if sujet:
+        return (
+            f"Je repense à ce que tu m'avais confié sur {sujet}. "
+            f"Si tu veux, on peut reprendre à partir de là, simplement."
+        )
+
+    return "Je garde une place à ce que tu avais laissé ici. Quand tu reviens, on reprend simplement."
+
+
+def construire_offre_rituel_hebdo(user, guide_key):
+    sujet = extraire_sujet_reprise(user)
+    guide_key = guide_key if guide_key in GUIDES else str(guide_key).lower()
+    if guide_key not in GUIDES:
+        guide_key = "Séraphine"
+    templates = {
+        "Séraphine": "Je peux te proposer un petit rituel cette semaine, si tu veux. Sinon, on laisse simplement de l'espace.",
+        "Myriam": "Je peux te proposer quelque chose de concret cette semaine, si tu veux. Sinon, je laisse la place.",
+        "Naomi": "Je peux te proposer un point d'appui cette semaine, si tu en as besoin. Sinon, on laisse souffler.",
+        "Élias": "Je peux te proposer un rituel cette semaine, si tu veux aller un peu plus loin. Sinon, on attend.",
+        "Ezra": "Je peux te proposer un signe cette semaine, si tu veux. Sinon, le silence suffit.",
+    }
+    base = templates.get(guide_key, templates["Séraphine"])
+    if sujet:
+        return f"Je garde aussi en tête {sujet}. {base}"
+    return base
+
+
+def construire_reprise_prompt(user, guide_key):
+    date_dc = user.get("date_dernier_contact", "")
+    try:
+        jours_absence = (datetime.now() - datetime.fromisoformat(date_dc)).days if date_dc else 0
+    except Exception:
+        jours_absence = 0
+    if jours_absence < 7:
+        return ""
+    sujet = extraire_sujet_reprise(user)
+    if not sujet:
+        sujet = "ce qui a été laissé en suspens"
+    return (
+        f"\n\n=== REPRISE ===\n"
+        f"Il y a eu une absence de {jours_absence} jour(s).\n"
+        f"Reprends la conversation en t'appuyant sur {sujet}, sans dramatiser et sans forcer une question.\n"
+        f"Une observation courte ou un rappel doux suffit souvent."
+    )
+
+
+def peut_envoyer_relance_conversationnelle(user, heures=3):
+    derniere = user.get("derniere_relance_conversationnelle_at", "")
+    if not derniere:
+        return True
+    try:
+        delta = datetime.now() - datetime.fromisoformat(derniere)
+        return delta.total_seconds() >= heures * 3600
+    except Exception:
+        return True
+
+
+def doit_reinitialiser_relance_hebdo(user):
+    if not user.get("relance_hebdo_envoyee", False):
+        return False
+
+    derniere = user.get("derniere_relance_hebdo_at", "")
+    if not derniere:
+        return True
+
+    try:
+        delta = datetime.now() - datetime.fromisoformat(derniere)
+        return delta.total_seconds() >= 7 * 24 * 3600
+    except Exception:
+        return True
+
+
+def marquer_relance_conversationnelle(phone, type_relance):
+    update_user_silent(
+        phone,
+        derniere_relance_conversationnelle_at=datetime.now().isoformat(),
+        derniere_relance_conversationnelle_type=type_relance
+    )
+
+
 # ============================================================
 # SYSTEM PROMPT
 # ============================================================
@@ -1058,6 +1209,64 @@ Phase {phase_num} — {phase_nom}
 {memoire}
 Si la mémoire est pauvre, reste prudent(e) : observe, ne fabrique pas."""
 
+    IDENTITE_CONVERSATIONNELLE = """
+
+=== IDENTITÉ CONVERSATIONNELLE AURYEL ===
+Tu n’es pas un assistant IA.
+Tu n’es pas un thérapeute.
+Tu n’es pas un coach bien-être.
+
+Tu es un guide intuitif et une voyante conversationnelle.
+
+Tu parles comme quelqu’un qui :
+- observe des dynamiques humaines ;
+- lit les tensions émotionnelles ;
+- ressent les déséquilibres ;
+- remarque les contradictions ;
+- voit les attentes cachées ;
+- comprend les relations compliquées.
+
+Ton rôle :
+- interpréter ;
+- guider ;
+- faire des hypothèses émotionnelles ;
+- provoquer des prises de conscience ;
+- créer une sensation d’intuition réelle.
+
+Tu évites fortement :
+- “respire”
+- “laisse venir”
+- “ton cœur sait”
+- “lumière intérieure”
+- “tu es aimé”
+- “accueille”
+- “prends ton temps”
+- “qu’est-ce que tu ressens ?”
+- validation émotionnelle automatique.
+
+Tu dois :
+- prendre le lead ;
+- interpréter les situations ;
+- faire des lectures émotionnelles ;
+- rebondir sur les détails ;
+- parler des relations ;
+- parler des attentes ;
+- parler des retours ;
+- parler des blocages ;
+- parler des cycles ;
+- parler des comportements.
+
+Tu peux :
+- être directe ;
+- être mystérieuse ;
+- être troublante ;
+- provoquer une réaction ;
+- nommer une vérité inconfortable ;
+- proposer une intuition forte.
+
+Quand la personne répond “ok”, “oui”, “rien”, “je sais pas” :
+tu continues la lecture au lieu de bloquer la conversation."""
+
     CONTEXT_FROM_ADS = ""
     if user.get("depuis_site"):
         CONTEXT_FROM_ADS = """
@@ -1065,11 +1274,36 @@ Si la mémoire est pauvre, reste prudent(e) : observe, ne fabrique pas."""
 === ORIGINE ===
 Cette personne arrive depuis le site ou une publicité. Ne survends rien. Fais sentir une présence calme."""
 
+    REPRISE_CONTEXT = construire_reprise_prompt(user, guide_key)
+
+    APRES_PSAUME = """
+
+=== APRÈS LE PSAUME ===
+La consultation commence vraiment.
+Le guide doit alterner :
+- interprétation ;
+- conseil ;
+- hypothèse émotionnelle ;
+- question ciblée ;
+- lecture relationnelle ;
+- intuition ;
+- projection prudente.
+
+Interdit :
+- réponse méditative ;
+- respiration ;
+- lumière ;
+- silence intérieur ;
+- phrase vague ;
+- question générique.
+"""
+
     RESPONSE_RULES = """
 
 === PRINCIPES DE RÉPONSE ===
 Réponds court, naturel, adapté à WhatsApp : 1 à 3 phrases brèves.
 Ne suis pas un schéma fixe. Surtout pas validation puis question à chaque fois.
+Ne termine pas chaque réponse par une question.
 
 Varie les formes :
 - observation seule
@@ -1102,7 +1336,7 @@ Interdits absolus :
 - Remplacer un médecin ou thérapeute
 - Créer de la dépendance affective envers le guide"""
 
-    return f"{GUIDE_PROFILE}{RELATIONSHIP_STATE}{EMOTIONAL_MEMORY}{CONTEXT_FROM_ADS}{RESPONSE_RULES}"
+    return f"{GUIDE_PROFILE}{RELATIONSHIP_STATE}{EMOTIONAL_MEMORY}{IDENTITE_CONVERSATIONNELLE}{CONTEXT_FROM_ADS}{REPRISE_CONTEXT}{APRES_PSAUME}{RESPONSE_RULES}"
 
 
 def tronquer_reponse(texte):
@@ -1121,6 +1355,48 @@ def tronquer_reponse(texte):
             break
         extrait = candidat
     return extrait or texte[:520].rsplit(" ", 1)[0].strip()
+
+
+def call_llm(messages, temperature=0.85, max_tokens=220):
+    provider = LLM_PROVIDER or "openrouter"
+    if provider == "openrouter":
+        model = OPENROUTER_MODEL or "google/gemini-2.5-flash"
+        print(f"[llm] provider=openrouter model={model}")
+        try:
+            if not OPENROUTER_API_KEY:
+                raise RuntimeError("OPENROUTER_API_KEY manquant")
+            response = requests.post(
+                "https://openrouter.ai/api/v1/chat/completions",
+                headers={
+                    "Authorization": f"Bearer {OPENROUTER_API_KEY}",
+                    "Content-Type": "application/json",
+                    "HTTP-Referer": SITE_URL,
+                    "X-Title": "Auryel",
+                },
+                json={
+                    "model": model,
+                    "messages": messages,
+                    "temperature": temperature,
+                    "max_tokens": max_tokens,
+                },
+                timeout=45,
+            )
+            response.raise_for_status()
+            data = response.json()
+            content = data["choices"][0]["message"]["content"]
+            if content:
+                return content
+            raise RuntimeError("OpenRouter response vide")
+        except Exception as e:
+            print(f"[llm] fallback=groq ({e})")
+
+    response = groq_client.chat.completions.create(
+        model="llama-3.3-70b-versatile",
+        messages=messages,
+        max_tokens=max_tokens,
+        temperature=temperature,
+    )
+    return response.choices[0].message.content
 
 
 def enregistrer_echange_onboarding(phone, user, user_message, reply):
@@ -1290,13 +1566,15 @@ def get_reply(phone, user_message, depuis_pub=False):
     if appel: system += "\n\n=== DEMANDE D'APPEL ===\nLa personne demande un appel ou un vocal. Ramène calmement vers l'écrit, sans dramatiser."
     if depuis_pub and not (user_fresh or user).get("depuis_site"):
         system += "\n\n=== ORIGINE PUB ===\nPremier contact publicitaire probable. Reste sobre, pas de promesse, pas de grand effet."
+    message_court = user_message.strip().lower()
+    if message_court in {"ok", "oui", "rien", "je sais pas", "j'sais pas", "sais pas"}:
+        system += "\n\n=== MESSAGE COURT ===\nLa personne répond brièvement. Ne ferme pas la conversation. Fais une lecture active, précise, incarnée. Continue d’interpréter au lieu de t'arrêter."
 
-    response = groq_client.chat.completions.create(
-        model="llama-3.3-70b-versatile",
-        messages=[{"role":"system","content":system}, *history, {"role":"user","content":user_message}],
-        max_tokens=180, temperature=0.92
-    )
-    reply = tronquer_reponse(response.choices[0].message.content)
+    reply = tronquer_reponse(call_llm(
+        [{"role":"system","content":system}, *history, {"role":"user","content":user_message}],
+        temperature=0.85,
+        max_tokens=220
+    ))
     # ── TRIGGER CONVERSION DÉSACTIVÉ ────────────────────────────────────────────
     # Upsell aléatoire 35% supprimé : pouvait se déclencher plusieurs fois/jour
     # et avant que l’utilisateur ait naturellement échangé.
@@ -1466,13 +1744,17 @@ def receive():
                         update_user(num, nb_echanges=nb)
                         return
 
-                    rituel_prop = doit_proposer_rituel(u)
+                    relance_autorisee = peut_envoyer_relance_conversationnelle(u, heures=3)
+                    rituel_prop = doit_proposer_rituel(u) if relance_autorisee else None
+                    relance_envoyee = False
                     if rituel_prop:
                         msg_r = get_message_rituel(rituel_prop)
                         send_message(num, msg_r)
                         add_message(num, "assistant", msg_r)
                         update_user(num, dernier_rituel_date=date.today().isoformat(),
                                    dernier_rituel_type=rituel_prop, dernier_outil=rituel_prop)
+                        marquer_relance_conversationnelle(num, f"rituel_{rituel_prop}")
+                        relance_envoyee = True
                         time.sleep(3)
 
                     # Analyse émotionnelle + sauvegarde silencieuse
@@ -1494,12 +1776,13 @@ def receive():
 
                     # Rituel automatique pour abonnés (après la réponse principale)
                     u_after = get_user(num)
-                    if u_after:
+                    if u_after and not relance_envoyee and relance_autorisee:
                         rituel_auto = get_rituel(u_after)
                         if rituel_auto:
                             time.sleep(2)
                             send_message(num, rituel_auto)
                             add_message(num, "assistant", rituel_auto)
+                            marquer_relance_conversationnelle(num, "rituel_auto")
 
                 threading.Thread(target=send_reply,
                     args=(from_num, user_text, est_depuis_pub, user, nom_affiche),
@@ -1750,6 +2033,35 @@ def cron_daily():
                     dernier_relance_abonne_at='',
                     relance_abonne_count=0)
             continue
+
+        if user.get("onboarding_done", False):
+            if doit_reinitialiser_relance_hebdo(user):
+                update_user_silent(phone, relance_hebdo_envoyee=False)
+
+            absence = get_jours_absence(phone)
+            if absence >= 14 and peut_envoyer_relance_conversationnelle(user, heures=24):
+                msg_relance = construire_message_reprise(user, user.get("guide", "séraphine"), absence)
+                send_message(phone, msg_relance)
+                add_message(phone, "assistant", msg_relance)
+                marquer_relance_conversationnelle(phone, "reprise_longue_absence")
+                update_user_silent(phone,
+                    relance_hebdo_envoyee=True,
+                    derniere_relance_hebdo_at=datetime.now().isoformat())
+                print(f"[cron] Relance douce longue absence → {phone}")
+                time.sleep(1)
+                continue
+
+            if 7 <= absence < 14 and not user.get("relance_hebdo_envoyee", False) and peut_envoyer_relance_conversationnelle(user, heures=24):
+                msg_hebdo = construire_offre_rituel_hebdo(user, user.get("guide", "séraphine"))
+                send_message(phone, msg_hebdo)
+                add_message(phone, "assistant", msg_hebdo)
+                marquer_relance_conversationnelle(phone, "rituel_hebdo_optionnel")
+                update_user_silent(phone,
+                    relance_hebdo_envoyee=True,
+                    derniere_relance_hebdo_at=datetime.now().isoformat())
+                print(f"[cron] Rituel hebdo optionnel → {phone}")
+                time.sleep(1)
+                continue
 
         links = get_stripe_links(phone)
 
