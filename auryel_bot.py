@@ -116,7 +116,10 @@ def init_db():
             relance_abonne_count INTEGER DEFAULT 0,
             dernier_rituel_date TEXT DEFAULT '',
             dernier_rituel_type TEXT DEFAULT '',
-            depuis_site BOOLEAN DEFAULT FALSE
+            depuis_site BOOLEAN DEFAULT FALSE,
+            onboarding_step TEXT DEFAULT 'prenom',
+            onboarding_done BOOLEAN DEFAULT FALSE,
+            profil_initial TEXT
         )
     """)
     c.execute("""
@@ -152,6 +155,13 @@ def init_db():
         c.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS relance_j7_envoyee BOOLEAN DEFAULT FALSE")
     except Exception as e:
         print(f"Migration v3: {e}")
+    # Migration v4 — onboarding conversationnel
+    try:
+        c.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS onboarding_step TEXT DEFAULT 'prenom'")
+        c.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS onboarding_done BOOLEAN DEFAULT FALSE")
+        c.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS profil_initial TEXT")
+    except Exception as e:
+        print(f"Migration v4: {e}")
     conn.commit()
     conn.close()
 
@@ -174,7 +184,7 @@ def get_user(phone):
         dernier_rituel_date,dernier_rituel_type,depuis_site,
         prenoms_importants,theme_dominant,douleur_principale,peur_dominante,
         niveau_detresse,niveau_attachement,dernier_sujet_sensible,derniere_intention,
-        relance_j7_envoyee
+        relance_j7_envoyee,onboarding_step,onboarding_done,profil_initial
         FROM users WHERE phone=%s""", (phone,))
     row = c.fetchone()
     conn.close()
@@ -194,6 +204,9 @@ def get_user(phone):
             "niveau_detresse":row[24] or 0,"niveau_attachement":row[25] or 0,
             "dernier_sujet_sensible":row[26] or "","derniere_intention":row[27] or "",
             "relance_j7_envoyee":row[28] or False,
+            "onboarding_step":row[29] or "prenom",
+            "onboarding_done":row[30] or False,
+            "profil_initial":row[31] or "",
         }
     return None
 
@@ -1012,6 +1025,65 @@ def tronquer_reponse(texte):
     return " ".join(phrases[:2])
 
 
+def enregistrer_echange_onboarding(phone, user, user_message, reply):
+    add_message(phone, "user", user_message)
+    add_message(phone, "assistant", reply)
+    update_user_silent(phone, nb_echanges=user.get("nb_echanges", 0) + 1)
+
+
+def gerer_onboarding(phone, user, user_message):
+    """Retourne une réponse d'onboarding ou None si la consultation IA peut continuer."""
+    if user.get("onboarding_done"):
+        return None
+
+    if user.get("prenom") and user.get("email"):
+        update_user_silent(phone, onboarding_done=True, onboarding_step="")
+        return None
+
+    step = user.get("onboarding_step") or "prenom"
+
+    if step == "prenom":
+        prenom = user.get("prenom") or detecter_prenom(user_message)
+        if not prenom:
+            reply = "Avant de commencer, dis-moi simplement ton prénom."
+            enregistrer_echange_onboarding(phone, user, user_message, reply)
+            update_user_silent(phone, onboarding_step="prenom")
+            return reply
+
+        update_user_silent(phone, prenom=prenom, onboarding_step="email")
+        reply = f"Enchanté(e) {prenom} 🌙 Quelle adresse email puis-je garder pour ton suivi ?"
+        enregistrer_echange_onboarding(phone, user, user_message, reply)
+        return reply
+
+    if step == "email":
+        email = detecter_email(user_message)
+        if not email:
+            reply = "Je n'ai pas bien reconnu ton email, tu peux me l'écrire simplement ?"
+            enregistrer_echange_onboarding(phone, user, user_message, reply)
+            return reply
+
+        update_user_silent(phone, email=email, onboarding_step="profil_initial")
+        reply = "Merci. Parle-moi un peu de toi, de ce que tu ressens et de ce qui t'amène."
+        enregistrer_echange_onboarding(phone, user, user_message, reply)
+        return reply
+
+    if step == "profil_initial":
+        update_user_silent(
+            phone,
+            profil_initial=user_message.strip(),
+            onboarding_done=True,
+            onboarding_step=""
+        )
+        reply = "Merci de me l'avoir confié. On peut commencer doucement : qu'est-ce qui pèse le plus en ce moment ?"
+        enregistrer_echange_onboarding(phone, user, user_message, reply)
+        return reply
+
+    update_user_silent(phone, onboarding_step="prenom")
+    reply = "Avant de commencer, dis-moi simplement ton prénom."
+    enregistrer_echange_onboarding(phone, user, user_message, reply)
+    return reply
+
+
 # ============================================================
 # GET REPLY
 # ============================================================
@@ -1021,26 +1093,13 @@ def get_reply(phone, user_message, depuis_pub=False):
 
     guide_key = user.get("guide", "Séraphine")
 
+    onboarding_reply = gerer_onboarding(phone, user, user_message)
+    if onboarding_reply is not None:
+        return onboarding_reply
+
     email_detecte = detecter_email(user_message)
     if email_detecte and not user.get("email"):
         update_user(phone, email=email_detecte)
-
-    if not user.get("prenom"):
-        prenom = detecter_prenom(user_message)
-        if prenom:
-            update_user(phone, prenom=prenom)
-            user["prenom"] = prenom
-            # ── ONBOARDING ÉTAPE 2 : prénom détecté → question thématique ──────
-            # On n'envoie PAS encore à l'IA. Message humain sobre, puis l'IA prend le relais.
-            msg_step2 = (
-                f"Enchanté(e) {prenom} 🌙\n\n"
-                f"Qu'est-ce qui t'amène aujourd'hui — amour, retour d'une personne, "
-                f"travail, argent, famille ou autre chose ?"
-            )
-            add_message(phone, "user", user_message)
-            add_message(phone, "assistant", msg_step2)
-            update_user(phone, nb_echanges=user.get("nb_echanges", 0) + 1)
-            return msg_step2
 
     if detecter_pas_les_moyens(user_message):
         reply = msg_pas_les_moyens()
