@@ -33,9 +33,8 @@ if _missing_env:
 
 
 PRICES = {
-    "mensuel":    "price_1TTSbxFbuWJZYdVOmXGm6Fzg",
-    "semestriel": "price_1TTScJFbuWJZYdVOxU3fQLFj",
-    "annuel":     "price_1TTSdQFbuWJZYdVOinbs7aI3",
+    "mensuel": "price_1TiaigFbuWJZYdVOepK7JtKw",
+    "annuel":  "price_1TiajJFbuWJZYdVOBb4csDgC",
 }
 
 stripe.api_key = STRIPE_SK
@@ -778,11 +777,10 @@ def msg_fin_conv(nom):
 def msg_j6(nom, prenom, links):
     intro = prenom if prenom else "Bonjour"
     return (
-        f"{intro}, ton accès gratuit Auryel se termine demain 🌙\n\n"
+        f"{intro}, ta guidance Auryel se termine demain 🌙\n\n"
         f"Si tu veux continuer à échanger avec {nom}, tu peux choisir une formule ici :\n\n"
-        f"Mensuel — 4,90€/mois :\n{links['mensuel']}\n\n"
-        f"Semestriel — 19,90€/6 mois :\n{links['semestriel']}\n\n"
-        f"Annuel — 29,90€/an :\n{links['annuel']}"
+        f"Mensuel — 9,90€/mois :\n{links['mensuel']}\n\n"
+        f"Annuel — 49,90€/an :\n{links['annuel']}"
     )
 
 def msg_j7_blocage(nom, prenom, links):
@@ -791,9 +789,8 @@ def msg_j7_blocage(nom, prenom, links):
         f"{intro} essai gratuit est terminé 🌙\n\n"
         f"Je ne peux plus répondre tant que ton accès n'est pas activé.\n\n"
         f"Tu peux continuer ici :\n\n"
-        f"Mensuel — 4,90€/mois :\n{links['mensuel']}\n\n"
-        f"Semestriel — 19,90€/6 mois :\n{links['semestriel']}\n\n"
-        f"Annuel — 29,90€/an :\n{links['annuel']}"
+        f"Mensuel — 9,90€/mois :\n{links['mensuel']}\n\n"
+        f"Annuel — 49,90€/an :\n{links['annuel']}"
     )
 
 def msg_j7_si_ecrit(links):
@@ -801,9 +798,8 @@ def msg_j7_si_ecrit(links):
         f"Ton essai gratuit est terminé 🌙\n\n"
         f"Je ne peux plus répondre pour l'instant.\n\n"
         f"Tu peux activer ton accès ici :\n\n"
-        f"Mensuel — 4,90€/mois :\n{links['mensuel']}\n\n"
-        f"Semestriel — 19,90€/6 mois :\n{links['semestriel']}\n\n"
-        f"Annuel — 29,90€/an :\n{links['annuel']}"
+        f"Mensuel — 9,90€/mois :\n{links['mensuel']}\n\n"
+        f"Annuel — 49,90€/an :\n{links['annuel']}"
     )
 
 def msg_j8_wa(nom, prenom, links):
@@ -841,7 +837,7 @@ def msg_pas_les_moyens():
     return (
         "Je comprends tout à fait.\n\n"
         "Si l'accès payant n'est pas possible pour toi maintenant, c'est OK.\n\n"
-        "L'offre reste disponible quand tu veux — à partir de 4,90€/mois.\n\n"
+        "L'offre reste disponible quand tu veux — à partir de 9,90€/mois.\n\n"
         "N'hésite pas à revenir."
     )
 
@@ -865,9 +861,8 @@ def send_email_j6(email, prenom, links):
   <p style="font-size:22px;font-style:italic;color:#E2C98A;margin:32px 0">Bonjour {p} 🌙</p>
   <p style="font-size:15px;line-height:1.85;color:#BDB5A6;margin-bottom:32px">Ton accès gratuit Auryel se termine demain. Si tu veux continuer à échanger, tu peux choisir une formule ci-dessous.</p>
   <div style="border:1px solid rgba(200,169,110,0.2);padding:32px;margin-bottom:32px">
-    <a href="{links['mensuel']}" style="display:block;background:linear-gradient(135deg,#C8A96E,#E2C98A);color:#05040A;text-decoration:none;padding:14px 24px;text-align:center;font-weight:bold;margin-bottom:12px">✦ Mensuel — 4,90€/mois</a>
-    <a href="{links['semestriel']}" style="display:block;border:1px solid rgba(200,169,110,0.4);color:#C8A96E;text-decoration:none;padding:14px 24px;text-align:center;margin-bottom:12px">✦ Semestriel — 19,90€ / 6 mois</a>
-    <a href="{links['annuel']}" style="display:block;border:1px solid rgba(200,169,110,0.2);color:#BDB5A6;text-decoration:none;padding:14px 24px;text-align:center">✦ Annuel — 29,90€ / an</a>
+    <a href="{links['mensuel']}" style="display:block;background:linear-gradient(135deg,#C8A96E,#E2C98A);color:#05040A;text-decoration:none;padding:14px 24px;text-align:center;font-weight:bold;margin-bottom:12px">✦ Mensuel — 9,90€/mois</a>
+    <a href="{links['annuel']}" style="display:block;border:1px solid rgba(200,169,110,0.2);color:#BDB5A6;text-decoration:none;padding:14px 24px;text-align:center">✦ Annuel — 49,90€ / an</a>
   </div>
   <p style="font-size:10px;color:#4A4060;text-align:center">© 2026 AURYEL — Consultations à titre de divertissement.</p>
 </div></body></html>"""
@@ -893,9 +888,8 @@ def send_email_relance(email, prenom, links):
   <p style="font-size:22px;font-style:italic;color:#E2C98A;margin:32px 0">Bonjour {p} 🌙</p>
   <p style="font-size:15px;line-height:1.85;color:#BDB5A6;margin-bottom:32px">Ton essai gratuit est terminé. Si tu veux continuer à échanger, tu peux choisir une formule ci-dessous.</p>
   <div style="border:1px solid rgba(200,169,110,0.2);padding:32px;margin-bottom:32px">
-    <a href="{links['mensuel']}" style="display:block;background:linear-gradient(135deg,#C8A96E,#E2C98A);color:#05040A;text-decoration:none;padding:14px 24px;text-align:center;font-weight:bold;margin-bottom:12px">✦ Mensuel — 4,90€/mois</a>
-    <a href="{links['semestriel']}" style="display:block;border:1px solid rgba(200,169,110,0.4);color:#C8A96E;text-decoration:none;padding:14px 24px;text-align:center;margin-bottom:12px">✦ Semestriel — 19,90€ / 6 mois</a>
-    <a href="{links['annuel']}" style="display:block;border:1px solid rgba(200,169,110,0.2);color:#BDB5A6;text-decoration:none;padding:14px 24px;text-align:center">✦ Annuel — 29,90€ / an</a>
+    <a href="{links['mensuel']}" style="display:block;background:linear-gradient(135deg,#C8A96E,#E2C98A);color:#05040A;text-decoration:none;padding:14px 24px;text-align:center;font-weight:bold;margin-bottom:12px">✦ Mensuel — 9,90€/mois</a>
+    <a href="{links['annuel']}" style="display:block;border:1px solid rgba(200,169,110,0.2);color:#BDB5A6;text-decoration:none;padding:14px 24px;text-align:center">✦ Annuel — 49,90€ / an</a>
   </div>
   <p style="font-size:10px;color:#4A4060;text-align:center">© 2026 AURYEL — Consultations à titre de divertissement.</p>
 </div></body></html>"""
@@ -1965,10 +1959,10 @@ def create_checkout():
         plan        = data.get("plan")
         price_id    = PRICES.get(plan)
         if not price_id:
-            return jsonify({"error": "Plan invalide. Valeurs acceptées : mensuel, semestriel, annuel"}), 400
+            return jsonify({"error": "Plan invalide. Valeurs acceptées : mensuel, annuel"}), 400
         success_url = data.get("successUrl")
         cancel_url  = data.get("cancelUrl")
-        trial_days  = int(data.get("trialDays", 7))
+        trial_days  = int(data.get("trialDays", 3))
         source      = data.get("source", "tt")
         email       = data.get("email")
         phone       = data.get("phone")
@@ -1991,7 +1985,7 @@ def create_checkout():
                 "terms_of_service_acceptance": {
                     "message": (
                         "En continuant, vous acceptez les [CGV](https://auryelvoyance.com/cgv.html). "
-                        "7 jours gratuits, puis renouvellement automatique. "
+                        "3 jours gratuits, puis renouvellement automatique. "
                         "Annulable à tout moment avant la fin de l'essai."
                     ),
                 }
@@ -2039,7 +2033,7 @@ def cron_daily():
         if user["abonne"]:
             absence = get_jours_absence(phone)
             count   = user.get("relance_abonne_count", 0)
-            MAX_RELANCES = 2  # max 2 relances par cycle d'absence (J+3, J+6)
+            MAX_RELANCES = 3  # max 3 relances par cycle d'absence (J+3, J+6, J+9)
 
             # Calculer jours depuis dernière relance
             dernier_at = user.get("dernier_relance_abonne_at", "")
@@ -2107,7 +2101,7 @@ def cron_daily():
 
         links = get_stripe_links(phone)
 
-        if nb_jours == 6 and not user["relance_j6_envoyee"]:
+        if nb_jours == 2 and not user["relance_j6_envoyee"]:
             msg6 = msg_j6(nom, prenom, links)
             send_message(phone, msg6)
             add_message(phone, "assistant", msg6)
@@ -2116,7 +2110,7 @@ def cron_daily():
             update_user_silent(phone, relance_j6_envoyee=True, etat="attente_paiement")
             j6 += 1; time.sleep(1)
 
-        elif nb_jours == 7 and user["etat"] == "attente_paiement" and not user.get("relance_j7_envoyee"):
+        elif nb_jours == 3 and user["etat"] == "attente_paiement" and not user.get("relance_j7_envoyee"):
             msg7 = msg_j7_blocage(nom, prenom, links)
             send_message(phone, msg7)
             add_message(phone, "assistant", msg7)
@@ -2125,8 +2119,8 @@ def cron_daily():
             update_user_silent(phone, etat="pause", relance_j7_envoyee=True)
             j7 += 1; time.sleep(1)
 
-        elif nb_jours == 8 and user["etat"] == "pause" and not user["relance_j8_envoyee"]:
-            # ── J+8 DÉSACTIVÉ ──────────────────────────────────────────────────
+        elif nb_jours == 4 and user["etat"] == "pause" and not user["relance_j8_envoyee"]:
+            # ── J+4 DÉSACTIVÉ ──────────────────────────────────────────────────
             # msg_j8_wa neutralisé — ton coercitif ("Tu me manques", "Notre lien rare").
             # Pour réactiver : décommenter les 4 lignes ci-dessous et supprimer le pass.
             #
@@ -2136,10 +2130,10 @@ def cron_daily():
             #     add_message(phone, "assistant", msg8)
             # if user.get("email"): send_email_relance(user["email"], prenom, links)
             update_user_silent(phone, relance_j8_envoyee=True)  # marquer pour ne pas re-tenter
-            print(f"[cron] J+8 neutralisé (log seul, pas d'envoi) → {phone}")
+            print(f"[cron] J+4 neutralisé (log seul, pas d'envoi) → {phone}")
             j8 += 1; time.sleep(1)
 
-    return jsonify({"status":"ok","j6":j6,"j7":j7,"j8":j8,"relances_abonnes":relances_abonnes}), 200
+    return jsonify({"status":"ok","j2":j6,"j3":j7,"j4":j8,"relances_abonnes":relances_abonnes}), 200
 
 # ============================================================
 # ROUTES UTILITAIRES
@@ -2197,9 +2191,9 @@ def admin_dashboard():
         rows_html += f"""<tr onclick="openConv('{phone}')" style="cursor:pointer">
           <td>{feu} {source}</td>
           <td><strong>{prenom_display}</strong><br><small style="color:#8a7a6a">{phone}</small><br>{email_label}</td>
-          <td style="color:#C8A96E">{nom_display}</td>
+          <td class='hm' style="color:#C8A96E">{nom_display}</td>
           <td style="text-align:center"><span style="background:rgba(212,168,67,0.2);padding:3px 10px;border-radius:20px;font-size:13px">{nb_echanges}</span></td>
-          <td style="font-size:12px;color:#8a7a6a">{dernier}</td>
+          <td class='hm' style="font-size:12px;color:#8a7a6a">{dernier}</td>
           <td><span style="font-size:11px;color:{statut_color}">{statut_label}</span></td>
         </tr>"""
 
@@ -2218,7 +2212,7 @@ def admin_dashboard():
           </div>
         </div>"""
 
-    users_table_html = "<div class='empty'>Aucun utilisateur</div>" if not users else "<table><thead><tr><th></th><th>Utilisateur</th><th>Conseiller</th><th>Messages</th><th>Dernier contact</th><th>Statut</th></tr></thead><tbody>" + rows_html + "</tbody></table>"
+    users_table_html = "<div class='empty'>Aucun utilisateur</div>" if not users else "<div style='overflow-x:auto'><table><thead><tr><th></th><th>Utilisateur</th><th class='hm'>Conseiller</th><th>Msgs</th><th class='hm'>Dernier contact</th><th>Statut</th></tr></thead><tbody>" + rows_html + "</tbody></table></div>"
 
     return f"""<!DOCTYPE html><html><head><title>Auryel Admin</title><meta name='viewport' content='width=device-width,initial-scale=1'>
 <link href='https://fonts.googleapis.com/css2?family=Cormorant+Garamond:wght@400;600&family=DM+Sans:wght@300;400;500&display=swap' rel='stylesheet'>
@@ -2266,6 +2260,7 @@ tr:hover td{{background:rgba(212,168,67,0.05)}}tr:last-child td{{border-bottom:n
 .btn-send{{padding:12px 18px;background:linear-gradient(135deg,#b8860b,#d4a843);border:none;border-radius:12px;color:#0a0a0f;font-weight:600;cursor:pointer;font-size:13px;white-space:nowrap}}
 .empty{{text-align:center;padding:40px;color:#8a7a6a;font-size:14px}}
 @media(max-width:900px){{.stats{{grid-template-columns:repeat(3,1fr)}}.grid-2{{grid-template-columns:1fr}}}}
+@media(max-width:600px){{.wrap{{padding:16px 12px}}.header{{margin-bottom:20px}}.logo{{font-size:20px}}.stats{{grid-template-columns:repeat(2,1fr);gap:8px;margin-bottom:16px}}.stat{{padding:12px}}.stat-val{{font-size:24px}}.hm{{display:none}}.card-header{{padding:12px 14px}}td,th{{padding:10px 10px;font-size:12px}}.modal.open{{align-items:flex-end;padding:0}}.modal-box{{border-radius:16px 16px 0 0;max-width:100%;max-height:85vh}}.modal-head{{padding:14px 16px;gap:6px}}.modal-actions{{gap:6px}}.btn-sm{{padding:6px 10px;font-size:10px}}.messages{{padding:12px 16px;gap:8px}}.send-area{{padding:10px 12px;gap:8px}}.send-input{{font-size:14px;padding:10px 12px}}.btn-send{{padding:10px 14px;font-size:12px}}}}
 </style></head>
 <body><div class='bg'></div><div class='wrap'>
   <div class='header'>
@@ -2596,7 +2591,7 @@ footer{background:var(--deep);border-top:1px solid var(--bdr);padding:36px 64px;
   <div class="art-cta">
     <span class="art-cta-label">✦ Guidance personnalisée</span>
     <h2 class="art-cta-title">Votre conseiller vous attend</h2>
-    <p class="art-cta-sub">7 jours d'essai gratuit. Votre médium disponible sur WhatsApp, 24h/24.</p>
+    <p class="art-cta-sub">3 jours d'essai gratuit. Votre médium disponible sur WhatsApp, 24h/24.</p>
     <a href="/inscription.html" class="art-cta-btn">Commencer gratuitement</a>
     <p style="font-size:11px;color:var(--cd);margin-top:12px">Annulable à tout moment</p>
   </div>
