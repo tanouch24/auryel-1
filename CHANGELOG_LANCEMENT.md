@@ -31,6 +31,33 @@
 
 ---
 
+## 2026-06-16 - LOT CGV - Correction cgv.html
+
+### Fichier modifié : `cgv.html`
+
+| Section | Avant | Après |
+|---------|-------|-------|
+| Section 2 — Prix mensuel | 4,90€ TTC | 9,90€ TTC |
+| Section 2 — Prix annuel | 29,90€ TTC pour 12 mois | 49,90€ TTC pour 12 mois |
+| Section 2 — Offre semestrielle | 19,90€ TTC pour 6 mois | Supprimée (inexistante dans le produit) |
+| Section 2 — Essai gratuit | Absent | "3 jours de guidance offerts sur WhatsApp, sans carte bancaire requise" |
+| Section 2 — Activation | Absent | "L'accès payant ne s'active que si l'utilisateur choisit volontairement de souscrire" |
+| Section 3 — Résiliation | "depuis son espace membre" | "en envoyant un message WhatsApp à son conseiller ou par email à contact@auryelvoyance.com" |
+| Section 6 — Résiliation | "depuis son espace membre" | "en envoyant un message WhatsApp à son conseiller ou par email à contact@auryelvoyance.com" |
+
+### Occurrences "Auryel Inc." restantes (hors périmètre de ce lot)
+- Section 1 : "entre Auryel Inc. et tout utilisateur"
+- Section 4 : "sur les serveurs d'Auryel Inc."
+- Section 6 : "Auryel Inc. se réserve le droit de résilier"
+- Footer : "© 2026 Auryel Inc. Tous droits réservés."
+→ À traiter dans un lot dédié si décision de changer le nom légal affiché.
+
+### Validation QA
+- `test_guides.py` : ✅ 5 guides distincts, sécurité crise OK
+- `scripts/check-seo-domain.py` : ✅ 7/7 PASSED, 0 erreur critique
+
+---
+
 ## Points d'attention — à traiter dans les lots suivants
 
 ### LOT 6 — Sécurité : `/reset-db` à désactiver en production
