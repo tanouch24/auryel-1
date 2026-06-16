@@ -58,6 +58,57 @@
 
 ---
 
+## 2026-06-16 - LOT 3 - Audit Stripe (aucune modification de code)
+
+### Statut général
+
+| Point | Statut |
+|-------|--------|
+| Mode Stripe | ✅ `sk_live_` — production confirmé |
+| `STRIPE_WEBHOOK_SECRET` | ✅ Présente sur Railway (`whsec_…`) |
+| Vérification signature webhook | ✅ `construct_event` sans fallback — retourne 400 si invalide |
+| Offre semestrielle dans le code | ✅ Absente — une seule ligne commentée (ligne 816), aucun Price ID |
+
+### Price IDs réels en production
+
+| Plan | Price ID | Statut |
+|------|----------|--------|
+| `mensuel` | `price_1TiaigFbuWJZYdVOepK7JtKw` | ✅ Actif |
+| `annuel` | `price_1TiajJFbuWJZYdVOBb4csDgC` | ✅ Actif |
+| `semestriel` | — | ✅ Absent du code et du dict `PRICES` |
+
+### Risques documentés
+
+#### LOT 4 — Fenêtre de blocage cron J3 / webhook Stripe ⚠️ Priorité haute
+Le cron bloque l'accès WhatsApp (`etat="pause"`) dès `nb_jours == 3`.
+Le déblocage arrive ensuite via `invoice.payment_succeeded` (webhook Stripe asynchrone).
+**Risque :** l'utilisateur peut être bloqué quelques heures le jour J3 entre le cron et la confirmation de paiement Stripe.
+**Action recommandée en LOT 4 :**
+1. Passer `nb_jours == 3` à `>= 3` (absorber les crons manqués)
+2. Avant de bloquer, vérifier si un paiement Stripe est en cours (`trialing` ou `active`) pour ne pas bloquer un abonné légitime
+
+#### Basse priorité — Idempotence `checkout.session.completed`
+Aucun stockage d'`event_id` Stripe. Si Stripe rejoue le webhook (timeout réseau), le message WhatsApp de bienvenue peut être envoyé en double.
+L'impact DB est nul (opération SET idempotente). Seul le message WhatsApp peut être dupliqué.
+**Action :** à traiter lors de la migration pytest / durcissement webhooks.
+
+---
+
+## Avancement lots — état au 2026-06-16
+
+| Lot | Statut | Notes |
+|-----|--------|-------|
+| LOT 0 — Préparation | ✅ Déployé | Fichiers parasites supprimés, audit initial |
+| LOT 1 — Pages commerciales | ✅ Déployé | Offre harmonisée, prix corrigés, navbars |
+| LOT CGV | ✅ Déployé | Prix, espace membre, Auryel Inc. |
+| LOT 2 — Templates Meta | 🟡 En attente | Soumis, approbation Meta en cours |
+| LOT 3 — Audit Stripe | ✅ Clos | Audit uniquement, aucune modification |
+| LOT 4 — Cron `>= 3` + fenêtre Stripe | 🔴 À faire | Voir risques documentés ci-dessus |
+| LOT 5 — Prompt IA / 10 personas | 🔴 À faire | Le plus gros morceau restant |
+| LOT 6 — Sécurité admin | 🔴 À faire | `/reset-db` + durcissement |
+
+---
+
 ## Points d'attention — à traiter dans les lots suivants
 
 ### LOT 6 — Sécurité : `/reset-db` à désactiver en production
