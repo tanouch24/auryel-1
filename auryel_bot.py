@@ -1,4 +1,4 @@
-import os, time, requests, threading, psycopg2, stripe, re, random, hmac, hashlib
+import os, time, requests, threading, psycopg2, stripe, re, random, hmac, hashlib, unicodedata
 from datetime import datetime, date, timezone
 from flask import Flask, request, jsonify, session, redirect
 from flask_cors import CORS
@@ -177,6 +177,11 @@ def init_db():
         c.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS derniere_relance_hebdo_at TEXT DEFAULT ''")
     except Exception as e:
         print(f"Migration v4: {e}")
+    # Migration v5 — opt-out relances automatiques
+    try:
+        c.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS stop_relances BOOLEAN DEFAULT FALSE")
+    except Exception as e:
+        print(f"Migration v5: {e}")
     conn.commit()
     conn.close()
 
@@ -202,7 +207,8 @@ def get_user(phone):
         relance_j7_envoyee,onboarding_step,onboarding_done,profil_initial,
         onboarding_question,onboarding_psaume,
         derniere_relance_conversationnelle_at,derniere_relance_conversationnelle_type,
-        relance_hebdo_envoyee,derniere_relance_hebdo_at
+        relance_hebdo_envoyee,derniere_relance_hebdo_at,
+        stop_relances
         FROM users WHERE phone=%s""", (phone,))
     row = c.fetchone()
     conn.close()
@@ -231,6 +237,7 @@ def get_user(phone):
             "derniere_relance_conversationnelle_type":row[35] or "",
             "relance_hebdo_envoyee":row[36] or False,
             "derniere_relance_hebdo_at":row[37] or "",
+            "stop_relances":row[38] or False,
         }
     return None
 
@@ -1782,6 +1789,33 @@ def receive():
                 user = get_user(from_num)
                 onboarding_ok = bool(user and user.get("onboarding_done"))
 
+                # ── Détection STOP / RELANCE (opt-out relances automatiques) ────────
+                def _normaliser_msg(s):
+                    n = unicodedata.normalize("NFD", s.strip().upper())
+                    return "".join(c for c in n if unicodedata.category(c) != "Mn")
+                msg_norm = _normaliser_msg(user_text)
+                MOTS_STOP    = {"STOP", "ARRET", "DESABONNER", "DESABONNEMENT"}
+                MOTS_RELANCE = {"RELANCE", "REPRENDRE"}
+                if msg_norm in MOTS_STOP:
+                    update_user_silent(from_num, stop_relances=True)
+                    print(f"[opt-out] STOP reçu → {from_num}")
+                    threading.Thread(
+                        target=lambda num: (time.sleep(1), send_message(num,
+                            "Vous ne recevrez plus de messages automatiques de notre part. "
+                            "Tapez RELANCE pour reprendre.")),
+                        args=(from_num,), daemon=True).start()
+                    return jsonify({"status": "ok"}), 200
+                if msg_norm in MOTS_RELANCE and user and user.get("stop_relances", False):
+                    update_user_silent(from_num, stop_relances=False)
+                    print(f"[opt-in] RELANCE reçu → {from_num}")
+                    threading.Thread(
+                        target=lambda num: (time.sleep(1), send_message(num,
+                            "C'est noté, vous recevrez à nouveau nos messages. "
+                            "Je suis là si vous avez besoin.")),
+                        args=(from_num,), daemon=True).start()
+                    return jsonify({"status": "ok"}), 200
+                # ── Fin détection STOP / RELANCE ────────────────────────────────────
+
                 # Le flow onboarding doit toujours être exécuté avant toute logique métier ou émotionnelle.
                 if onboarding_ok and user.get("etat") == "pause":
                     def send_pause(num):
@@ -2118,9 +2152,10 @@ def cron_daily():
                 jours_depuis_relance = 999  # jamais relancé
 
             doit_relancer = (
-                absence >= 3 and              # absent depuis 3+ jours
-                jours_depuis_relance >= 3 and # dernière relance il y a 3+ jours
-                count < MAX_RELANCES          # pas encore atteint le max
+                absence >= 3 and                          # absent depuis 3+ jours
+                jours_depuis_relance >= 3 and             # dernière relance il y a 3+ jours
+                count < MAX_RELANCES and                  # pas encore atteint le max
+                not user.get("stop_relances", False)      # pas en opt-out
             )
 
             if doit_relancer:
@@ -2176,7 +2211,8 @@ def cron_daily():
         if (nb_jours >= 2
                 and not user["relance_j6_envoyee"]
                 and user.get("onboarding_done", False)
-                and user["etat"] != "pause"):
+                and user["etat"] != "pause"
+                and not user.get("stop_relances", False)):
             sent = False
             if _dans_fenetre_24h_meta(user):
                 msg6 = msg_j6(nom, prenom, links)
@@ -2203,12 +2239,17 @@ def cron_daily():
                 print(f"[cron] J+3 différé — paiement Stripe actif détecté → {phone}")
                 update_user_silent(phone, abonne=True, etat="normal")
             else:
-                # J+3 : fenêtre 24h Meta forcément fermée — template obligatoire
-                sent = send_template_message(phone, "auryel_relance_j3", [prenom or "Bonjour", nom])
-                if sent:
-                    add_message(phone, "assistant", f"[template:auryel_relance_j3] {{1}}={prenom or 'Bonjour'} {{2}}={nom}")
-                if user.get("email"):
-                    send_email_relance(user["email"], prenom, links)
+                # Notification WA + email : uniquement si pas en opt-out
+                if not user.get("stop_relances", False):
+                    # J+3 : fenêtre 24h Meta forcément fermée — template obligatoire
+                    sent = send_template_message(phone, "auryel_relance_j3", [prenom or "Bonjour", nom])
+                    if sent:
+                        add_message(phone, "assistant", f"[template:auryel_relance_j3] {{1}}={prenom or 'Bonjour'} {{2}}={nom}")
+                    if user.get("email"):
+                        send_email_relance(user["email"], prenom, links)
+                else:
+                    print(f"[cron] J+3 blocage silencieux (opt-out stop_relances) → {phone}")
+                # Blocage accès : toujours appliqué, stop_relances ou non
                 update_user_silent(phone, etat="pause", relance_j7_envoyee=True)
                 j7 += 1; time.sleep(1)
 
