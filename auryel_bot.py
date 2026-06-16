@@ -1,11 +1,16 @@
 import os, time, requests, threading, psycopg2, stripe, re, random, hmac, hashlib, unicodedata
-from datetime import datetime, date, timezone
+from datetime import datetime, date, timezone, timedelta
 from flask import Flask, request, jsonify, session, redirect
 from flask_cors import CORS
 from groq import Groq
 
 app = Flask(__name__)
 app.secret_key = os.environ.get("SECRET_KEY")
+app.config["SESSION_COOKIE_SECURE"]       = True
+app.config["SESSION_COOKIE_HTTPONLY"]     = True
+app.config["SESSION_COOKIE_SAMESITE"]     = "Lax"
+app.config["PERMANENT_SESSION_LIFETIME"]  = timedelta(hours=4)
+app.config["SESSION_REFRESH_EACH_REQUEST"] = True
 
 CORS(app, resources={r"/stripe/*": {"origins": ["https://auryelvoyance.com"]}})
 
@@ -20,17 +25,19 @@ STRIPE_WEBHOOK  = os.environ.get("STRIPE_WEBHOOK_SECRET")
 RESEND_API_KEY  = os.environ.get("RESEND_API_KEY")
 FROM_EMAIL      = "contact@auryelvoyance.com"
 SITE_URL        = "https://auryelvoyance.com"
-CRON_SECRET     = os.environ.get("CRON_SECRET")
+CRON_SECRET     = os.environ.get("CRON_SECRET")   # /reset-db uniquement (jusqu'au sous-lot C)
+DAILY_SECRET    = os.environ.get("DAILY_SECRET")
+SEO_SECRET      = os.environ.get("SEO_SECRET")
 # ── Vérification variables au démarrage ────────────────────
 _REQUIRED_ENV = [
     "SECRET_KEY", "VERIFY_TOKEN", "ADMIN_PASSWORD", "CRON_SECRET",
     "DATABASE_URL", "STRIPE_SK", "STRIPE_WEBHOOK_SECRET",
-    "WHATSAPP_TOKEN", "PHONE_NUMBER_ID", "GROQ_API_KEY", "RESEND_API_KEY"
+    "WHATSAPP_TOKEN", "PHONE_NUMBER_ID", "GROQ_API_KEY", "RESEND_API_KEY",
+    "META_APP_SECRET", "DAILY_SECRET", "SEO_SECRET",
 ]
 _missing_env = [v for v in _REQUIRED_ENV if not os.environ.get(v)]
 if _missing_env:
     raise RuntimeError(f"Variables manquantes : {', '.join(_missing_env)}")
-print(f"[boot] META_APP_SECRET présent: {bool(os.environ.get('META_APP_SECRET'))}")
 
 
 PRICES = {
@@ -2114,9 +2121,10 @@ def _stripe_paiement_actif(phone, stripe_customer_id):
 # ============================================================
 # CRON DAILY
 # ============================================================
-@app.route("/cron/daily", methods=["GET","POST"])
+@app.route("/cron/daily", methods=["POST"])
 def cron_daily():
-    if request.args.get("secret","") != CRON_SECRET:
+    body = request.get_json(silent=True) or {}
+    if not hmac.compare_digest(body.get("secret", ""), DAILY_SECRET or ""):
         return jsonify({"error":"unauthorized"}), 401
 
     conn = get_conn()
@@ -2517,6 +2525,7 @@ def admin_login():
     if request.method == "POST":
         if request.form.get("password","") == ADMIN_PASSWORD:
             session["admin_logged"] = True
+            session.permanent = True
             return redirect("/admin")
         error = "Mot de passe incorrect"
     return f"""<!DOCTYPE html><html><head><title>Auryel Admin</title>
@@ -2828,14 +2837,15 @@ def send_seo_recap_email(title, kw, article_url):
         print(f"[SEO] Email error: {e}")
 
 
-@app.route("/cron/seo-publish", methods=["GET", "POST"])
+@app.route("/cron/seo-publish", methods=["POST"])
 def cron_seo_publish():
     """
     Appelée chaque jour à 9h par Make.com.
     Génère + publie 1 article SEO automatiquement.
     Variables Railway requises : GITHUB_TOKEN, GITHUB_REPO
     """
-    if request.args.get("secret", "") != CRON_SECRET:
+    body = request.get_json(silent=True) or {}
+    if not hmac.compare_digest(body.get("secret", ""), SEO_SECRET or ""):
         return jsonify({"error": "unauthorized"}), 401
 
     print("[SEO] Démarrage publication automatique...")
