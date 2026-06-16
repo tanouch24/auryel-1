@@ -25,12 +25,11 @@ STRIPE_WEBHOOK  = os.environ.get("STRIPE_WEBHOOK_SECRET")
 RESEND_API_KEY  = os.environ.get("RESEND_API_KEY")
 FROM_EMAIL      = "contact@auryelvoyance.com"
 SITE_URL        = "https://auryelvoyance.com"
-CRON_SECRET     = os.environ.get("CRON_SECRET")   # /reset-db uniquement (jusqu'au sous-lot C)
 DAILY_SECRET    = os.environ.get("DAILY_SECRET")
 SEO_SECRET      = os.environ.get("SEO_SECRET")
 # ── Vérification variables au démarrage ────────────────────
 _REQUIRED_ENV = [
-    "SECRET_KEY", "VERIFY_TOKEN", "ADMIN_PASSWORD", "CRON_SECRET",
+    "SECRET_KEY", "VERIFY_TOKEN", "ADMIN_PASSWORD",
     "DATABASE_URL", "STRIPE_SK", "STRIPE_WEBHOOK_SECRET",
     "WHATSAPP_TOKEN", "PHONE_NUMBER_ID", "GROQ_API_KEY", "RESEND_API_KEY",
     "META_APP_SECRET", "DAILY_SECRET", "SEO_SECRET",
@@ -2290,10 +2289,13 @@ def health():
 
 @app.route("/reset-db", methods=["POST"])
 def reset_database():
-    if request.args.get("secret","") != CRON_SECRET:
-        return jsonify({"error":"unauthorized"}), 401
+    if not os.environ.get("ALLOW_RESET_DB"):
+        return jsonify({"error": "not found"}), 404
+    body = request.get_json(silent=True) or {}
+    if not hmac.compare_digest(body.get("secret", ""), os.environ.get("RESET_DB_SECRET", "")):
+        return jsonify({"error": "unauthorized"}), 401
     reset_db()
-    return jsonify({"status":"ok","message":"Base de données remise à zéro"}), 200
+    return jsonify({"status": "ok", "message": "Base de données remise à zéro"}), 200
 
 # ============================================================
 # DASHBOARD ADMIN
