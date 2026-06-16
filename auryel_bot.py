@@ -906,9 +906,41 @@ def send_message(to, text):
     url = f"https://graph.facebook.com/v18.0/{PHONE_NUMBER_ID}/messages"
     headers = {"Authorization": f"Bearer {WHATSAPP_TOKEN}", "Content-Type": "application/json"}
     data = {"messaging_product":"whatsapp","to":to,"type":"text","text":{"body":text}}
-    r = requests.post(url, headers=headers, json=data)
+    r = requests.post(url, headers=headers, json=data, timeout=10)
     print(f"📤 {r.status_code}")
     return r
+
+def send_template_message(phone, template_name, variables, language="fr"):
+    """Envoie un template WhatsApp Meta approuvé.
+    variables : liste ordonnée de str pour {{1}}, {{2}}, etc.
+    Retourne True si succès (2xx), False sinon — ne lève jamais d'exception."""
+    url = f"https://graph.facebook.com/v18.0/{PHONE_NUMBER_ID}/messages"
+    headers = {"Authorization": f"Bearer {WHATSAPP_TOKEN}", "Content-Type": "application/json"}
+    data = {
+        "messaging_product": "whatsapp",
+        "to": phone,
+        "type": "template",
+        "template": {
+            "name": template_name,
+            "language": {"code": language},
+            "components": [
+                {
+                    "type": "body",
+                    "parameters": [{"type": "text", "text": str(v)} for v in variables]
+                }
+            ]
+        }
+    }
+    try:
+        r = requests.post(url, headers=headers, json=data, timeout=10)
+        ok = r.status_code in (200, 201)
+        print(f"[template] {phone} | {template_name} | status={r.status_code} | ok={ok}")
+        if not ok:
+            print(f"[template] erreur : {r.text[:300]}")
+        return ok
+    except Exception as e:
+        print(f"[template] exception {template_name} → {phone} : {e}")
+        return False
 
 # ============================================================
 # CONTEXTE ÉMOTIONNEL
@@ -2007,6 +2039,21 @@ def create_checkout():
         return jsonify({"error": "Erreur serveur"}), 500
 
 # ============================================================
+# HELPER META — fenêtre 24h session WhatsApp
+# ============================================================
+def _dans_fenetre_24h_meta(user):
+    """True si l'utilisateur a écrit au bot dans les 24h (session WhatsApp ouverte).
+    date_dernier_contact est mis à jour uniquement par update_user() (message entrant),
+    jamais par update_user_silent() (cron) — proxy fiable pour la règle Meta."""
+    dc = user.get("date_dernier_contact", "")
+    if not dc:
+        return False
+    try:
+        return (datetime.now() - datetime.fromisoformat(dc)).total_seconds() < 86400
+    except Exception:
+        return False
+
+# ============================================================
 # HELPER STRIPE — vérification paiement avant blocage J+3
 # ============================================================
 def _stripe_paiement_actif(phone, stripe_customer_id):
@@ -2126,23 +2173,40 @@ def cron_daily():
 
         links = get_stripe_links(phone)
 
-        if nb_jours >= 2 and not user["relance_j6_envoyee"]:
-            msg6 = msg_j6(nom, prenom, links)
-            send_message(phone, msg6)
-            add_message(phone, "assistant", msg6)
-            if user.get("email"):
-                send_email_j6(user["email"], prenom, links)
-            update_user_silent(phone, relance_j6_envoyee=True, etat="attente_paiement")
-            j6 += 1; time.sleep(1)
+        if (nb_jours >= 2
+                and not user["relance_j6_envoyee"]
+                and user.get("onboarding_done", False)
+                and user["etat"] != "pause"):
+            sent = False
+            if _dans_fenetre_24h_meta(user):
+                msg6 = msg_j6(nom, prenom, links)
+                try:
+                    r = send_message(phone, msg6)
+                    sent = r.status_code in (200, 201)
+                except Exception as e:
+                    print(f"[cron] J+2 send_message erreur : {e}")
+                if sent:
+                    add_message(phone, "assistant", msg6)
+            else:
+                sent = send_template_message(phone, "auryel_relance_j2", [prenom or "Bonjour", nom])
+                if sent:
+                    add_message(phone, "assistant", f"[template:auryel_relance_j2] {{1}}={prenom or 'Bonjour'} {{2}}={nom}")
+            if sent:
+                if user.get("email"):
+                    send_email_j6(user["email"], prenom, links)
+                update_user_silent(phone, relance_j6_envoyee=True, etat="attente_paiement")
+                j6 += 1
+            time.sleep(1)
 
         elif nb_jours >= 3 and user["etat"] == "attente_paiement" and not user.get("relance_j7_envoyee"):
             if _stripe_paiement_actif(phone, user.get("stripe_customer_id", "")):
                 print(f"[cron] J+3 différé — paiement Stripe actif détecté → {phone}")
                 update_user_silent(phone, abonne=True, etat="normal")
             else:
-                msg7 = msg_j7_blocage(nom, prenom, links)
-                send_message(phone, msg7)
-                add_message(phone, "assistant", msg7)
+                # J+3 : fenêtre 24h Meta forcément fermée — template obligatoire
+                sent = send_template_message(phone, "auryel_relance_j3", [prenom or "Bonjour", nom])
+                if sent:
+                    add_message(phone, "assistant", f"[template:auryel_relance_j3] {{1}}={prenom or 'Bonjour'} {{2}}={nom}")
                 if user.get("email"):
                     send_email_relance(user["email"], prenom, links)
                 update_user_silent(phone, etat="pause", relance_j7_envoyee=True)
