@@ -3,34 +3,44 @@
 ## 2026-06-16 - LOT 0 - Préparation
 
 - Branche `relance-auryel-v2` créée (depuis `main`)
-- Audit initial effectué (voir résumé ci-dessous)
-- Fichiers parasites identifiés (liste jointe, pas encore supprimés)
+- Audit initial effectué
+- Fichiers parasites supprimés (commit local, pas encore poussé)
 
-### Fichiers parasites identifiés (en attente de validation)
+### Fichiers supprimés (commit local `relance-auryel-v2`)
 
-Tous ces fichiers sont **trackés par git** (commités dans le repo) :
+| Fichier | Type | Taille |
+|---------|------|--------|
+| `auryel_bot.py.bak` | Backup | 107 Ko |
+| `preview-auryel-production.html` | Preview dev | 63 Ko |
+| `preview-auryel-redesign.html` | Preview dev | 44 Ko |
+| `screenshots/` (10 PNG) | Screenshots dev | ~8 Mo |
 
-| Fichier | Type | Taille | Raison de suppression |
-|---------|------|--------|-----------------------|
-| `auryel_bot.py.bak` | Backup | 107 Ko | Résidu d'une version précédente |
-| `preview-auryel-production.html` | Preview dev | 63 Ko | Fichier de prévisualisation obsolète |
-| `preview-auryel-redesign.html` | Preview dev | 44 Ko | Fichier de prévisualisation obsolète |
-| `screenshots/blog_desktop.png` | Screenshot | 1,4 Mo | Captures de développement, non utilisées en prod |
-| `screenshots/blog_mobile.png` | Screenshot | 410 Ko | idem |
-| `screenshots/home_desktop.png` | Screenshot | 1 Mo | idem |
-| `screenshots/home_mobile.png` | Screenshot | 400 Ko | idem |
-| `screenshots/tarifs_desktop.png` | Screenshot | 1,2 Mo | idem |
-| `screenshots/tarifs_mobile.png` | Screenshot | 402 Ko | idem |
-| `screenshots/tarot_desktop.png` | Screenshot | 1,1 Mo | idem |
-| `screenshots/tarot_mobile.png` | Screenshot | 446 Ko | idem |
-| `screenshots/voyance_desktop.png` | Screenshot | 1,1 Mo | idem |
-| `screenshots/voyance_mobile.png` | Screenshot | 441 Ko | idem |
-| `scripts/capture_screenshot.py` | Script dev | — | Script de capture Playwright, usage ponctuel |
-| `scripts/check-seo-domain.py` | Script dev | — | Script SEO ponctuel, pas de prod |
+**Total libéré :** ~8,2 Mo
 
-**Total estimé libéré :** ~8,5 Mo (surtout les screenshots)
+### Fichiers conservés en attente de décision
 
-Fichiers **locaux uniquement** (déjà dans `.gitignore`, pas commités) :
+| Fichier | Contenu |
+|---------|---------|
+| `scripts/capture_screenshot.py` | Wrapper Playwright — `capture(url, output, width, height)`. Utile pour CI visuelle |
+| `scripts/check-seo-domain.py` | 7 contrôles SEO : canonicals, og:url, sitemap, pages légales, liens anciens domaine. À utiliser avant tout push |
+
+### Fichiers locaux uniquement (`.gitignore` — non commités)
 - `__pycache__/` (cpython-311 + cpython-314)
 - `venv/`
 - `.DS_Store`
+
+---
+
+## Points d'attention — à traiter dans les lots suivants
+
+### LOT 6 — Sécurité : `/reset-db` à désactiver en production
+La route `POST /reset-db` dans `auryel_bot.py` exécute `reset_db()` (DROP + recréation des tables).
+Elle est protégée uniquement par `CRON_SECRET` en query param — insuffisant en production.
+**Action requise :** supprimer la route entièrement ou la conditionner à `DEBUG=True` uniquement.
+Ne jamais merger vers `main` sans cette correction.
+
+### Tests — Migration pytest avant modifications Stripe/webhooks/sécurité
+`test_guides.py` est un script manuel sans framework (pas de `assert`, pas de `pytest`, pas de reporting).
+Avant toute modification des flows Stripe, webhooks Meta ou logique de sécurité (`niveau_detresse`, `META_APP_SECRET`),
+migrer vers `pytest` avec des vrais cas de test isolés et un runner CI.
+**Risque actuel :** une régression sur la sécurité crise (suicide/3114) pourrait passer inaperçue.
