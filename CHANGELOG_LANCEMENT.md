@@ -17,12 +17,12 @@
 
 **Total libéré :** ~8,2 Mo
 
-### Fichiers conservés en attente de décision
+### Fichiers scripts/ conservés (outils QA/dev, non utilisés en production)
 
-| Fichier | Contenu |
-|---------|---------|
-| `scripts/capture_screenshot.py` | Wrapper Playwright — `capture(url, output, width, height)`. Utile pour CI visuelle |
-| `scripts/check-seo-domain.py` | 7 contrôles SEO : canonicals, og:url, sitemap, pages légales, liens anciens domaine. À utiliser avant tout push |
+| Fichier | Rôle | Décision |
+|---------|------|----------|
+| `scripts/capture_screenshot.py` | Wrapper Playwright — captures visuelles avant/après déploiement | ✅ Conservé |
+| `scripts/check-seo-domain.py` | 7 contrôles SEO (canonicals, og:url, sitemap, pages légales, anciens domaines) — à lancer avant tout push | ✅ Conservé |
 
 ### Fichiers locaux uniquement (`.gitignore` — non commités)
 - `__pycache__/` (cpython-311 + cpython-314)
