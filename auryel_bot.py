@@ -30,6 +30,7 @@ _REQUIRED_ENV = [
 _missing_env = [v for v in _REQUIRED_ENV if not os.environ.get(v)]
 if _missing_env:
     raise RuntimeError(f"Variables manquantes : {', '.join(_missing_env)}")
+print(f"[boot] META_APP_SECRET présent: {bool(os.environ.get('META_APP_SECRET'))}")
 
 
 PRICES = {
