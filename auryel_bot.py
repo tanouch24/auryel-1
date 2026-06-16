@@ -2007,6 +2007,30 @@ def create_checkout():
         return jsonify({"error": "Erreur serveur"}), 500
 
 # ============================================================
+# HELPER STRIPE — vérification paiement avant blocage J+3
+# ============================================================
+def _stripe_paiement_actif(phone, stripe_customer_id):
+    """Retourne True si un abonnement Stripe actif/trialing existe pour cet utilisateur.
+    Appelé avant de bloquer à J+3 pour éviter de bloquer quelqu'un qui vient de payer
+    alors que le webhook checkout.session.completed n'est pas encore arrivé.
+    Timeout 5s : si Stripe répond lentement, on tombe dans le except → fail-safe blocage."""
+    try:
+        if stripe_customer_id:
+            subs = stripe.Subscription.list(customer=stripe_customer_id, limit=1, timeout=5)
+            for sub in subs.data:
+                if sub.status in ("active", "trialing"):
+                    return True
+                break
+        cutoff = int(datetime.now(timezone.utc).timestamp()) - 86400
+        sessions = stripe.checkout.Session.list(client_reference_id=phone, limit=5, timeout=5)
+        for s in sessions.data:
+            if s.created >= cutoff and s.payment_status in ("paid", "no_payment_required"):
+                return True
+    except Exception as e:
+        print(f"[cron] _stripe_paiement_actif erreur : {e}")
+    return False
+
+# ============================================================
 # CRON DAILY
 # ============================================================
 @app.route("/cron/daily", methods=["GET","POST"])
@@ -2102,7 +2126,7 @@ def cron_daily():
 
         links = get_stripe_links(phone)
 
-        if nb_jours == 2 and not user["relance_j6_envoyee"]:
+        if nb_jours >= 2 and not user["relance_j6_envoyee"]:
             msg6 = msg_j6(nom, prenom, links)
             send_message(phone, msg6)
             add_message(phone, "assistant", msg6)
@@ -2111,14 +2135,18 @@ def cron_daily():
             update_user_silent(phone, relance_j6_envoyee=True, etat="attente_paiement")
             j6 += 1; time.sleep(1)
 
-        elif nb_jours == 3 and user["etat"] == "attente_paiement" and not user.get("relance_j7_envoyee"):
-            msg7 = msg_j7_blocage(nom, prenom, links)
-            send_message(phone, msg7)
-            add_message(phone, "assistant", msg7)
-            if user.get("email"):
-                send_email_relance(user["email"], prenom, links)
-            update_user_silent(phone, etat="pause", relance_j7_envoyee=True)
-            j7 += 1; time.sleep(1)
+        elif nb_jours >= 3 and user["etat"] == "attente_paiement" and not user.get("relance_j7_envoyee"):
+            if _stripe_paiement_actif(phone, user.get("stripe_customer_id", "")):
+                print(f"[cron] J+3 différé — paiement Stripe actif détecté → {phone}")
+                update_user_silent(phone, abonne=True, etat="normal")
+            else:
+                msg7 = msg_j7_blocage(nom, prenom, links)
+                send_message(phone, msg7)
+                add_message(phone, "assistant", msg7)
+                if user.get("email"):
+                    send_email_relance(user["email"], prenom, links)
+                update_user_silent(phone, etat="pause", relance_j7_envoyee=True)
+                j7 += 1; time.sleep(1)
 
         elif nb_jours == 4 and user["etat"] == "pause" and not user["relance_j8_envoyee"]:
             # ── J+4 DÉSACTIVÉ ──────────────────────────────────────────────────
