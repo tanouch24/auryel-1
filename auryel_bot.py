@@ -1829,10 +1829,13 @@ def receive():
 
                 # Le flow onboarding doit toujours être exécuté avant toute logique métier ou émotionnelle.
                 if onboarding_ok and user.get("etat") == "pause":
+                    add_message(from_num, "user", user_text)
                     def send_pause(num):
                         time.sleep(1)
                         links = get_stripe_links(num)
-                        send_message(num, msg_j7_si_ecrit(links))
+                        msg = msg_j7_si_ecrit(links)
+                        send_message(num, msg)
+                        add_message(num, "assistant", msg)
                     threading.Thread(target=send_pause, args=(from_num,), daemon=True).start()
                     return jsonify({"status":"ok"}), 200
 
