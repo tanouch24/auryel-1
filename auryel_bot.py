@@ -2445,6 +2445,8 @@ tr:hover td{{background:rgba(212,168,67,0.05)}}tr:last-child td{{border-bottom:n
 .btn-close{{background:rgba(255,255,255,0.08);color:#e8e0d0;border:1px solid rgba(255,255,255,0.1)}}
 .btn-abonne{{background:rgba(212,168,67,0.2);color:#d4a843;border:1px solid rgba(212,168,67,0.3)}}
 .btn-rituel{{background:rgba(123,94,167,0.2);color:#a78dd4;border:1px solid rgba(123,94,167,0.3)}}
+.btn-export{{background:rgba(52,152,219,0.2);color:#5dade2;border:1px solid rgba(52,152,219,0.3)}}
+.btn-delete{{background:rgba(192,57,43,0.35);color:#e74c3c;border:1px solid rgba(192,57,43,0.5)}}
 .messages{{flex:1;overflow-y:auto;padding:20px 24px;display:flex;flex-direction:column;gap:12px;min-height:200px}}
 .msg{{max-width:80%;padding:12px 16px;border-radius:14px;font-size:14px;line-height:1.6;white-space:pre-wrap;word-break:break-word}}
 .msg.user{{background:rgba(255,255,255,0.06);border:1px solid rgba(255,255,255,0.08);align-self:flex-start}}
@@ -2498,6 +2500,9 @@ tr:hover td{{background:rgba(212,168,67,0.05)}}tr:last-child td{{border-bottom:n
         <button class='btn-sm btn-pause' onclick='pauseBot()'>⏸ Pause</button>
         <button class='btn-sm btn-bot' onclick='resumeBot()'>🤖 Bot</button>
         <button class='btn-sm btn-close' onclick='closeModal()'>✕</button>
+        <span style='width:1px;background:rgba(255,255,255,0.15);align-self:stretch;margin:0 4px'></span>
+        <button class='btn-sm btn-export' onclick='exportUser()'>⬇ Export</button>
+        <button class='btn-sm btn-delete' onclick='deleteUser()'>🗑 Supprimer</button>
       </div>
     </div>
     <div class='messages' id='messages'></div>
@@ -2517,6 +2522,8 @@ async function resumeBot(){{if(!cp)return;await fetch('/admin/resume?phone='+enc
 async function markAbonne(){{if(!cp)return;await fetch('/admin/set-abonne?phone='+encodeURIComponent(cp),{{method:'POST',headers:{{'X-CSRF-Token':csrfToken}}}});alert('Marqué abonné ✅');openConv(cp);}}
 async function sendRituel(){{const types=['psaume','carte','chiffre'];const t=types[Math.floor(Math.random()*3)];await fetch('/admin/send-rituel?phone='+encodeURIComponent(cp)+'&type='+t,{{method:'POST',headers:{{'X-CSRF-Token':csrfToken}}}});alert('Rituel '+t+' envoyé ✨');openConv(cp);}}
 async function sendManual(){{const msg=document.getElementById('sendInput').value.trim();if(!msg||!cp)return;const r=await fetch('/admin/send',{{method:'POST',headers:{{'Content-Type':'application/json','X-CSRF-Token':csrfToken}},body:JSON.stringify({{phone:cp,message:msg}})}});const d=await r.json();if(d.ok){{document.getElementById('sendInput').value='';openConv(cp);}}else{{alert('Erreur');}}}}
+async function exportUser(){{if(!cp)return;const r=await fetch('/admin/export-data?phone='+encodeURIComponent(cp),{{method:'POST',headers:{{'X-CSRF-Token':csrfToken}}}});if(!r.ok){{alert('Erreur export');return;}}const blob=await r.blob();const a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download='export_'+cp+'.json';a.click();}}
+async function deleteUser(){{if(!cp)return;const confirm=window.prompt('Action irréversible. Retapez le numéro de téléphone pour confirmer :');if(!confirm||confirm.trim()!==cp){{alert('Numéro incorrect — suppression annulée.');return;}}const r=await fetch('/admin/delete-user?phone='+encodeURIComponent(cp),{{method:'POST',headers:{{'Content-Type':'application/json','X-CSRF-Token':csrfToken}},body:JSON.stringify({{phone_confirm:confirm.trim()}})}});const d=await r.json();if(d.ok){{alert('Utilisateur supprimé.');closeModal();}}else{{alert('Erreur : '+(d.error||'inconnue'));}}}}
 document.getElementById('modal').addEventListener('click',function(e){{if(e.target===this)closeModal();}});
 document.getElementById('sendInput').addEventListener('keydown',function(e){{if(e.key==='Enter'&&!e.shiftKey){{e.preventDefault();sendManual();}}}});
 </script></body></html>"""
@@ -2582,6 +2589,54 @@ def admin_send():
     send_message(phone, message)
     add_message(phone, "assistant", message)
     log_admin_action("send", phone, detail=message[:200])
+    return jsonify({"ok":True})
+
+@app.route("/admin/export-data", methods=["POST"])
+@require_csrf
+def admin_export_data():
+    if not admin_auth(): return jsonify({"error":"unauthorized"}), 401
+    phone = request.args.get("phone","")
+    if not phone: return jsonify({"error":"phone required"}), 400
+    conn = get_conn()
+    c = conn.cursor()
+    c.execute("SELECT * FROM users WHERE phone = %s", (phone,))
+    row = c.fetchone()
+    if not row:
+        conn.close()
+        return jsonify({"error":"user not found"}), 404
+    cols = [desc[0] for desc in c.description]
+    user_data = dict(zip(cols, row))
+    c.execute("SELECT role, content, timestamp FROM messages WHERE phone = %s ORDER BY timestamp ASC", (phone,))
+    messages_data = [{"role": r[0], "content": r[1], "timestamp": r[2]} for r in c.fetchall()]
+    conn.close()
+    log_admin_action("export-data", phone)
+    payload = {"user": user_data, "messages": messages_data}
+    response = app.response_class(
+        response=__import__("json").dumps(payload, ensure_ascii=False, indent=2),
+        status=200,
+        mimetype="application/json"
+    )
+    response.headers["Content-Disposition"] = f"attachment; filename=export_{phone}.json"
+    return response
+
+@app.route("/admin/delete-user", methods=["POST"])
+@require_csrf
+def admin_delete_user():
+    if not admin_auth(): return jsonify({"error":"unauthorized"}), 401
+    phone = request.args.get("phone","")
+    body = request.get_json(silent=True) or {}
+    phone_confirm = body.get("phone_confirm","")
+    if not phone or not phone_confirm:
+        return jsonify({"error":"phone required"}), 400
+    if phone_confirm != phone:
+        return jsonify({"error":"phone mismatch"}), 400
+    log_admin_action("delete-user", phone)
+    conn = get_conn()
+    c = conn.cursor()
+    c.execute("DELETE FROM messages WHERE phone = %s", (phone,))
+    c.execute("DELETE FROM users WHERE phone = %s", (phone,))
+    conn.commit()
+    conn.close()
     return jsonify({"ok":True})
 
 @app.route("/admin/login", methods=["GET","POST"])
