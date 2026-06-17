@@ -1,4 +1,4 @@
-import os, time, requests, threading, psycopg2, stripe, re, random, hmac, hashlib, unicodedata
+import os, time, requests, threading, psycopg2, stripe, re, random, hmac, hashlib, unicodedata, secrets
 from datetime import datetime, date, timezone, timedelta
 from flask import Flask, request, jsonify, session, redirect
 from flask_cors import CORS
@@ -2308,6 +2308,17 @@ def reset_database():
 def admin_auth():
     return session.get("admin_logged") == True
 
+def require_csrf(f):
+    from functools import wraps
+    @wraps(f)
+    def decorated(*args, **kwargs):
+        token = request.headers.get("X-CSRF-Token", "")
+        expected = session.get("csrf_token", "")
+        if not expected or not hmac.compare_digest(token, expected):
+            return jsonify({"error": "invalid csrf token"}), 403
+        return f(*args, **kwargs)
+    return decorated
+
 @app.route("/admin", methods=["GET"])
 def admin_dashboard():
     if not admin_auth(): return redirect('/admin/login')
@@ -2363,7 +2374,7 @@ def admin_dashboard():
 
     users_table_html = "<div class='empty'>Aucun utilisateur</div>" if not users else "<div style='overflow-x:auto'><table><thead><tr><th></th><th>Utilisateur</th><th class='hm'>Conseiller</th><th>Msgs</th><th class='hm'>Dernier contact</th><th>Statut</th></tr></thead><tbody>" + rows_html + "</tbody></table></div>"
 
-    return f"""<!DOCTYPE html><html><head><title>Auryel Admin</title><meta name='viewport' content='width=device-width,initial-scale=1'>
+    return f"""<!DOCTYPE html><html><head><title>Auryel Admin</title><meta name='viewport' content='width=device-width,initial-scale=1'><meta name='csrf-token' content='{session.get("csrf_token","")}'>
 <link href='https://fonts.googleapis.com/css2?family=Cormorant+Garamond:wght@400;600&family=DM+Sans:wght@300;400;500&display=swap' rel='stylesheet'>
 <style>
 *{{margin:0;padding:0;box-sizing:border-box}}
@@ -2462,13 +2473,14 @@ tr:hover td{{background:rgba(212,168,67,0.05)}}tr:last-child td{{border-bottom:n
 </div>
 <script>
 let cp='';
+const csrfToken=document.querySelector('meta[name="csrf-token"]').content;
 async function openConv(p){{cp=p;document.getElementById('modal').classList.add('open');document.getElementById('messages').innerHTML='<div style="text-align:center;padding:20px;color:#8a7a6a">Chargement...</div>';try{{const r=await fetch('/admin/conversation?phone='+encodeURIComponent(p));const d=await r.json();document.getElementById('modalTitle').textContent=(d.prenom||'')+(d.nom_affiche?' — '+d.nom_affiche:'');const m=document.getElementById('messages');m.innerHTML='';if(!d.messages||d.messages.length===0){{m.innerHTML='<div style="text-align:center;padding:20px;color:#8a7a6a">Aucun message</div>';}}else{{d.messages.forEach(x=>{{const el=document.createElement('div');el.className='msg '+x.role;const t=x.timestamp?x.timestamp.substring(0,16).replace('T',' '):'';el.innerHTML=x.content.replace(/</g,'&lt;').replace(/>/g,'&gt;')+"<div class='msg-time'>"+t+"</div>";m.appendChild(el);}});m.scrollTop=m.scrollHeight;}}}}catch(e){{document.getElementById('messages').innerHTML='<div style="text-align:center;padding:20px;color:#ff6b6b">Erreur</div>';}}}}
 function closeModal(){{document.getElementById('modal').classList.remove('open');cp='';}}
-async function pauseBot(){{if(!cp)return;await fetch('/admin/pause?phone='+encodeURIComponent(cp),{{method:'POST'}});alert('Bot mis en pause');}}
-async function resumeBot(){{if(!cp)return;await fetch('/admin/resume?phone='+encodeURIComponent(cp),{{method:'POST'}});alert('Bot repris');}}
-async function markAbonne(){{if(!cp)return;await fetch('/admin/set-abonne?phone='+encodeURIComponent(cp),{{method:'POST'}});alert('Marqué abonné ✅');openConv(cp);}}
-async function sendRituel(){{const types=['psaume','carte','chiffre'];const t=types[Math.floor(Math.random()*3)];await fetch('/admin/send-rituel?phone='+encodeURIComponent(cp)+'&type='+t,{{method:'POST'}});alert('Rituel '+t+' envoyé ✨');openConv(cp);}}
-async function sendManual(){{const msg=document.getElementById('sendInput').value.trim();if(!msg||!cp)return;const r=await fetch('/admin/send',{{method:'POST',headers:{{'Content-Type':'application/json'}},body:JSON.stringify({{phone:cp,message:msg}})}});const d=await r.json();if(d.ok){{document.getElementById('sendInput').value='';openConv(cp);}}else{{alert('Erreur');}}}}
+async function pauseBot(){{if(!cp)return;await fetch('/admin/pause?phone='+encodeURIComponent(cp),{{method:'POST',headers:{{'X-CSRF-Token':csrfToken}}}});alert('Bot mis en pause');}}
+async function resumeBot(){{if(!cp)return;await fetch('/admin/resume?phone='+encodeURIComponent(cp),{{method:'POST',headers:{{'X-CSRF-Token':csrfToken}}}});alert('Bot repris');}}
+async function markAbonne(){{if(!cp)return;await fetch('/admin/set-abonne?phone='+encodeURIComponent(cp),{{method:'POST',headers:{{'X-CSRF-Token':csrfToken}}}});alert('Marqué abonné ✅');openConv(cp);}}
+async function sendRituel(){{const types=['psaume','carte','chiffre'];const t=types[Math.floor(Math.random()*3)];await fetch('/admin/send-rituel?phone='+encodeURIComponent(cp)+'&type='+t,{{method:'POST',headers:{{'X-CSRF-Token':csrfToken}}}});alert('Rituel '+t+' envoyé ✨');openConv(cp);}}
+async function sendManual(){{const msg=document.getElementById('sendInput').value.trim();if(!msg||!cp)return;const r=await fetch('/admin/send',{{method:'POST',headers:{{'Content-Type':'application/json','X-CSRF-Token':csrfToken}},body:JSON.stringify({{phone:cp,message:msg}})}});const d=await r.json();if(d.ok){{document.getElementById('sendInput').value='';openConv(cp);}}else{{alert('Erreur');}}}}
 document.getElementById('modal').addEventListener('click',function(e){{if(e.target===this)closeModal();}});
 document.getElementById('sendInput').addEventListener('keydown',function(e){{if(e.key==='Enter'&&!e.shiftKey){{e.preventDefault();sendManual();}}}});
 </script></body></html>"""
@@ -2486,18 +2498,21 @@ def admin_conversation():
     })
 
 @app.route("/admin/pause", methods=["POST"])
+@require_csrf
 def admin_pause():
     if not admin_auth(): return jsonify({"error":"unauthorized"}), 401
     update_user_silent(request.args.get("phone",""), etat="pause")
     return jsonify({"ok":True})
 
 @app.route("/admin/resume", methods=["POST"])
+@require_csrf
 def admin_resume():
     if not admin_auth(): return jsonify({"error":"unauthorized"}), 401
     update_user_silent(request.args.get("phone",""), etat="normal")
     return jsonify({"ok":True})
 
 @app.route("/admin/set-abonne", methods=["POST"])
+@require_csrf
 def admin_set_abonne():
     if not admin_auth(): return jsonify({"error":"unauthorized"}), 401
     update_user_silent(request.args.get("phone",""), abonne=True, etat="normal",
@@ -2505,6 +2520,7 @@ def admin_set_abonne():
     return jsonify({"ok":True})
 
 @app.route("/admin/send-rituel", methods=["POST"])
+@require_csrf
 def admin_send_rituel():
     if not admin_auth(): return jsonify({"error":"unauthorized"}), 401
     phone = request.args.get("phone","")
@@ -2517,6 +2533,7 @@ def admin_send_rituel():
     return jsonify({"ok":True})
 
 @app.route("/admin/send", methods=["POST"])
+@require_csrf
 def admin_send():
     if not admin_auth(): return jsonify({"error":"unauthorized"}), 401
     data = request.get_json()
@@ -2533,6 +2550,7 @@ def admin_login():
     if request.method == "POST":
         if request.form.get("password","") == ADMIN_PASSWORD:
             session["admin_logged"] = True
+            session["csrf_token"] = secrets.token_hex(32)
             session.permanent = True
             return redirect("/admin")
         error = "Mot de passe incorrect"
