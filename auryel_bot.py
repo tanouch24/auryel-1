@@ -193,6 +193,15 @@ def init_db():
         c.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS stop_relances BOOLEAN DEFAULT FALSE")
     except Exception as e:
         print(f"Migration v5: {e}")
+    # Migration v6 — index unique partiel stripe_customer_id (exclut '' partagé par les non-abonnés)
+    try:
+        c.execute("""
+            CREATE UNIQUE INDEX IF NOT EXISTS idx_unique_stripe_customer
+            ON users (stripe_customer_id)
+            WHERE stripe_customer_id != ''
+        """)
+    except Exception as e:
+        print(f"Migration v6: {e}")
     conn.commit()
     conn.close()
 
