@@ -202,6 +202,19 @@ def init_db():
         """)
     except Exception as e:
         print(f"Migration v6: {e}")
+    # Migration v7 — table traçabilité actions admin
+    try:
+        c.execute("""
+            CREATE TABLE IF NOT EXISTS admin_logs (
+                id        SERIAL PRIMARY KEY,
+                action    TEXT,
+                phone     TEXT,
+                detail    TEXT,
+                timestamp TEXT
+            )
+        """)
+    except Exception as e:
+        print(f"Migration v7: {e}")
     conn.commit()
     conn.close()
 
@@ -304,6 +317,17 @@ def add_message(phone, role, content):
               (phone, role, content, datetime.now().isoformat()))
     conn.commit()
     conn.close()
+
+def log_admin_action(action, phone, detail=""):
+    try:
+        conn = get_conn()
+        c = conn.cursor()
+        c.execute("INSERT INTO admin_logs (action,phone,detail,timestamp) VALUES (%s,%s,%s,%s)",
+                  (action, phone, detail, datetime.now().isoformat()))
+        conn.commit()
+        conn.close()
+    except Exception as e:
+        print(f"[admin_logs] erreur : {e}")
 
 def get_history(phone, limit=20):
     conn = get_conn()
@@ -2514,6 +2538,7 @@ def admin_conversation():
 def admin_pause():
     if not admin_auth(): return jsonify({"error":"unauthorized"}), 401
     update_user_silent(request.args.get("phone",""), etat="pause")
+    log_admin_action("pause", request.args.get("phone",""))
     return jsonify({"ok":True})
 
 @app.route("/admin/resume", methods=["POST"])
@@ -2521,6 +2546,7 @@ def admin_pause():
 def admin_resume():
     if not admin_auth(): return jsonify({"error":"unauthorized"}), 401
     update_user_silent(request.args.get("phone",""), etat="normal")
+    log_admin_action("resume", request.args.get("phone",""))
     return jsonify({"ok":True})
 
 @app.route("/admin/set-abonne", methods=["POST"])
@@ -2529,6 +2555,7 @@ def admin_set_abonne():
     if not admin_auth(): return jsonify({"error":"unauthorized"}), 401
     update_user_silent(request.args.get("phone",""), abonne=True, etat="normal",
                date_abonnement=datetime.now().isoformat())
+    log_admin_action("set-abonne", request.args.get("phone",""))
     return jsonify({"ok":True})
 
 @app.route("/admin/send-rituel", methods=["POST"])
@@ -2542,6 +2569,7 @@ def admin_send_rituel():
     add_message(phone, "assistant", msg_r)
     update_user_silent(phone, dernier_rituel_date=date.today().isoformat(),
                dernier_rituel_type=type_rituel, dernier_outil=type_rituel)
+    log_admin_action("send-rituel", phone, detail=type_rituel)
     return jsonify({"ok":True})
 
 @app.route("/admin/send", methods=["POST"])
@@ -2553,6 +2581,7 @@ def admin_send():
     if not phone or not message: return jsonify({"ok":False})
     send_message(phone, message)
     add_message(phone, "assistant", message)
+    log_admin_action("send", phone, detail=message[:200])
     return jsonify({"ok":True})
 
 @app.route("/admin/login", methods=["GET","POST"])

@@ -21,6 +21,7 @@ d'exécution réelle ; les fichiers ici sont la source de vérité lisible.
 |---------|-------------|------|
 | `000_schema_initial.sql` | État complet de la DB à l'ouverture du versionnage | 2026-06-17 |
 | `001_index_stripe_customer.sql` | Index unique partiel sur `stripe_customer_id` | 2026-06-17 |
+| `002_admin_logs.sql` | Table `admin_logs` — traçabilité des actions admin | 2026-06-17 |
 
 ## Référence
 
