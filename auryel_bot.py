@@ -2,6 +2,9 @@ import os, time, requests, threading, psycopg2, stripe, re, random, hmac, hashli
 from datetime import datetime, date, timezone, timedelta
 from flask import Flask, request, jsonify, session, redirect
 from flask_cors import CORS
+from flask_limiter import Limiter
+from flask_limiter.util import get_remote_address
+from werkzeug.middleware.proxy_fix import ProxyFix
 from groq import Groq
 
 app = Flask(__name__)
@@ -11,6 +14,8 @@ app.config["SESSION_COOKIE_HTTPONLY"]     = True
 app.config["SESSION_COOKIE_SAMESITE"]     = "Lax"
 app.config["PERMANENT_SESSION_LIFETIME"]  = timedelta(hours=4)
 app.config["SESSION_REFRESH_EACH_REQUEST"] = True
+app.wsgi_app = ProxyFix(app.wsgi_app, x_for=1)
+limiter = Limiter(get_remote_address, app=app)
 
 CORS(app, resources={r"/stripe/*": {"origins": ["https://auryelvoyance.com"]}})
 
@@ -2522,6 +2527,7 @@ def admin_send():
     return jsonify({"ok":True})
 
 @app.route("/admin/login", methods=["GET","POST"])
+@limiter.limit("3 per 15 minutes")
 def admin_login():
     error = ""
     if request.method == "POST":
