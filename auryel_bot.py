@@ -2188,6 +2188,53 @@ def _verif_stripe_abonne(stripe_customer_id):
         print(f"[cron] _verif_stripe_abonne erreur API : {e}")
         return None  # erreur réseau → indéterminé, ne pas downgrader
 
+def _cron_purge_anciens():
+    """Purge RGPD automatique — appelée 1×/semaine (lundi) par cron_daily.
+    Anonymise les users COALESCE(abonne,FALSE)=FALSE, etat=pause,
+    date_dernier_contact existante et antérieure à 12 mois.
+    Les NULL/vides sont ignorés — réservés à la purge manuelle ou un audit séparé.
+    Retourne : "done", "blocked_too_many", ou "error"."""
+    conn = None
+    try:
+        cutoff = (datetime.utcnow() - timedelta(days=365)).isoformat()
+        conn = get_conn()
+        c    = conn.cursor()
+        c.execute("""
+            SELECT phone
+            FROM users
+            WHERE COALESCE(abonne, FALSE) = FALSE
+              AND etat = 'pause'
+              AND date_dernier_contact IS NOT NULL
+              AND date_dernier_contact != ''
+              AND date_dernier_contact ~ E'^\\d{4}-\\d{2}-\\d{2}'
+              AND date_dernier_contact::timestamp < %s::timestamp
+        """, (cutoff,))
+        phones_purge = [r[0] for r in c.fetchall()]
+
+        if len(phones_purge) > 50:
+            print(f"[cron] Purge RGPD bloquée — {len(phones_purge)} candidats > 50. Vérification manuelle requise.")
+            log_admin_action("purge-auto-bloquee", "", detail=f"{len(phones_purge)} candidats (cutoff={cutoff[:10]})")
+            return "blocked_too_many"
+
+        _ANON = ["prenom", "email", "prenoms_importants", "theme_dominant",
+                 "douleur_principale", "peur_dominante", "dernier_sujet_sensible",
+                 "derniere_intention", "profil_initial", "onboarding_question"]
+        sets  = ", ".join(f"{f}=''" for f in _ANON)
+        for p in phones_purge:
+            c.execute(f"UPDATE users SET {sets} WHERE phone = %s", (p,))
+            c.execute("DELETE FROM messages WHERE phone = %s", (p,))
+        conn.commit()
+        log_admin_action("purge-auto", "", detail=f"{len(phones_purge)} users anonymisés (cutoff={cutoff[:10]})")
+        print(f"[cron] Purge RGPD auto — {len(phones_purge)} users anonymisés")
+        return "done"
+    except Exception as e:
+        print(f"[cron] Purge RGPD erreur : {e}")
+        return "error"
+    finally:
+        if conn:
+            try: conn.close()
+            except: pass
+
 # ============================================================
 # CRON DAILY
 # ============================================================
@@ -2374,7 +2421,13 @@ def cron_daily():
             print(f"[cron] J+4 neutralisé (log seul, pas d'envoi) → {phone}")
             j8 += 1; time.sleep(1)
 
-    return jsonify({"status":"ok","j2":j6,"j3":j7,"j4":j8,"relances_abonnes":relances_abonnes}), 200
+    # ── Purge RGPD automatique (hebdomadaire, lundi uniquement) ───────────────
+    purge_rgpd = "skipped_not_monday"
+    if datetime.utcnow().isoweekday() == 1:
+        purge_rgpd = _cron_purge_anciens()
+
+    return jsonify({"status":"ok","j2":j6,"j3":j7,"j4":j8,
+                    "relances_abonnes":relances_abonnes,"purge_rgpd":purge_rgpd}), 200
 
 # ============================================================
 # ROUTES UTILITAIRES
