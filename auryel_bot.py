@@ -225,6 +225,11 @@ def init_db():
         """)
     except Exception as e:
         print(f"Migration v8: {e}")
+    # Migration v9 — colonne vérification Stripe anti-zombie (1×/semaine)
+    try:
+        c.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS derniere_verif_stripe_at TEXT DEFAULT ''")
+    except Exception as e:
+        print(f"Migration v9: {e}")
     conn.commit()
     conn.close()
 
@@ -251,7 +256,7 @@ def get_user(phone):
         onboarding_question,onboarding_psaume,
         derniere_relance_conversationnelle_at,derniere_relance_conversationnelle_type,
         relance_hebdo_envoyee,derniere_relance_hebdo_at,
-        stop_relances
+        stop_relances,derniere_verif_stripe_at
         FROM users WHERE phone=%s""", (phone,))
     row = c.fetchone()
     conn.close()
@@ -281,6 +286,7 @@ def get_user(phone):
             "relance_hebdo_envoyee":row[36] or False,
             "derniere_relance_hebdo_at":row[37] or "",
             "stop_relances":row[38] or False,
+            "derniere_verif_stripe_at":row[39] or "",
         }
     return None
 
@@ -2168,6 +2174,20 @@ def _stripe_paiement_actif(phone, stripe_customer_id):
         print(f"[cron] _stripe_paiement_actif erreur : {e}")
     return False
 
+def _verif_stripe_abonne(stripe_customer_id):
+    """Vérifie un abonnement existant via Stripe pour les users déjà abonnés.
+    Retourne True (actif confirmé), False (inactif confirmé), None (erreur API → indéterminé).
+    Contrairement à _stripe_paiement_actif, None ne déclenche PAS de blocage."""
+    try:
+        subs = stripe.Subscription.list(customer=stripe_customer_id, limit=5, timeout=5)
+        for sub in subs.data:
+            if sub.status in ("active", "trialing"):
+                return True
+        return False  # Stripe a répondu : aucun abonnement actif
+    except Exception as e:
+        print(f"[cron] _verif_stripe_abonne erreur API : {e}")
+        return None  # erreur réseau → indéterminé, ne pas downgrader
+
 # ============================================================
 # CRON DAILY
 # ============================================================
@@ -2195,6 +2215,30 @@ def cron_daily():
         prenom = user["prenom"] or ""
 
         if user["abonne"]:
+            # ── Vérification anti-zombie Stripe (1×/semaine par user) ─────────
+            cid = user.get("stripe_customer_id", "")
+            if cid:
+                dernier_verif = user.get("derniere_verif_stripe_at", "")
+                try:
+                    jv = (datetime.now() - datetime.fromisoformat(dernier_verif)).days if dernier_verif else 999
+                except Exception:
+                    jv = 999
+                if jv >= 7:
+                    verif = _verif_stripe_abonne(cid)
+                    if verif is False:
+                        links = get_stripe_links(phone)
+                        if _dans_fenetre_24h_meta(user):
+                            send_message(phone, msg_j7_blocage(nom, prenom, links))
+                        else:
+                            send_template_message(phone, "auryel_relance_j3", [prenom or "Bonjour", nom])
+                        update_user_silent(phone, abonne=False, etat="pause")
+                        print(f"[cron] Zombie subscriber → {phone} bloqué (Stripe inactif confirmé)")
+                        time.sleep(1)
+                        continue
+                    elif verif is True:
+                        update_user_silent(phone, derniere_verif_stripe_at=datetime.now().isoformat())
+                    # verif is None → erreur API Stripe → on conserve abonne=True par précaution
+            # ── Relances abonnés ──────────────────────────────────────────────
             absence = get_jours_absence(phone)
             count   = user.get("relance_abonne_count", 0)
             MAX_RELANCES = 3  # max 3 relances par cycle d'absence (J+3, J+6, J+9)
@@ -2648,6 +2692,62 @@ def admin_delete_user():
     conn.commit()
     conn.close()
     return jsonify({"ok":True})
+
+@app.route("/admin/purge-anciens", methods=["POST"])
+@require_csrf
+def admin_purge_anciens():
+    if not admin_auth(): return jsonify({"error": "unauthorized"}), 401
+    body    = request.get_json(silent=True) or {}
+    confirm = str(body.get("confirm", "")).lower() == "true"
+    cutoff  = (datetime.now() - timedelta(days=365)).isoformat()
+
+    conn = get_conn()
+    c    = conn.cursor()
+    c.execute("""
+        SELECT phone, prenom, date_dernier_contact
+        FROM users
+        WHERE abonne = FALSE
+          AND etat = 'pause'
+          AND (
+              date_dernier_contact IS NULL
+              OR date_dernier_contact = ''
+              OR (
+                  date_dernier_contact ~ E'^\\d{4}-\\d{2}-\\d{2}'
+                  AND date_dernier_contact::timestamp < %s::timestamp
+              )
+          )
+    """, (cutoff,))
+    candidates = [{"phone": r[0], "prenom": r[1] or "", "last_contact": r[2] or ""}
+                  for r in c.fetchall()]
+
+    if not confirm:
+        conn.close()
+        return jsonify({"mode": "dry-run", "count": len(candidates),
+                        "candidates": candidates}), 200
+
+    if len(candidates) > 50:
+        conn.close()
+        return jsonify({
+            "error": "batch_trop_grand",
+            "message": f"{len(candidates)} users éligibles — limite 50 par exécution. Affinez les critères ou traitez en plusieurs passes.",
+            "count": len(candidates)
+        }), 400
+
+    _ANON = ["prenom", "email", "prenoms_importants", "theme_dominant",
+             "douleur_principale", "peur_dominante", "dernier_sujet_sensible",
+             "derniere_intention", "profil_initial", "onboarding_question"]
+    sets  = ", ".join(f"{f}=''" for f in _ANON)
+    for row in candidates:
+        p = row["phone"]
+        c.execute(f"UPDATE users SET {sets} WHERE phone = %s", (p,))
+        c.execute("DELETE FROM messages WHERE phone = %s", (p,))
+        log_admin_action("purge-anon", p, detail="anonymisé + messages supprimés")
+    conn.commit()
+    conn.close()
+    log_admin_action("purge-anciens", "",
+                     detail=f"{len(candidates)} users anonymisés (cutoff={cutoff[:10]})")
+    return jsonify({"mode": "executed", "anonymized": len(candidates),
+                    "phones": [r["phone"] for r in candidates]}), 200
 
 @app.route("/admin/login", methods=["GET","POST"])
 @limiter.limit("3 per 15 minutes")
