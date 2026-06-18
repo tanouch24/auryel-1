@@ -9,3 +9,4 @@ tmp/
 .env.*.local
 venv/
 __pycache__/
+backup_*.sql

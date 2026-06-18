@@ -215,6 +215,16 @@ def init_db():
         """)
     except Exception as e:
         print(f"Migration v7: {e}")
+    # Migration v8 — FK messages.phone → users.phone avec ON DELETE CASCADE
+    try:
+        c.execute("""
+            ALTER TABLE messages
+                ADD CONSTRAINT fk_messages_phone
+                FOREIGN KEY (phone) REFERENCES users(phone)
+                ON DELETE CASCADE
+        """)
+    except Exception as e:
+        print(f"Migration v8: {e}")
     conn.commit()
     conn.close()
 
