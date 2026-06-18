@@ -2226,11 +2226,16 @@ def cron_daily():
                 if jv >= 7:
                     verif = _verif_stripe_abonne(cid)
                     if verif is False:
-                        links = get_stripe_links(phone)
                         if _dans_fenetre_24h_meta(user):
-                            send_message(phone, msg_j7_blocage(nom, prenom, links))
-                        else:
-                            send_template_message(phone, "auryel_relance_j3", [prenom or "Bonjour", nom])
+                            links = get_stripe_links(phone)
+                            lien  = links.get("mensuel") or f"{SITE_URL}/tarifs.html"
+                            intro = f"{prenom}, ton" if prenom else "Ton"
+                            send_message(phone, (
+                                f"{intro} abonnement Auryel n'est plus actif côté paiement.\n\n"
+                                f"Pour le réactiver :\n{lien}"
+                            ))
+                        # Hors fenêtre 24h : downgrade silencieux
+                        # (l'user verra le message standard de fin d'accès à sa prochaine écriture)
                         update_user_silent(phone, abonne=False, etat="pause")
                         print(f"[cron] Zombie subscriber → {phone} bloqué (Stripe inactif confirmé)")
                         time.sleep(1)
