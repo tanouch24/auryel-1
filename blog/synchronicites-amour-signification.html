@@ -170,9 +170,7 @@ nav.sc{padding:14px 24px}
 }
 </style>
 
-<!-- Google Analytics -->
-<script async src="https://www.googletagmanager.com/gtag/js?id=G-8R6DXZKJN6"></script>
-<script>window.dataLayer=window.dataLayer||[];function gtag(){dataLayer.push(arguments)}gtag('js',new Date());gtag('config','G-8R6DXZKJN6');</script>
+<script src="/cookie-consent.js"></script>
 
 <script type="application/ld+json">{"@context": "https://schema.org", "@type": "BreadcrumbList", "itemListElement": [{"@type": "ListItem", "position": 1, "name": "Accueil", "item": "https://auryelvoyance.com/"}, {"@type": "ListItem", "position": 2, "name": "Blog", "item": "https://auryelvoyance.com/blog"}, {"@type": "ListItem", "position": 3, "name": "Synchronicités en amour : quand l'univers vous parle", "item": "https://auryelvoyance.com/blog/synchronicites-amour-signification"}]}</script>
 </head>
@@ -275,17 +273,10 @@ nav.sc{padding:14px 24px}
 </div>
 <p class="ft-legal">© 2026 Auryel Inc. Les consultations sont fournies à titre de divertissement et de guidance personnelle. Elles ne constituent pas un avis médical, psychologique, juridique ou financier.</p>
 </footer>
-
-<div class="ck-bar" id="ck-bar">
-<div class="ck-txt">Nous utilisons des cookies. <a href="/cookies.html">Politique cookies</a> · <a href="/confidentialite.html">Confidentialité</a>.</div>
-<div class="ck-btns"><button class="ck-no" onclick="hC()">Refuser</button><button class="ck-ok" onclick="hC()">Accepter</button></div>
-</div>
 <script>
 const cur=document.createElement('div');cur.className='cursor';document.body.appendChild(cur);
 document.addEventListener('mousemove',e=>{cur.style.cssText='position:fixed;width:8px;height:8px;border-radius:50%;background:rgba(212,175,55,.6);pointer-events:none;z-index:9999;transform:translate(-50%,-50%);left:'+e.clientX+'px;top:'+e.clientY+'px'});
-window.addEventListener('scroll',()=>{document.getElementById('nav').classList.toggle('sc',scrollY>60)});
-setTimeout(()=>{if(!localStorage.getItem('ck'))document.getElementById('ck-bar').classList.add('show')},2500);
-function hC(){localStorage.setItem('ck','1');document.getElementById('ck-bar').classList.remove('show')}
+window.addEventListener('scroll',()=>{document.getElementById('nav').classList.toggle('sc',scrollY>60)});function hC(){localStorage.setItem('ck','1');document.getElementById('ck-bar').classList.remove('show')}
 </script>
 </body>
 </html>
