@@ -1821,7 +1821,7 @@ def receive():
                     threading.Thread(target=send_welcome_site, args=(from_num, nom_affiche_code), daemon=True).start()
                 else:
                     guide_key = detecter_guide(user_text)
-                    nom_affiche = guide_key  # le nom du guide EST la clé capitalisée
+                    nom_affiche = "Séléna"
                     create_user(from_num, guide_key, nom_affiche, depuis_site=False)
                     def send_welcome(num, nom, depuis_pub):
                         time.sleep(2)
