@@ -1782,16 +1782,16 @@ def verify():
 def receive():
     # ── Vérification signature Meta X-Hub-Signature-256 ────────────────────────
     meta_secret = os.environ.get("META_APP_SECRET", "")
-    if meta_secret:
-        sig_header = request.headers.get("X-Hub-Signature-256", "")
-        expected   = "sha256=" + hmac.new(
-            meta_secret.encode("utf-8"), request.get_data(), hashlib.sha256
-        ).hexdigest()
-        if not hmac.compare_digest(sig_header, expected):
-            print("[webhook] Signature Meta invalide — requête rejetée")
-            return jsonify({"error": "invalid signature"}), 403
-    else:
-        print("[webhook] ⚠️  META_APP_SECRET absent — vérification signature désactivée")
+    if not meta_secret:
+        print("[webhook] ❌ META_APP_SECRET absent — requête rejetée")
+        return jsonify({"error": "configuration error"}), 403
+    sig_header = request.headers.get("X-Hub-Signature-256", "")
+    expected   = "sha256=" + hmac.new(
+        meta_secret.encode("utf-8"), request.get_data(), hashlib.sha256
+    ).hexdigest()
+    if not hmac.compare_digest(sig_header, expected):
+        print("[webhook] Signature Meta invalide — requête rejetée")
+        return jsonify({"error": "invalid signature"}), 403
 
     data = request.get_json()
     try:
