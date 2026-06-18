@@ -31,8 +31,14 @@
 
 [[redirects]]
   from = "/inscription"
-  to = "/inscription.html"
+  to = "/inscription/index.html"
   status = 200
+
+[[redirects]]
+  from = "/inscription.html"
+  to = "/inscription"
+  status = 301
+  force = true
 
 [[redirects]]
   from = "/blog"
