@@ -193,6 +193,12 @@ function SS(n){
 var p=new URLSearchParams(window.location.search).get("conseiller");
 if(p)setTimeout(function(){var el=document.getElementById("cc-"+p);if(el)el.click();},400);
 </script>
+<script>
+document.addEventListener('click',function(e){
+  var el=e.target.closest&&e.target.closest('#wa-final,a.wa-btn');
+  if(el&&window.gtag)gtag('event','click_whatsapp',{'event_category':'funnel','event_label':'inscription'});
+});
+</script>
 <footer><div class="ft"><div><span class="fl2">Auryel</span><p class="ftag">10 conseillers disponibles<br>24h/24 pour vous guider.</p><p class="fdesc">Voyance &middot; Coaching &middot; Spiritualite</p></div><div><span class="fct">Navigation</span><ul class="fli"><li><a href="index.html">Accueil</a></li><li><a href="conseillers.html">Conseillers</a></li><li><a href="comment-ca-marche.html">Comment ca marche</a></li><li><a href="tarifs.html">Tarifs</a></li><li><a href="blog.html">Blog</a></li><li><a href="recrutement.html">Recrutement</a></li></ul></div><div><span class="fct">Legal</span><ul class="fli"><li><a href="mentions-legales.html">Mentions legales</a></li><li><a href="cgu.html">CGU</a></li><li><a href="cgv.html">CGV</a></li><li><a href="confidentialite.html">Confidentialite</a></li><li><a href="cookies.html">Cookies</a></li></ul></div><div><span class="fct">Contact</span><ul class="fli"><li><a href="mailto:contact@auryelvoyance.com">contact@auryelvoyance.com</a></li></ul></div></div><div class="fb2"><div class="fcp">&copy; 2026 Auryel Inc. Tous droits reserves.</div><div class="fdi"><a href="mentions-legales.html" style="color:var(--cd);opacity:.5;font-size:10px;letter-spacing:.05em;text-decoration:none">Mentions légales &amp; avertissement</a></div></div></footer><script>var cur=document.getElementById("cur");if(cur)document.addEventListener("mousemove",function(e){cur.style.left=e.clientX+"px";cur.style.top=e.clientY+"px"});window.addEventListener("scroll",function(){var n=document.getElementById("nav");if(n)n.classList.toggle("sc",window.scrollY>60)});function initReveal(){var io=new IntersectionObserver(function(e){e.forEach(function(x){if(x.isIntersecting){x.target.style.transition="opacity .7s ease,transform .7s ease";x.target.style.opacity="1";x.target.style.transform="translateY(0)"}})},{threshold:.06});document.querySelectorAll(".reveal").forEach(function(el){el.style.opacity="0";el.style.transform="translateY(24px)";io.observe(el)})}document.addEventListener("DOMContentLoaded",initReveal);</script>
 <script>
 gsap.registerPlugin(ScrollTrigger);

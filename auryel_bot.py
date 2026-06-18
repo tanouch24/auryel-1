@@ -345,6 +345,13 @@ def log_admin_action(action, phone, detail=""):
     except Exception as e:
         print(f"[admin_logs] erreur : {e}")
 
+def _phone_hash(phone):
+    return hashlib.sha256((phone or "").encode()).hexdigest()[:8]
+
+def log_event(event_type, **kwargs):
+    parts = [f"type={event_type}"] + [f"{k}={v}" for k, v in kwargs.items()]
+    print("[EVENT] " + " ".join(parts))
+
 def get_history(phone, limit=20):
     conn = get_conn()
     c = conn.cursor()
@@ -1637,6 +1644,8 @@ def gerer_onboarding(phone, user, user_message):
             onboarding_step=""
         )
         enregistrer_echange_onboarding(phone, user, user_message, reply)
+        log_event("onboarding_done", phone_hash=_phone_hash(phone),
+                  guide=user.get("guide", ""), ts=datetime.utcnow().isoformat())
         return reply
 
     update_user_silent(phone, onboarding_step="prenom")
@@ -2046,7 +2055,7 @@ Dis-moi — comment tu t'appelles ? 🌙"""
             c.execute("UPDATE users SET abonne=%s, etat=%s WHERE stripe_customer_id=%s",
                      (False, "pause", cus_id))
             conn.commit(); conn.close()
-            print(f"[webhook] subscription.deleted → {cus_id} bloqué")
+            log_event("abonnement_annule", stripe_customer=cus_id, ts=datetime.utcnow().isoformat())
 
     # ── 4. Paiement réussi ────────────────────────────────
     elif etype == "invoice.payment_succeeded":
@@ -2057,7 +2066,8 @@ Dis-moi — comment tu t'appelles ? 🌙"""
             c.execute("UPDATE users SET abonne=%s, etat=%s WHERE stripe_customer_id=%s",
                      (True, "normal", cus_id))
             conn.commit(); conn.close()
-            print(f"[webhook] invoice.payment_succeeded → {cus_id} actif")
+            log_event("paiement_reussi", stripe_customer=cus_id,
+                      montant_cts=invoice.get("amount_paid", 0), ts=datetime.utcnow().isoformat())
 
     # ── 5. Paiement échoué ────────────────────────────────
     elif etype == "invoice.payment_failed":
@@ -2322,7 +2332,8 @@ def cron_daily():
                     dernier_relance_abonne_at=datetime.now().isoformat(),
                     relance_abonne_count=count + 1)
                 relances_abonnes += 1
-                print(f"[cron] Relance abonné {count+1}/{MAX_RELANCES} → {phone}")
+                log_event("relance_envoyee", phone_hash=_phone_hash(phone),
+                          type_relance="relance_abonne", numero=count+1, canal="whatsapp")
                 time.sleep(1)
             elif absence < 1 and count > 0:
                 # L'abonné a réécrit → reset compteur pour le prochain cycle d'absence
@@ -2344,7 +2355,8 @@ def cron_daily():
                 update_user_silent(phone,
                     relance_hebdo_envoyee=True,
                     derniere_relance_hebdo_at=datetime.now().isoformat())
-                print(f"[cron] Relance douce longue absence → {phone}")
+                log_event("relance_envoyee", phone_hash=_phone_hash(phone),
+                          type_relance="longue_absence", canal="whatsapp")
                 time.sleep(1)
                 continue
 
@@ -2356,7 +2368,8 @@ def cron_daily():
                 update_user_silent(phone,
                     relance_hebdo_envoyee=True,
                     derniere_relance_hebdo_at=datetime.now().isoformat())
-                print(f"[cron] Rituel hebdo optionnel → {phone}")
+                log_event("relance_envoyee", phone_hash=_phone_hash(phone),
+                          type_relance="rituel_hebdo", canal="whatsapp")
                 time.sleep(1)
                 continue
 
@@ -2385,6 +2398,8 @@ def cron_daily():
                 if user.get("email"):
                     send_email_j6(user["email"], prenom, links)
                 update_user_silent(phone, relance_j6_envoyee=True, etat="attente_paiement")
+                log_event("relance_envoyee", phone_hash=_phone_hash(phone),
+                          type_relance="j2", canal="whatsapp")
                 j6 += 1
             time.sleep(1)
 
@@ -2399,6 +2414,8 @@ def cron_daily():
                     sent = send_template_message(phone, "auryel_relance_j3", [prenom or "Bonjour", nom])
                     if sent:
                         add_message(phone, "assistant", f"[template:auryel_relance_j3] {{1}}={prenom or 'Bonjour'} {{2}}={nom}")
+                        log_event("relance_envoyee", phone_hash=_phone_hash(phone),
+                                  type_relance="j3", canal="whatsapp")
                     if user.get("email"):
                         send_email_relance(user["email"], prenom, links)
                 else:
