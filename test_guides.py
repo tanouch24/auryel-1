@@ -16,6 +16,9 @@ os.environ.setdefault("WHATSAPP_TOKEN", "test")
 os.environ.setdefault("PHONE_NUMBER_ID", "test")
 os.environ.setdefault("GROQ_API_KEY", "test")
 os.environ.setdefault("RESEND_API_KEY", "test")
+os.environ.setdefault("META_APP_SECRET", "test")
+os.environ.setdefault("DAILY_SECRET", "test")
+os.environ.setdefault("SEO_SECRET", "test")
 
 from datetime import datetime
 import hmac as hmac_mod
