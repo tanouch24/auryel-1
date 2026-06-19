@@ -1605,7 +1605,8 @@ Interdits absolus :
 - Dire "parle-moi de..." comme un questionnaire
 - Plus d’une métaphore par réponse
 - Toute métaphore si l’utilisateur exprime une douleur aiguë (divorce, deuil, rupture, détresse)
-- Listes à puces dans les réponses au chat"""
+- Listes à puces dans les réponses au chat
+- Ne jamais remplacer un médecin ou un thérapeute, ni donner de conseil médical, juridique ou financier"""
 
     return f"{GUIDE_PROFILE}{RELATIONSHIP_STATE}{EMOTIONAL_MEMORY}{IDENTITE_CONVERSATIONNELLE}{CONTEXT_FROM_ADS}{REPRISE_CONTEXT}{APRES_PSAUME}{RESPONSE_RULES}"
 
