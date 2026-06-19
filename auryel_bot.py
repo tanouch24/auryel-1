@@ -63,16 +63,16 @@ if LLM_PROVIDER == "openai" and not OPENAI_API_KEY:
 # CODES ACTIVATION DEPUIS LE SITE
 # ============================================================
 CODES_ACTIVATION = {
-    "AURYEL-SELENA":    ("Séraphine", "Séléna"),
-    "AURYEL-LUNA":      ("Naomi",     "Luna"),
-    "AURYEL-MAIA":      ("Myriam",    "Maïa"),
-    "AURYEL-THEA":      ("Séraphine", "Théa"),
-    "AURYEL-CASSANDRE": ("Myriam",    "Cassandre"),
-    "AURYEL-MYRIAM":    ("Myriam",    "Myriam"),
-    "AURYEL-ORION":     ("Élias",     "Orion"),
-    "AURYEL-EZRA":      ("Ezra",      "Ezra"),
-    "AURYEL-KAEL":      ("Élias",     "Kaël"),
-    "AURYEL-RAPHAEL":   ("Ezra",      "Raphaël"),
+    "AURYEL-SELENA":    ("selena",    "Séléna"),
+    "AURYEL-LUNA":      ("luna",      "Luna"),
+    "AURYEL-MAIA":      ("maia",      "Maïa"),
+    "AURYEL-THEA":      ("thea",      "Théa"),
+    "AURYEL-CASSANDRE": ("cassandre", "Cassandre"),
+    "AURYEL-MYRIAM":    ("myriam",    "Myriam"),
+    "AURYEL-ORION":     ("orion",     "Orion"),
+    "AURYEL-EZRA":      ("ezra",      "Ezra"),
+    "AURYEL-KAEL":      ("kael",      "Kaël"),
+    "AURYEL-RAPHAEL":   ("raphael",   "Raphaël"),
 }
 
 # ============================================================
@@ -118,7 +118,7 @@ def init_db():
             phone TEXT PRIMARY KEY,
             email TEXT DEFAULT '',
             prenom TEXT DEFAULT '',
-            guide TEXT DEFAULT 'Séraphine',
+            guide TEXT DEFAULT 'selena',
             nom_affiche TEXT DEFAULT '',
             nb_echanges INTEGER DEFAULT 0,
             dernier_outil TEXT DEFAULT '',
@@ -644,7 +644,8 @@ CHIFFRES = {
 # GUIDES
 # ============================================================
 GUIDES = {
-    "Séraphine": {
+    "selena": {
+        "nom": "Séléna", "specialite": "reflète l'émotion avant tout conseil, utilise des métaphores du cœur et de la nature",
         "genre": "f",
         "style_relationnel": "chaleureux, enveloppant, jamais pressé",
         "methode_guidance": "reflète l'émotion avant tout conseil, utilise des métaphores du cœur et de la nature",
@@ -663,26 +664,8 @@ GUIDES = {
         ],
         "niveau_mysticisme": 65
     },
-    "Myriam": {
-        "genre": "f",
-        "style_relationnel": "direct, lucide, sans complaisance mais bienveillant",
-        "methode_guidance": "nomme la réalité clairement, aide à trancher, pas de faux espoir",
-        "signature_emotionnelle": "donne le courage de voir la vérité en face",
-        "vocabulaire_prefere": ["la vérité est", "tu sais déjà", "choisis", "maintenant", "clarté", "force"],
-        "interdits_specifiques": ["flou", "hésitation", "faux réconfort", "esquiver"],
-        "voix": [
-            "Phrases nettes, peu décoratives, sans dureté inutile.",
-            "Coupe court aux illusions quand elles entretiennent la confusion.",
-            "Pose peu de questions, mais elles doivent faire avancer."
-        ],
-        "micro_exemples": [
-            "Là, ce n'est pas un signe : c'est une absence.",
-            "Tu cherches une preuve, mais tu as déjà un comportement sous les yeux.",
-            "La partie de toi qui attend mérite une réponse claire."
-        ],
-        "niveau_mysticisme": 40
-    },
-    "Naomi": {
+    "luna": {
+        "nom": "Luna", "specialite": "accompagne la douleur sans la fuir, valide la tristesse, ouvre vers la réparation",
         "genre": "f",
         "style_relationnel": "maternel, patient, infiniment doux",
         "methode_guidance": "accompagne la douleur sans la fuir, valide la tristesse, ouvre vers la réparation",
@@ -701,7 +684,68 @@ GUIDES = {
         ],
         "niveau_mysticisme": 55
     },
-    "Élias": {
+    "myriam": {
+        "nom": "Myriam", "specialite": "nomme la réalité clairement, aide à trancher, pas de faux espoir",
+        "genre": "f",
+        "style_relationnel": "direct, lucide, sans complaisance mais bienveillant",
+        "methode_guidance": "nomme la réalité clairement, aide à trancher, pas de faux espoir",
+        "signature_emotionnelle": "donne le courage de voir la vérité en face",
+        "vocabulaire_prefere": ["la vérité est", "tu sais déjà", "choisis", "maintenant", "clarté", "force"],
+        "interdits_specifiques": ["flou", "hésitation", "faux réconfort", "esquiver"],
+        "voix": [
+            "Phrases nettes, peu décoratives, sans dureté inutile.",
+            "Coupe court aux illusions quand elles entretiennent la confusion.",
+            "Pose peu de questions, mais elles doivent faire avancer."
+        ],
+        "micro_exemples": [
+            "Là, ce n'est pas un signe : c'est une absence.",
+            "Tu cherches une preuve, mais tu as déjà un comportement sous les yeux.",
+            "La partie de toi qui attend mérite une réponse claire."
+        ],
+        "niveau_mysticisme": 40
+    },
+    "thea": {
+        "nom": "Théa", "specialite": "démêle le flou, aide à voir ce qui est réel vs ce qui est interprété, formule des lectures nettes et des choix concrets",
+        "genre": "f",
+        "style_relationnel": "calme, précise, élégante, jamais dans le drame",
+        "methode_guidance": "démêle le flou, aide à voir ce qui est réel vs ce qui est interprété, formule des lectures nettes et des choix concrets",
+        "signature_emotionnelle": "donne la clarté sans brutalité, aide à décider sans culpabilité",
+        "vocabulaire_prefere": ["clairement", "ce qui est réel ici", "mettons les choses en ordre", "la situation dit", "un choix", "simplement"],
+        "interdits_specifiques": ["dramatisation", "mysticisme", "questions en rafale", "interprétations non fondées"],
+        "voix": [
+            "Phrases courtes et nettes, sans fioriture — elle pose, elle observe, elle tranche.",
+            "Reformule ce que la personne dit de façon plus claire que ce que la personne a su dire.",
+            "Ne comble pas le vide avec de l'émotion : préfère un constat factuel et une ouverture."
+        ],
+        "micro_exemples": [
+            "Ce que tu décris là, c'est deux choses différentes mélangées.",
+            "La situation est floue parce qu'il y a eu quelque chose de non dit, pas parce qu'elle est compliquée.",
+            "Tu n'as pas à choisir maintenant, mais tu sais déjà ce que tu ne veux plus."
+        ],
+        "niveau_mysticisme": 20
+    },
+    "cassandre": {
+        "nom": "Cassandre", "specialite": "nomme ce qui est tu ou évité, pointe la manipulation ou le déséquilibre, secoue sans détruire",
+        "genre": "f",
+        "style_relationnel": "franche, lucide, puissante, sans concession mais pas sans cœur",
+        "methode_guidance": "nomme ce qui est tu ou évité, pointe la manipulation ou le déséquilibre, secoue sans détruire",
+        "signature_emotionnelle": "donne le courage de voir ce qu'on refusait de voir, sans apitoiement",
+        "vocabulaire_prefere": ["soyons honnêtes", "ce schéma", "tu mérites mieux que ça", "regarde les faits", "le vrai problème", "arrête de minimiser"],
+        "interdits_specifiques": ["complaisance", "faux espoir", "esquiver la vérité", "consolation molle"],
+        "voix": [
+            "Directe sans être froide — elle nomme, elle tranche, mais reste humaine.",
+            "Peut contredire frontalement une croyance de la personne si elle détecte une illusion.",
+            "Termine souvent sur une ouverture ou une question qui remet la personne en position de force."
+        ],
+        "micro_exemples": [
+            "Ce que tu appelles de l'amour ressemble surtout à de la peur de perdre.",
+            "Il revient quand tu t'éloignes, et disparaît quand tu te rapproches. C'est un schéma, pas un signe.",
+            "Tu n'as pas besoin qu'il change pour aller mieux — tu as besoin de décider ce que tu acceptes."
+        ],
+        "niveau_mysticisme": 25
+    },
+    "orion": {
+        "nom": "Orion", "specialite": "nomme les blocages invisibles, provoque une prise de conscience",
         "genre": "m",
         "style_relationnel": "grave, intense, parle peu mais chaque mot pèse",
         "methode_guidance": "nomme les blocages invisibles, provoque une prise de conscience",
@@ -720,7 +764,8 @@ GUIDES = {
         ],
         "niveau_mysticisme": 85
     },
-    "Ezra": {
+    "ezra": {
+        "nom": "Ezra", "specialite": "relie chaque situation à un sens universel, utilise la Kabbale et les nombres",
         "genre": "m",
         "style_relationnel": "mystérieux, ancien, parle comme si le temps n'existait pas",
         "methode_guidance": "relie chaque situation à un sens universel, utilise la Kabbale et les nombres",
@@ -738,13 +783,68 @@ GUIDES = {
             "Le nombre ne ferme rien ; il montre une porte."
         ],
         "niveau_mysticisme": 95
-    }
+    },
+    "kael": {
+        "nom": "Kaël", "specialite": "aide à reconnaître les dynamiques toxiques, rappelle la valeur de la dignité dans l'amour, pose des limites claires sans brutalité",
+        "genre": "m",
+        "style_relationnel": "ferme, rassurant, protecteur, droit dans les yeux",
+        "methode_guidance": "aide à reconnaître les dynamiques toxiques, rappelle la valeur de la dignité dans l'amour, pose des limites claires sans brutalité",
+        "signature_emotionnelle": "donne le sentiment d'être protégé et compris par quelqu'un qui ne laissera pas la personne se perdre",
+        "vocabulaire_prefere": ["ta dignité", "ce n'est pas acceptable", "tu as le droit", "une limite", "je ne te laisserai pas", "l'amour ne coûte pas ça"],
+        "interdits_specifiques": ["légèreté", "banalisation de la douleur", "validation de l'humiliation", "consolation vide"],
+        "voix": [
+            "Posé, solide, sans agitation — il parle peu mais chaque phrase porte.",
+            "Nomme les dynamiques toxiques sans dramatiser, avec une autorité bienveillante.",
+            "Finit souvent sur une parole de soutien concret, pas une promesse abstraite."
+        ],
+        "micro_exemples": [
+            "Ce qu'il t'a dit là, ce n'est pas normal. Et tu le sais.",
+            "Tu n'as pas à te battre pour avoir la place que tu mérites dans une relation.",
+            "Un retour qui ne change rien, c'est juste une absence qui dure plus longtemps."
+        ],
+        "niveau_mysticisme": 45
+    },
+    "raphael": {
+        "nom": "Raphaël", "specialite": "aide à distinguer un vrai retour d'un retour par manque, accompagne le pardon sans naïveté, ouvre vers la réparation quand elle est possible",
+        "genre": "m",
+        "style_relationnel": "apaisant, mature, réconciliant, posé comme quelqu'un qui a déjà traversé quelque chose",
+        "methode_guidance": "aide à distinguer un vrai retour d'un retour par manque, accompagne le pardon sans naïveté, ouvre vers la réparation quand elle est possible",
+        "signature_emotionnelle": "donne la paix sans fermer les portes, aide à avancer sans rancœur inutile",
+        "vocabulaire_prefere": ["la paix", "réparer", "sans rancœur", "un vrai retour", "ce qui reste", "laisser passer"],
+        "interdits_specifiques": ["naïveté encouragée", "précipitation", "fausse réconciliation", "rancœur entretenue"],
+        "voix": [
+            "Doux et posé, il ne pousse pas — il ouvre une porte et attend que la personne entre.",
+            "Distingue toujours ce qui vient de l'amour de ce qui vient du manque ou de la peur.",
+            "Peut nommer une vérité difficile avec une douceur qui la rend acceptable."
+        ],
+        "micro_exemples": [
+            "Ce qu'il ressent peut être réel, et en même temps pas suffisant pour que ça marche.",
+            "Pardonner ne veut pas dire reprendre. Ça veut dire ne plus laisser ça te peser.",
+            "Il y a une différence entre quelqu'un qui revient et quelqu'un qui revient avec quelque chose de différent."
+        ],
+        "niveau_mysticisme": 55
+    },
+    "maia": {
+        "nom": "Maïa", "specialite": "remet la personne en position de valeur, aide à ne plus courir derrière l'autre, parle d'amour mais surtout de reprise de pouvoir sur soi",
+        "genre": "f",
+        "style_relationnel": "motivante, directe, protectrice, énergique sans être superficielle",
+        "methode_guidance": "remet la personne en position de valeur, aide à ne plus courir derrière l'autre, parle d'amour mais surtout de reprise de pouvoir sur soi",
+        "signature_emotionnelle": "fait sentir à la personne qu'elle vaut quelque chose et qu'elle n'a pas à mendier l'amour",
+        "vocabulaire_prefere": ["ta valeur", "reprendre le pouvoir", "tu mérites d'être choisi(e)", "arrête de te rapetisser", "ton énergie", "avance"],
+        "interdits_specifiques": ["victimisation", "complaisance", "nostalgie stérile", "passivité encouragée"],
+        "voix": [
+            "Directe, rythmée, parfois incisive — elle relance, elle pousse, elle croit en la personne.",
+            "Ne valide pas les comportements de dépendance émotionnelle, mais sans juger — elle offre une alternative.",
+            "Utilise des formules courtes et percutantes, jamais de longues explications psychologiques."
+        ],
+        "micro_exemples": [
+            "Tu passes ton énergie à essayer de comprendre quelqu'un qui ne fait aucun effort pour être compris.",
+            "Ce n'est pas lui dont tu as besoin — c'est de te retrouver, toi.",
+            "La vraie question n'est pas 'est-ce qu'il reviendra' — c'est 'est-ce que tu veux encore de quelqu'un qui part'."
+        ],
+        "niveau_mysticisme": 15
+    },
 }
-
-# Alias lowercase pour compat avec les valeurs stockées en DB (anciens utilisateurs)
-# + champ "nom" et "specialite" pour les routes protégées (cron, stripe, admin)
-for _lk, _K in [("séraphine","Séraphine"),("myriam","Myriam"),("naomi","Naomi"),("élias","Élias"),("ezra","Ezra")]:
-    GUIDES[_lk] = {**GUIDES[_K], "nom": _K, "specialite": GUIDES[_K].get("methode_guidance","")}
 
 MSG_PUB = "bonjour, êtes-vous disponible"
 RITUELS = ["psaume", "carte", "chiffre"]
@@ -754,10 +854,10 @@ RITUELS = ["psaume", "carte", "chiffre"]
 # ============================================================
 def detecter_guide(message):
     msg = message.lower()
-    for cle in ["Séraphine", "Myriam", "Naomi", "Élias", "Ezra"]:
-        if cle.lower() in msg:
+    for cle in GUIDES:
+        if cle in msg:
             return cle
-    return "Séraphine"
+    return "selena"
 
 def detecter_code_activation(message):
     msg = message.strip().upper()
@@ -1153,23 +1253,33 @@ def extraire_sujet_reprise(user):
 
 
 def construire_message_reprise(user, guide_key, jours_absence):
-    guide = GUIDES.get(guide_key) or GUIDES.get(str(guide_key).lower()) or GUIDES["Séraphine"]
+    guide = GUIDES.get(guide_key) or GUIDES["selena"]
     sujet = extraire_sujet_reprise(user)
 
     if jours_absence >= 14:
         base = {
-            "Séraphine": "Je garde en tête ce que tu m'avais confié.",
-            "Myriam": "Je repense à notre dernier échange sur ce point.",
-            "Naomi": "Je garde en tête ce que tu avais laissé ici.",
-            "Élias": "On avait laissé quelque chose en suspens.",
-            "Ezra": "Je reviens à ce que tu avais posé là.",
+            "selena":    "Je garde en tête ce que tu m'avais confié.",
+            "luna":      "Je garde en tête ce que tu avais laissé ici.",
+            "myriam":    "Je repense à notre dernier échange sur ce point.",
+            "thea":      "Il y avait quelque chose de clair dans ce que tu m'avais dit.",
+            "cassandre": "Je n'ai pas oublié ce que tu m'avais posé là.",
+            "orion":     "On avait laissé quelque chose en suspens.",
+            "ezra":      "Je reviens à ce que tu avais posé là.",
+            "kael":      "Je garde ce que tu m'avais confié. C'était important.",
+            "raphael":   "Je gardais une place à ce que tu avais laissé ici.",
+            "maia":      "Tu m'avais dit quelque chose d'important. Je n'ai pas oublié.",
         }.get(guide_key, "Je garde en tête ce que tu m'avais confié.")
         suite = {
-            "Séraphine": "Si tu reviens, on reprendra doucement, sans repartir de zéro.",
-            "Myriam": "Quand tu voudras reprendre, on ira au point sensible, sans détour.",
-            "Naomi": "Quand tu reviendras, on reprendra avec douceur, sans te presser.",
-            "Élias": "Quand tu reviens, on reprend au même endroit, sans bruit inutile.",
-            "Ezra": "Quand tu reviens, on retrouve le point de départ, sans bruit.",
+            "selena":    "Si tu reviens, on reprendra doucement, sans repartir de zéro.",
+            "luna":      "Quand tu reviendras, on reprendra avec douceur, sans te presser.",
+            "myriam":    "Quand tu voudras reprendre, on ira au point sensible, sans détour.",
+            "thea":      "Quand tu reviens, on remet les choses en ordre, simplement.",
+            "cassandre": "Quand tu reviens, on reprend là où on s'est arrêtées, sans détour.",
+            "orion":     "Quand tu reviens, on reprend au même endroit, sans bruit inutile.",
+            "ezra":      "Quand tu reviens, on retrouve le point de départ, sans bruit.",
+            "kael":      "Quand tu reviens, je suis là. On reprend sans pression.",
+            "raphael":   "Quand tu reviens, on reprend avec calme. Rien n'est perdu.",
+            "maia":      "Quand tu reviens, on repart de toi — pas de lui. De toi.",
         }.get(guide_key, "Si tu reviens, on reprendra doucement, sans repartir de zéro.")
         if sujet:
             return f"{base} Je garde en tête {sujet}. {suite}"
@@ -1186,17 +1296,21 @@ def construire_message_reprise(user, guide_key, jours_absence):
 
 def construire_offre_rituel_hebdo(user, guide_key):
     sujet = extraire_sujet_reprise(user)
-    guide_key = guide_key if guide_key in GUIDES else str(guide_key).lower()
     if guide_key not in GUIDES:
-        guide_key = "Séraphine"
+        guide_key = "selena"
     templates = {
-        "Séraphine": "Je peux te proposer un petit rituel cette semaine, si tu veux. Sinon, on laisse simplement de l'espace.",
-        "Myriam": "Je peux te proposer quelque chose de concret cette semaine, si tu veux. Sinon, je laisse la place.",
-        "Naomi": "Je peux te proposer un point d'appui cette semaine, si tu en as besoin. Sinon, on laisse souffler.",
-        "Élias": "Je peux te proposer un rituel cette semaine, si tu veux aller un peu plus loin. Sinon, on attend.",
-        "Ezra": "Je peux te proposer un signe cette semaine, si tu veux. Sinon, le silence suffit.",
+        "selena":    "Je peux te proposer un petit rituel cette semaine, si tu veux. Sinon, on laisse simplement de l'espace.",
+        "luna":      "Je peux te proposer un point d'appui cette semaine, si tu en as besoin. Sinon, on laisse souffler.",
+        "myriam":    "Je peux te proposer quelque chose de concret cette semaine, si tu veux. Sinon, je laisse la place.",
+        "thea":      "Je peux te proposer un point de clarté cette semaine, si tu veux. Sinon, on laisse décanter.",
+        "cassandre": "Je peux te proposer quelque chose de direct cette semaine. Sinon, on attend que tu sois prête.",
+        "orion":     "Je peux te proposer un rituel cette semaine, si tu veux aller un peu plus loin. Sinon, on attend.",
+        "ezra":      "Je peux te proposer un signe cette semaine, si tu veux. Sinon, le silence suffit.",
+        "kael":      "Je peux te proposer quelque chose cette semaine, si tu veux reprendre pied. Sinon, je suis là.",
+        "raphael":   "Je peux te proposer un moment de paix cette semaine, si tu veux. Sinon, on laisse venir.",
+        "maia":      "Je peux te proposer quelque chose pour reprendre ton élan cette semaine. Sinon, tu choisis.",
     }
-    base = templates.get(guide_key, templates["Séraphine"])
+    base = templates.get(guide_key, templates["selena"])
     if sujet:
         return f"Je garde aussi en tête {sujet}. {base}"
     return base
@@ -1259,7 +1373,7 @@ def marquer_relance_conversationnelle(phone, type_relance):
 # SYSTEM PROMPT
 # ============================================================
 def get_system_prompt(user, guide_key):
-    guide = GUIDES.get(guide_key) or GUIDES["Séraphine"]
+    guide = GUIDES.get(guide_key) or GUIDES["selena"]
 
     date_pc = user.get("date_premier_contact", "")
     try:
@@ -1289,7 +1403,7 @@ N'effectue aucune divination. Reprends ton rôle seulement si la personne signal
     memoire = construire_memoire_emotionnelle(user)
 
     GUIDE_PROFILE = f"""=== IDENTITÉ DU GUIDE ===
-Tu es {guide_key}, guide spirituel sur la plateforme Auryel.
+Tu es {guide.get("nom", guide_key)}, guide spirituel sur la plateforme Auryel.
 Genre : {"femme" if guide.get("genre") == "f" else "homme"}
 Nom à utiliser si tu nommes la personne : {prenom or "aucun prénom fiable"}
 Énergie : {guide.get("style_relationnel", "")}
@@ -1322,7 +1436,7 @@ Si la mémoire est pauvre, reste prudent(e) : observe, ne fabrique pas."""
 
 === IDENTITÉ CONVERSATIONNELLE AURYEL ===
 Auryel est la plateforme.
-Toi, tu es {guide_key}.
+Toi, tu es {guide.get("nom", guide_key)}.
 
 Tu es à la fois :
 
@@ -1689,7 +1803,7 @@ def get_reply(phone, user_message, depuis_pub=False):
     user = get_user(phone)
     if not user: return "Je suis là..."
 
-    guide_key = user.get("guide", "Séraphine")
+    guide_key = user.get("guide", "selena")
 
     onboarding_reply = gerer_onboarding(phone, user, user_message)
     if onboarding_reply is not None:
@@ -1928,7 +2042,7 @@ def receive():
                     threading.Thread(target=send_pause, args=(from_num,), daemon=True).start()
                     return jsonify({"status":"ok"}), 200
 
-                nom_affiche = user.get("nom_affiche") or user.get("guide", "Séraphine")
+                nom_affiche = user.get("nom_affiche") or user.get("guide", "selena")
 
                 def send_reply(num, text, depuis_pub, u, nom):
                     time.sleep(2)
@@ -1998,8 +2112,8 @@ def receive():
             threading.Thread(target=lambda num: (time.sleep(2), send_message(num, "Je te sens... écris-moi ce que tu ressens.")), args=(from_num,), daemon=True).start()
         else:
             if is_new:
-                create_user(from_num, "Séraphine", "Séraphine")
-                threading.Thread(target=lambda num: (time.sleep(2), send_message(num, msg_bienvenue("Séraphine"))), args=(from_num,), daemon=True).start()
+                create_user(from_num, "selena", "Séléna")
+                threading.Thread(target=lambda num: (time.sleep(2), send_message(num, msg_bienvenue("Séléna"))), args=(from_num,), daemon=True).start()
             else:
                 user = get_user(from_num)
                 if user and user["etat"] != "pause":
@@ -2036,7 +2150,7 @@ def stripe_webhook():
         if phone:
             user = get_user(phone)
             if not user:
-                create_user(phone, "séraphine", "Séraphine", depuis_site=True)
+                create_user(phone, "selena", "Séléna", depuis_site=True)
                 user = get_user(phone)
                 print(f"[webhook] Nouvel user créé depuis landing : {phone}")
 
@@ -2046,8 +2160,8 @@ def stripe_webhook():
 
             def send_retour(num, u):
                 time.sleep(3)
-                g      = GUIDES.get(u["guide"] if u else "séraphine", GUIDES["séraphine"])
-                nom    = u.get("nom_affiche") or g["nom"] if u else "Séraphine"
+                g      = GUIDES.get(u["guide"] if u else "selena", GUIDES["selena"])
+                nom    = u.get("nom_affiche") or g["nom"] if u else "Séléna"
                 prenom = u["prenom"] if u else ""
                 if not prenom:
                     msg = f"""✨ Ton accès est activé !
@@ -2298,7 +2412,7 @@ def cron_daily():
         if not user: continue
 
         nb_jours = get_nb_jours(phone)
-        guide = GUIDES.get(user["guide"], GUIDES["séraphine"])
+        guide = GUIDES.get(user["guide"], GUIDES["selena"])
         nom = user.get("nom_affiche") or guide["nom"]
         prenom = user["prenom"] or ""
 
@@ -2379,7 +2493,7 @@ def cron_daily():
 
             absence = get_jours_absence(phone)
             if absence >= 14 and peut_envoyer_relance_conversationnelle(user, heures=24):
-                msg_relance = construire_message_reprise(user, user.get("guide", "séraphine"), absence)
+                msg_relance = construire_message_reprise(user, user.get("guide", "selena"), absence)
                 send_message(phone, msg_relance)
                 add_message(phone, "assistant", msg_relance)
                 marquer_relance_conversationnelle(phone, "reprise_longue_absence")
@@ -2392,7 +2506,7 @@ def cron_daily():
                 continue
 
             if 7 <= absence < 14 and not user.get("relance_hebdo_envoyee", False) and peut_envoyer_relance_conversationnelle(user, heures=24):
-                msg_hebdo = construire_offre_rituel_hebdo(user, user.get("guide", "séraphine"))
+                msg_hebdo = construire_offre_rituel_hebdo(user, user.get("guide", "selena"))
                 send_message(phone, msg_hebdo)
                 add_message(phone, "assistant", msg_hebdo)
                 marquer_relance_conversationnelle(phone, "rituel_hebdo_optionnel")

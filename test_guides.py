@@ -42,8 +42,8 @@ USER_BASE = {
     "derniere_intention": "",
     "depuis_site": True,
     "abonne": True,
-    "guide": "Séraphine",
-    "nom_affiche": "Séraphine",
+    "guide": "selena",
+    "nom_affiche": "Séléna",
     "email": "",
     "etat": "normal",
 }
@@ -55,11 +55,11 @@ USER_CRISE = {
 }
 
 print("=" * 60)
-print("TEST — 5 GUIDES")
+print("TEST — 10 GUIDES")
 print("=" * 60)
 
 prompts = {}
-for guide in ["Séraphine", "Myriam", "Naomi", "Élias", "Ezra"]:
+for guide in ["selena", "luna", "myriam", "thea", "cassandre", "orion", "ezra", "kael", "raphael", "maia"]:
     user = {**USER_BASE, "guide": guide}
     prompt = get_system_prompt(user, guide)
     prompts[guide] = prompt
@@ -71,7 +71,7 @@ for guide in ["Séraphine", "Myriam", "Naomi", "Élias", "Ezra"]:
 print("\n" + "=" * 60)
 print("TEST SÉCURITÉ — cas suicide")
 print("=" * 60)
-prompt_crise = get_system_prompt(USER_CRISE, "Séraphine")
+prompt_crise = get_system_prompt(USER_CRISE, "selena")
 print(prompt_crise)
 
 print("\n" + "=" * 60)
