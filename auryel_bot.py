@@ -43,7 +43,6 @@ _missing_env = [v for v in _REQUIRED_ENV if not os.environ.get(v)]
 if _missing_env:
     raise RuntimeError(f"Variables manquantes : {', '.join(_missing_env)}")
 
-
 PRICES = {
     "mensuel": "price_1TiaigFbuWJZYdVOepK7JtKw",
     "annuel":  "price_1TiajJFbuWJZYdVOBb4csDgC",
@@ -51,9 +50,14 @@ PRICES = {
 
 stripe.api_key = STRIPE_SK
 groq_client = Groq(api_key=GROQ_API_KEY)
-LLM_PROVIDER = os.environ.get("LLM_PROVIDER", "openrouter").strip().lower()
+LLM_PROVIDER       = os.environ.get("LLM_PROVIDER", "openai").strip().lower()
+OPENAI_API_KEY     = os.environ.get("OPENAI_API_KEY", "")
+OPENAI_MODEL       = os.environ.get("OPENAI_MODEL", "gpt-4o")
 OPENROUTER_API_KEY = os.environ.get("OPENROUTER_API_KEY", "")
-OPENROUTER_MODEL = os.environ.get("OPENROUTER_MODEL", "google/gemini-2.5-flash")
+OPENROUTER_MODEL   = os.environ.get("OPENROUTER_MODEL", "google/gemini-2.5-flash")
+
+if LLM_PROVIDER == "openai" and not OPENAI_API_KEY:
+    print("[WARNING] LLM_PROVIDER=openai mais OPENAI_API_KEY est vide — fallback openrouter/groq sera utilisé")
 
 # ============================================================
 # CODES ACTIVATION DEPUIS LE SITE
@@ -1501,45 +1505,69 @@ def tronquer_reponse(texte):
 
 
 def call_llm(messages, temperature=0.85, max_tokens=220):
-    provider = LLM_PROVIDER or "openrouter"
-    if provider == "openrouter":
-        model = OPENROUTER_MODEL or "google/gemini-2.5-flash"
-        print(f"[llm] provider=openrouter model={model}")
-        try:
-            if not OPENROUTER_API_KEY:
-                raise RuntimeError("OPENROUTER_API_KEY manquant")
-            response = requests.post(
-                "https://openrouter.ai/api/v1/chat/completions",
-                headers={
-                    "Authorization": f"Bearer {OPENROUTER_API_KEY}",
-                    "Content-Type": "application/json",
-                    "HTTP-Referer": SITE_URL,
-                    "X-Title": "Auryel",
-                },
-                json={
-                    "model": model,
-                    "messages": messages,
-                    "temperature": temperature,
-                    "max_tokens": max_tokens,
-                },
-                timeout=45,
-            )
-            response.raise_for_status()
-            data = response.json()
-            content = data["choices"][0]["message"]["content"]
-            if content:
-                return content
-            raise RuntimeError("OpenRouter response vide")
-        except Exception as e:
-            print(f"[llm] fallback=groq ({e})")
+    provider = LLM_PROVIDER or "openai"
+    # Chaîne de fallback : provider configuré → openrouter (si différent) → groq en dernier
+    chain = [provider]
+    if "openrouter" not in chain:
+        chain.append("openrouter")
+    if "groq" not in chain:
+        chain.append("groq")
 
-    response = groq_client.chat.completions.create(
-        model="llama-3.3-70b-versatile",
-        messages=messages,
-        max_tokens=max_tokens,
-        temperature=temperature,
-    )
-    return response.choices[0].message.content
+    for p in chain:
+        try:
+            if p == "openai":
+                if not OPENAI_API_KEY:
+                    raise RuntimeError("OPENAI_API_KEY manquant")
+                model = OPENAI_MODEL or "gpt-4o"
+                print(f"[llm] provider=openai model={model}")
+                resp = requests.post(
+                    "https://api.openai.com/v1/chat/completions",
+                    headers={"Authorization": f"Bearer {OPENAI_API_KEY}", "Content-Type": "application/json"},
+                    json={"model": model, "messages": messages, "temperature": temperature, "max_tokens": max_tokens},
+                    timeout=45,
+                )
+                resp.raise_for_status()
+                content = resp.json()["choices"][0]["message"]["content"]
+                if not content:
+                    raise RuntimeError("OpenAI response vide")
+                return content
+
+            elif p == "openrouter":
+                if not OPENROUTER_API_KEY:
+                    raise RuntimeError("OPENROUTER_API_KEY manquant")
+                model = OPENROUTER_MODEL or "google/gemini-2.5-flash"
+                print(f"[llm] provider=openrouter model={model}")
+                resp = requests.post(
+                    "https://openrouter.ai/api/v1/chat/completions",
+                    headers={"Authorization": f"Bearer {OPENROUTER_API_KEY}", "Content-Type": "application/json",
+                             "HTTP-Referer": SITE_URL, "X-Title": "Auryel"},
+                    json={"model": model, "messages": messages, "temperature": temperature, "max_tokens": max_tokens},
+                    timeout=45,
+                )
+                resp.raise_for_status()
+                content = resp.json()["choices"][0]["message"]["content"]
+                if not content:
+                    raise RuntimeError("OpenRouter response vide")
+                return content
+
+            elif p == "groq":
+                print("[llm] provider=groq")
+                resp = groq_client.chat.completions.create(
+                    model="llama-3.3-70b-versatile",
+                    messages=messages,
+                    max_tokens=max_tokens,
+                    temperature=temperature,
+                )
+                content = resp.choices[0].message.content
+                if not content:
+                    raise RuntimeError("Groq response vide")
+                return content
+
+        except Exception as e:
+            print(f"[llm] {p} failed → fallback ({e})")
+
+    print("[llm] ECHEC TOTAL — openai + openrouter + groq ont tous échoué")
+    return "Je rencontre une difficulté technique momentanée. Réessaie dans quelques instants."
 
 
 def enregistrer_echange_onboarding(phone, user, user_message, reply):
@@ -1701,6 +1729,9 @@ def get_reply(phone, user_message, depuis_pub=False):
             update_user(phone, dernier_outil="")
 
     appel = detecter_appel_visio(user_message)
+    # get_history AVANT add_message : l'historique ne doit pas contenir le message
+    # courant, qui est ajouté explicitement en fin de tableau messages à l'appel LLM.
+    # Inverser ces deux lignes provoquerait un doublon du dernier message utilisateur.
     history = get_history(phone, limit=20)
     add_message(phone, "user", user_message)
     update_user(phone, nb_echanges=user.get("nb_echanges", 0) + 1)
