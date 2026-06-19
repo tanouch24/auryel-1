@@ -234,6 +234,16 @@ def init_db():
         c.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS derniere_verif_stripe_at TEXT DEFAULT ''")
     except Exception as e:
         print(f"Migration v9: {e}")
+    # Migration v10 — morning routine
+    try:
+        c.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS last_morning_message_at TEXT DEFAULT ''")
+        c.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS last_template_message_at TEXT DEFAULT ''")
+        c.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS templates_sans_reponse INTEGER DEFAULT 0")
+        c.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS morning_messages_enabled BOOLEAN DEFAULT TRUE")
+        c.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS free_entry_expires_at TEXT DEFAULT ''")
+        c.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS source_channel TEXT DEFAULT ''")
+    except Exception as e:
+        print(f"Migration v10: {e}")
     conn.commit()
     conn.close()
 
@@ -2321,6 +2331,58 @@ def _dans_fenetre_24h_meta(user):
         return (datetime.now() - datetime.fromisoformat(dc)).total_seconds() < 86400
     except Exception:
         return False
+
+def choose_morning_send_mode(user, now):
+    """Fonction de décision pure pour la morning routine.
+    Retourne le mode d'envoi. Aucun effet de bord, aucun appel réseau ou DB."""
+    def _secs(iso):
+        if not iso: return float("inf")
+        try: return (now - datetime.fromisoformat(iso)).total_seconds()
+        except Exception: return float("inf")
+
+    def _jours(iso):
+        if not iso: return None
+        try: return (now - datetime.fromisoformat(iso)).days
+        except Exception: return None
+
+    if user.get("stop_relances"):
+        return "skip_stop"
+
+    last_morning = user.get("last_morning_message_at") or ""
+    if last_morning:
+        try:
+            if datetime.fromisoformat(last_morning).date() == now.date():
+                return "skip_already_sent_today"
+        except Exception:
+            pass
+
+    free_entry = user.get("free_entry_expires_at") or ""
+    if free_entry:
+        try:
+            free_expires = datetime.fromisoformat(free_entry)
+        except Exception:
+            free_expires = None
+        if free_expires and free_expires > now:
+            return "free_entry_72h"
+        if _secs(user.get("date_dernier_contact")) < 86400:
+            return "free_text_24h"
+        if _jours(user.get("date_premier_contact")) == 3:
+            return "paid_template_j3_conversion"
+        return "skip_trial_window_closed"
+
+    if not user.get("abonne"):
+        if _jours(user.get("date_premier_contact")) in {6, 15, 30}:
+            return "paid_template_reactivation"
+        return "skip_not_subscribed"
+
+    if _secs(user.get("date_dernier_contact")) < 86400:
+        return "free_text_24h"
+    if (user.get("templates_sans_reponse") or 0) < 10:
+        return "paid_template_abonne_matin"
+    jours_tpl = _jours(user.get("last_template_message_at"))
+    if jours_tpl is not None and jours_tpl > 3:
+        return "slowed_down_template"
+    return "skip_budget_limit"
 
 # ============================================================
 # HELPER STRIPE — vérification paiement avant blocage J+3
