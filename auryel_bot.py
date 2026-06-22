@@ -2495,31 +2495,39 @@ def choose_morning_send_mode(user, now):
             return "slowed_down_template"
         return "skip_budget_limit"
 
-    # Non-abonné post-essai (etat="pause" ou onboarding non fait) : jalons J+6 / J+15 / J+30.
-    # Fenêtre de 3 jours au lieu d'égalité stricte : résilience si cron raté un jour.
-    # Sans colonne de tracking dédiée, c'est le compromis retenu.
-    # (relance_j6_envoyee / relance_j8_envoyee ne peuvent pas servir de garde-fous ici :
-    #  elles sont déjà True avant J+6, posées à J+2 et J+4 dans /cron/daily.)
+    # Non-abonné post-essai : jalons selon profil d'engagement (cold / warm / hot).
+    # Fenêtre de 3 jours : résilience si cron raté un jour.
     jours = _jours(user.get("date_premier_contact"))
-    if jours is not None and (6 <= jours < 9 or 15 <= jours < 18 or 30 <= jours < 33):
-        if (user.get("nb_echanges") or 0) >= MORNING_COLD_THRESHOLD:
-            return "paid_template_reactivation"
+
+    # J+4 : relance dédiée post-blocage, indépendante du profil d'engagement
+    if jours == 4 and user.get("onboarding_done", False):
+        return "paid_template_post_essai_j4"
+
+    nb = user.get("nb_echanges") or 0
+    if nb >= 10:   # hot — fenêtres élargies (5-9, 10-12, 15-17, 30-32)
+        in_window = jours is not None and (5 <= jours < 10 or 10 <= jours < 13 or 15 <= jours < 18 or 30 <= jours < 33)
+    elif nb >= 6:  # warm — fenêtres étendues (6-8, 10-12, 15-17, 30-32)
+        in_window = jours is not None and (6 <= jours < 9 or 10 <= jours < 13 or 15 <= jours < 18 or 30 <= jours < 33)
+    else:          # cold — fenêtres de base (6-8, 15-17, 30-32)
+        in_window = jours is not None and (6 <= jours < 9 or 15 <= jours < 18 or 30 <= jours < 33)
+    if in_window:
+        return "paid_template_reactivation"
     return "skip_not_subscribed"
 
 # ============================================================
 # MESSAGES MATIN LIBRES — temporaires, remplacement IA prévu
 # ============================================================
 MSG_MATIN_LIBRE = {
-    "selena":    "Bonjour {prenom}. Je pensais à toi ce matin. Ce que tu traverses mérite qu'on y revienne ensemble. Tu veux continuer ?",
-    "luna":      "Bonjour {prenom}. Je suis là ce matin. Ton cœur a besoin d'espace — je t'écoute si tu veux reprendre.",
-    "maia":      "Bonjour {prenom}. Les étoiles ont bougé depuis hier. Je vois quelque chose pour toi ce matin. On explore ça ?",
-    "thea":      "Bonjour {prenom}. La lumière de ce matin m'a parlé de toi. Quand tu es prête, je suis là.",
-    "cassandre": "Bonjour {prenom}. Ce matin j'ai vu quelque chose de clair pour ta situation. Tu veux qu'on en parle ?",
-    "myriam":    "Bonjour {prenom}. Je pensais à ce que tu m'as confié. Ce matin je sens qu'il y a un chemin. Tu veux continuer ?",
-    "orion":     "Bonjour {prenom}. Les énergies de ce matin sont favorables pour toi. Prends un moment et écris-moi.",
-    "ezra":      "Bonjour {prenom}. Ce matin je t'envoyais de la lumière. Quand tu veux reprendre, je suis là.",
-    "kael":      "Bonjour {prenom}. Je pensais à ta route ce matin. Un nouveau départ est toujours possible. Tu veux reprendre ?",
-    "raphael":   "Bonjour {prenom}. Ce matin je sens que quelque chose en toi cherche à se clarifier. Je suis là si tu veux.",
+    "selena":    "Bonjour {prenom}. Allez, aujourd'hui tu reprends ta place. Je suis là si tu veux qu'on continue.",
+    "luna":      "Bonjour {prenom}. Respire doucement ce matin. Je suis là si tu veux qu'on reprenne.",
+    "maia":      "Bonjour {prenom}. Allez, relève-toi. Ce matin tu es prioritaire. Tu veux qu'on avance ?",
+    "thea":      "Bonjour {prenom}. Ce matin, remets les choses en ordre doucement. Je suis là si tu veux qu'on clarifie.",
+    "cassandre": "Bonjour {prenom}. Allez, ce matin tu reprends ta place. Tu veux qu'on regarde ça ensemble ?",
+    "myriam":    "Bonjour {prenom}. Ce matin, reprends ta place. On continue ?",
+    "orion":     "Bonjour {prenom}. Ce matin je sens quelque chose pour toi. Tu veux qu'on avance ?",
+    "ezra":      "Bonjour {prenom}. Ce matin les signes sont là. Tu veux qu'on regarde ça ensemble ?",
+    "kael":      "Bonjour {prenom}. Allez, ce matin tu te relèves. Je suis là si tu veux.",
+    "raphael":   "Bonjour {prenom}. Ce matin, avance doucement. Je suis là si tu veux reprendre.",
 }
 _MSG_MATIN_FALLBACK = "Bonjour {prenom}. Je pensais à ta situation ce matin. Aujourd'hui tu reprends ta place. Tu veux qu'on continue ?"
 
@@ -2965,13 +2973,17 @@ def cron_morning():
                 template_name = "auryel_matin_essai"   # template en attente d'approbation Meta
             elif mode == "paid_template_matin_j3":
                 template_name = "auryel_matin_j3"      # template en attente d'approbation Meta
+            elif mode == "paid_template_post_essai_j4":
+                template_name = "auryel_post_essai_j4" # template en attente d'approbation Meta
             elif mode == "paid_template_reactivation":
                 try:
                     jours = (now - datetime.fromisoformat(user["date_premier_contact"])).days
                 except Exception:
                     jours = 0
-                if 6 <= jours < 9:
+                if 5 <= jours < 10:     # couvre 5-7 (hot) + 6-8 (cold/warm) + 7-9 (hot) → proxy j6
                     template_name = "auryel_reactivation_j6"
+                elif 10 <= jours < 13:  # couvre 10-12 (warm/hot) → proxy j15
+                    template_name = "auryel_reactivation_j15"
                 elif 15 <= jours < 18:
                     template_name = "auryel_reactivation_j15"
                 elif 30 <= jours < 33:

@@ -215,11 +215,11 @@ test(
     "skip_not_subscribed",
 )
 
-# T15 — Post-essai J+10 : etat=pause, day 10 → entre fenêtres J+6 et J+15 → skip
+# T15 — Post-essai J+10, nb_echanges=7 (warm) → fenêtre 10-12 warm → paid_template_reactivation
 test(
-    "T15 Post-essai J+10 (entre fenêtres réactivation)",
+    "T15 Post-essai J+10 warm (fenêtre 10-12 warm)",
     make_user(etat="pause", date_premier_contact=(NOW - timedelta(days=10)).isoformat()),
-    "skip_not_subscribed",
+    "paid_template_reactivation",
 )
 
 # T16 — J+4, relance_j7=True (daily déjà passé), fenêtre fermée → paid_template_matin_j3
@@ -246,15 +246,15 @@ test(
     "skip_not_subscribed",
 )
 
-# T18 — User cold (nb_echanges=3, J+6, non-abonné) → skip silencieux
+# T18 — User cold (nb_echanges=3, J+6) → fenêtre 6-8 cold → paid_template_reactivation
 test(
-    "T18 User cold (nb_echanges=3, J+6) → skip_not_subscribed",
+    "T18 User cold (nb_echanges=3, J+6) → paid_template_reactivation",
     make_user(
         etat="pause",
         nb_echanges=3,
         date_premier_contact=(NOW - timedelta(days=6)).isoformat(),
     ),
-    "skip_not_subscribed",
+    "paid_template_reactivation",
 )
 
 # T19 — User warm (nb_echanges=7, J+6, non-abonné) → template réactivation
@@ -308,9 +308,9 @@ test(
     "paid_template_matin_j3",
 )
 
-# T23 — Onboarding non terminé, fenêtre 24h fermée → skip_trial_window_closed
+# T23 — Onboarding non terminé J+2, fenêtre 24h fermée → skip_trial_window_closed
 test(
-    "T23 onboarding_done=False, fenêtre fermée → skip_trial_window_closed",
+    "T23 onboarding_done=False J+2, fenêtre fermée → skip_trial_window_closed",
     make_user(
         onboarding_done=False,
         abonne=False,
@@ -320,6 +320,66 @@ test(
         date_premier_contact=(NOW - timedelta(days=2)).isoformat(),
     ),
     "skip_trial_window_closed",
+)
+
+# T24 — Onboarding non terminé J+1, fenêtre 24h fermée → skip_trial_window_closed
+test(
+    "T24 onboarding_done=False J+1, fenêtre fermée → skip_trial_window_closed",
+    make_user(
+        onboarding_done=False,
+        abonne=False,
+        etat="normal",
+        free_entry_expires_at="",
+        date_dernier_contact=(NOW - timedelta(hours=30)).isoformat(),
+        date_premier_contact=(NOW - timedelta(days=1)).isoformat(),
+    ),
+    "skip_trial_window_closed",
+)
+
+# T25 — J+4, etat=pause, onboarding=True, non abonné → paid_template_post_essai_j4
+test(
+    "T25 J+4, etat=pause, onboarding=True → paid_template_post_essai_j4",
+    make_user(
+        onboarding_done=True,
+        abonne=False,
+        etat="pause",
+        date_premier_contact=(NOW - timedelta(days=4)).isoformat(),
+        date_dernier_contact=(NOW - timedelta(hours=30)).isoformat(),
+    ),
+    "paid_template_post_essai_j4",
+)
+
+# T26 — cold (nb_echanges=3), J+10 : pas dans fenêtre cold (6-8, 15-17, 30-32) → skip
+test(
+    "T26 cold nb_echanges=3, J+10 → skip_not_subscribed",
+    make_user(
+        etat="pause",
+        nb_echanges=3,
+        date_premier_contact=(NOW - timedelta(days=10)).isoformat(),
+    ),
+    "skip_not_subscribed",
+)
+
+# T27 — warm (nb_echanges=7), J+10 : dans fenêtre warm 10-12 → paid_template_reactivation
+test(
+    "T27 warm nb_echanges=7, J+10 → paid_template_reactivation",
+    make_user(
+        etat="pause",
+        nb_echanges=7,
+        date_premier_contact=(NOW - timedelta(days=10)).isoformat(),
+    ),
+    "paid_template_reactivation",
+)
+
+# T28 — hot (nb_echanges=12), J+5 : dans fenêtre hot 5-9 → paid_template_reactivation
+test(
+    "T28 hot nb_echanges=12, J+5 → paid_template_reactivation",
+    make_user(
+        etat="pause",
+        nb_echanges=12,
+        date_premier_contact=(NOW - timedelta(days=5)).isoformat(),
+    ),
+    "paid_template_reactivation",
 )
 
 print()
