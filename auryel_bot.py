@@ -2356,6 +2356,7 @@ def choose_morning_send_mode(user, now):
         except Exception:
             pass
 
+    # Meta Ads : fenêtre gratuite 72h encore ouverte (sous-cas, vérifié avant onboarding_done)
     free_entry = user.get("free_entry_expires_at") or ""
     if free_entry:
         try:
@@ -2364,25 +2365,43 @@ def choose_morning_send_mode(user, now):
             free_expires = None
         if free_expires and free_expires > now:
             return "free_entry_72h"
+
+    # Essai actif : non-abonné, onboarding terminé, pas encore bloqué (même logique que /cron/daily)
+    # TikTok/SEO n'a jamais de free_entry_expires_at — ce check est le seul proxy valide pour eux
+    is_trial_active = (
+        not user.get("abonne") and
+        user.get("onboarding_done", False) and
+        user.get("etat", "normal") != "pause"
+    )
+
+    if is_trial_active:
         if _secs(user.get("date_dernier_contact")) < 86400:
             return "free_text_24h"
-        if _jours(user.get("date_premier_contact")) == 3:
+        jours = _jours(user.get("date_premier_contact"))
+        # J+3 : protégé par relance_j7_envoyee (posée par /cron/daily au moment du blocage)
+        if jours is not None and jours >= 3 and not user.get("relance_j7_envoyee"):
             return "paid_template_j3_conversion"
         return "skip_trial_window_closed"
 
-    if not user.get("abonne"):
-        if _jours(user.get("date_premier_contact")) in {6, 15, 30}:
-            return "paid_template_reactivation"
-        return "skip_not_subscribed"
+    if user.get("abonne"):
+        if _secs(user.get("date_dernier_contact")) < 86400:
+            return "free_text_24h"
+        if (user.get("templates_sans_reponse") or 0) < 10:
+            return "paid_template_abonne_matin"
+        jours_tpl = _jours(user.get("last_template_message_at"))
+        if jours_tpl is not None and jours_tpl > 3:
+            return "slowed_down_template"
+        return "skip_budget_limit"
 
-    if _secs(user.get("date_dernier_contact")) < 86400:
-        return "free_text_24h"
-    if (user.get("templates_sans_reponse") or 0) < 10:
-        return "paid_template_abonne_matin"
-    jours_tpl = _jours(user.get("last_template_message_at"))
-    if jours_tpl is not None and jours_tpl > 3:
-        return "slowed_down_template"
-    return "skip_budget_limit"
+    # Non-abonné post-essai (etat="pause" ou onboarding non fait) : jalons J+6 / J+15 / J+30.
+    # Fenêtre de 3 jours au lieu d'égalité stricte : résilience si cron raté un jour.
+    # Sans colonne de tracking dédiée, c'est le compromis retenu.
+    # (relance_j6_envoyee / relance_j8_envoyee ne peuvent pas servir de garde-fous ici :
+    #  elles sont déjà True avant J+6, posées à J+2 et J+4 dans /cron/daily.)
+    jours = _jours(user.get("date_premier_contact"))
+    if jours is not None and (6 <= jours < 9 or 15 <= jours < 18 or 30 <= jours < 33):
+        return "paid_template_reactivation"
+    return "skip_not_subscribed"
 
 # ============================================================
 # HELPER STRIPE — vérification paiement avant blocage J+3

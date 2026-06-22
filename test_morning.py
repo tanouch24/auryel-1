@@ -31,6 +31,9 @@ def make_user(**kwargs):
         "prenom": "Sarah",
         "abonne": False,
         "stop_relances": False,
+        "etat": "normal",
+        "onboarding_done": False,
+        "relance_j7_envoyee": False,
         "date_premier_contact": (NOW - timedelta(days=2)).isoformat(),
         "date_dernier_contact": (NOW - timedelta(hours=1)).isoformat(),
         "last_morning_message_at": "",
@@ -59,45 +62,55 @@ print("=" * 60)
 print("TEST MORNING — choose_morning_send_mode()")
 print("=" * 60)
 
-# T1 — Meta Ads actif : free_entry encore valide → free_entry_72h
+# T1 — Meta Ads actif : free_entry_expires_at valide (72h pas encore écoulées) → free_entry_72h
+# Le check free_entry intervient AVANT is_trial_active, onboarding_done n'est pas requis
 test(
     "T1  Meta Ads actif (free entry en cours)",
     make_user(
+        onboarding_done=True,
         free_entry_expires_at=(NOW + timedelta(hours=48)).isoformat(),
         source_channel="meta_ads",
     ),
     "free_entry_72h",
 )
 
-# T2 — TikTok/SEO actif : free_entry expiré, user actif < 24h → free_text_24h
+# T2 — TikTok/SEO actif : free_entry_expires_at VIDE, onboarding_done=True, actif < 24h → free_text_24h
+# Cas réaliste : prospect SEO/TikTok qui n'a jamais eu de free_entry_expires_at
 test(
-    "T2  TikTok/SEO actif (fenêtre 24h ouverte)",
+    "T2  TikTok/SEO actif (fenêtre 24h ouverte, sans free_entry)",
     make_user(
-        free_entry_expires_at=(NOW - timedelta(hours=2)).isoformat(),
+        onboarding_done=True,
+        etat="normal",
+        free_entry_expires_at="",
         date_dernier_contact=(NOW - timedelta(hours=5)).isoformat(),
-        date_premier_contact=(NOW - timedelta(days=4)).isoformat(),
+        date_premier_contact=(NOW - timedelta(days=2)).isoformat(),
         source_channel="tiktok",
     ),
     "free_text_24h",
 )
 
-# T3 — TikTok/SEO silencieux : free_entry expiré, pas actif 24h, pas jour 3 → skip
+# T3 — Essai actif silencieux : onboarding_done, pas actif 24h, avant J+3 → skip_trial_window_closed
 test(
-    "T3  TikTok/SEO silencieux (fenêtre fermée, pas J+3)",
+    "T3  Essai actif silencieux (fenêtre 24h fermée, avant J+3)",
     make_user(
-        free_entry_expires_at=(NOW - timedelta(hours=2)).isoformat(),
+        onboarding_done=True,
+        etat="normal",
+        free_entry_expires_at="",
         date_dernier_contact=(NOW - timedelta(hours=30)).isoformat(),
-        date_premier_contact=(NOW - timedelta(days=5)).isoformat(),
+        date_premier_contact=(NOW - timedelta(days=2)).isoformat(),
         source_channel="seo",
     ),
     "skip_trial_window_closed",
 )
 
-# T4 — J+3 : free_entry expiré, pas actif 24h, exactement jour 3 → template conversion
+# T4 — J+3 : onboarding_done, etat=attente_paiement (J+2 envoyé), relance_j7 pas encore posée → template conversion
 test(
     "T4  J+3 conversion (template obligatoire)",
     make_user(
-        free_entry_expires_at=(NOW - timedelta(hours=2)).isoformat(),
+        onboarding_done=True,
+        etat="attente_paiement",
+        relance_j7_envoyee=False,
+        free_entry_expires_at="",
         date_dernier_contact=(NOW - timedelta(hours=30)).isoformat(),
         date_premier_contact=(NOW - timedelta(days=3)).isoformat(),
         source_channel="tiktok",
