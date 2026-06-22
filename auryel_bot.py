@@ -270,7 +270,9 @@ def get_user(phone):
         onboarding_question,onboarding_psaume,
         derniere_relance_conversationnelle_at,derniere_relance_conversationnelle_type,
         relance_hebdo_envoyee,derniere_relance_hebdo_at,
-        stop_relances,derniere_verif_stripe_at
+        stop_relances,derniere_verif_stripe_at,
+        last_morning_message_at,last_template_message_at,templates_sans_reponse,
+        morning_messages_enabled,free_entry_expires_at,source_channel
         FROM users WHERE phone=%s""", (phone,))
     row = c.fetchone()
     conn.close()
@@ -301,6 +303,12 @@ def get_user(phone):
             "derniere_relance_hebdo_at":row[37] or "",
             "stop_relances":row[38] or False,
             "derniere_verif_stripe_at":row[39] or "",
+            "last_morning_message_at":row[40] or "",
+            "last_template_message_at":row[41] or "",
+            "templates_sans_reponse":row[42] or 0,
+            "morning_messages_enabled":row[43] if row[43] is not None else True,
+            "free_entry_expires_at":row[44] or "",
+            "source_channel":row[45] or "",
         }
     return None
 
@@ -2404,6 +2412,36 @@ def choose_morning_send_mode(user, now):
     return "skip_not_subscribed"
 
 # ============================================================
+# MESSAGES MATIN LIBRES — temporaires, remplacement IA prévu
+# ============================================================
+MSG_MATIN_LIBRE = {
+    "selena":    "Bonjour {prenom}. Je pensais à toi ce matin. Ce que tu traverses mérite qu'on y revienne ensemble. Tu veux continuer ?",
+    "luna":      "Bonjour {prenom}. Je suis là ce matin. Ton cœur a besoin d'espace — je t'écoute si tu veux reprendre.",
+    "maia":      "Bonjour {prenom}. Les étoiles ont bougé depuis hier. Je vois quelque chose pour toi ce matin. On explore ça ?",
+    "thea":      "Bonjour {prenom}. La lumière de ce matin m'a parlé de toi. Quand tu es prête, je suis là.",
+    "cassandre": "Bonjour {prenom}. Ce matin j'ai vu quelque chose de clair pour ta situation. Tu veux qu'on en parle ?",
+    "myriam":    "Bonjour {prenom}. Je pensais à ce que tu m'as confié. Ce matin je sens qu'il y a un chemin. Tu veux continuer ?",
+    "orion":     "Bonjour {prenom}. Les énergies de ce matin sont favorables pour toi. Prends un moment et écris-moi.",
+    "ezra":      "Bonjour {prenom}. Ce matin je t'envoyais de la lumière. Quand tu veux reprendre, je suis là.",
+    "kael":      "Bonjour {prenom}. Je pensais à ta route ce matin. Un nouveau départ est toujours possible. Tu veux reprendre ?",
+    "raphael":   "Bonjour {prenom}. Ce matin je sens que quelque chose en toi cherche à se clarifier. Je suis là si tu veux.",
+}
+_MSG_MATIN_FALLBACK = "Bonjour {prenom}. Je pensais à ta situation ce matin. Aujourd'hui tu reprends ta place. Tu veux qu'on continue ?"
+
+
+def mark_morning_sent(phone, is_template=False, current_tsr=0):
+    """Met à jour les champs morning après un envoi réussi.
+    Ne jamais appeler si l'envoi a échoué.
+    is_template=True : incrémente templates_sans_reponse + met à jour last_template_message_at."""
+    now_iso = datetime.now().isoformat()
+    kwargs = {"last_morning_message_at": now_iso}
+    if is_template:
+        kwargs["last_template_message_at"] = now_iso
+        kwargs["templates_sans_reponse"] = current_tsr + 1
+    update_user_silent(phone, **kwargs)
+
+
+# ============================================================
 # HELPER STRIPE — vérification paiement avant blocage J+3
 # ============================================================
 def _stripe_paiement_actif(phone, stripe_customer_id):
@@ -2688,6 +2726,122 @@ def cron_daily():
 
     return jsonify({"status":"ok","j2":j6,"j3":j7,"j4":j8,
                     "relances_abonnes":relances_abonnes,"purge_rgpd":purge_rgpd}), 200
+
+
+@app.route("/cron/morning", methods=["POST"])
+def cron_morning():
+    body = request.get_json(silent=True) or {}
+    if not hmac.compare_digest(body.get("secret", ""), DAILY_SECRET or ""):
+        return jsonify({"error": "unauthorized"}), 401
+
+    now = datetime.now()
+    conn = get_conn()
+    c = conn.cursor()
+    c.execute("SELECT phone FROM users")
+    phones = [r[0] for r in c.fetchall()]
+    conn.close()
+
+    cnt = {
+        "free_text_sent": 0, "free_entry_sent": 0, "paid_templates_sent": 0,
+        "skipped_stop": 0, "skipped_budget_limit": 0,
+        "skipped_already_sent_today": 0, "skipped_not_subscribed": 0,
+        "skipped_trial_window_closed": 0, "skipped_not_eligible": 0,
+    }
+
+    for phone in phones:
+        user = get_user(phone)
+        if not user:
+            continue
+
+        # Double-vérification stop_relances avant toute décision
+        if user.get("stop_relances"):
+            log_event("morning_skip", phone_hash=_phone_hash(phone),
+                      reason="stop_relances", guide_key=user.get("guide", ""))
+            cnt["skipped_stop"] += 1
+            continue
+
+        mode      = choose_morning_send_mode(user, now)
+        guide_key = user.get("guide", "selena")
+        guide     = GUIDES.get(guide_key, GUIDES["selena"])
+        nom       = user.get("nom_affiche") or guide["nom"]
+        prenom    = user.get("prenom") or ""
+        tsr       = user.get("templates_sans_reponse") or 0
+
+        # ── Modes skip (+ j3 géré exclusivement par /cron/daily) ────────────
+        if mode.startswith("skip_") or mode == "paid_template_j3_conversion":
+            reason = "j3_handled_by_daily" if mode == "paid_template_j3_conversion" else mode
+            log_event("morning_skip", phone_hash=_phone_hash(phone),
+                      reason=reason, guide_key=guide_key)
+            cnt_key = {
+                "skip_stop":                "skipped_stop",
+                "skip_already_sent_today":  "skipped_already_sent_today",
+                "skip_not_subscribed":      "skipped_not_subscribed",
+                "skip_trial_window_closed": "skipped_trial_window_closed",
+                "skip_budget_limit":        "skipped_budget_limit",
+            }.get(mode, "skipped_not_eligible")
+            cnt[cnt_key] += 1
+            continue
+
+        # ── Messages libres (fenêtre 24h Meta ou 72h free entry) ────────────
+        if mode in ("free_entry_72h", "free_text_24h"):
+            tpl = MSG_MATIN_LIBRE.get(guide_key, _MSG_MATIN_FALLBACK)
+            msg = tpl.format(prenom=prenom) if prenom else tpl.format(prenom="")
+            try:
+                r    = send_message(phone, msg)
+                sent = r.status_code in (200, 201)
+            except Exception as e:
+                print(f"[morning] free send erreur {_phone_hash(phone)} : {e}")
+                sent = False
+            if sent:
+                add_message(phone, "assistant", msg)
+                mark_morning_sent(phone, is_template=False)
+                if mode == "free_entry_72h":
+                    cnt["free_entry_sent"] += 1
+                else:
+                    cnt["free_text_sent"] += 1
+            log_event("morning_send", phone_hash=_phone_hash(phone),
+                      send_mode=mode, template_name=None,
+                      estimated_cost=0, guide_key=guide_key, success=sent)
+            time.sleep(1)
+            continue
+
+        # ── Templates payants ────────────────────────────────────────────────
+        template_name = None
+        if mode in ("paid_template_abonne_matin", "slowed_down_template"):
+            template_name = "auryel_matin_abonne"
+        elif mode == "paid_template_reactivation":
+            try:
+                jours = (now - datetime.fromisoformat(user["date_premier_contact"])).days
+            except Exception:
+                jours = 0
+            if 6 <= jours < 9:
+                template_name = "auryel_reactivation_j6"
+            elif 15 <= jours < 18:
+                template_name = "auryel_reactivation_j15"
+            elif 30 <= jours < 33:
+                template_name = "auryel_reactivation_j30"
+
+        if not template_name:
+            log_event("morning_skip", phone_hash=_phone_hash(phone),
+                      reason="no_template_resolved", guide_key=guide_key)
+            cnt["skipped_not_eligible"] += 1
+            continue
+
+        sent = send_template_message(phone, template_name, [prenom or "Bonjour", nom])
+        if sent:
+            add_message(phone, "assistant",
+                        f"[template:{template_name}] {{1}}={prenom or 'Bonjour'} {{2}}={nom}")
+            mark_morning_sent(phone, is_template=True, current_tsr=tsr)
+            cnt["paid_templates_sent"] += 1
+        log_event("morning_send", phone_hash=_phone_hash(phone),
+                  send_mode=mode, template_name=template_name,
+                  estimated_cost=0.0712 if sent else 0,
+                  guide_key=guide_key, success=sent)
+        time.sleep(1)
+
+    estimated_cost = round(cnt["paid_templates_sent"] * 0.0712, 4)
+    return jsonify({"status": "ok", "morning": {**cnt, "estimated_cost": estimated_cost}}), 200
+
 
 # ============================================================
 # ROUTES UTILITAIRES

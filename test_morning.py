@@ -186,6 +186,65 @@ test(
     "skip_already_sent_today",
 )
 
+# T11 — Post-essai J+6 : etat=pause, day 6 → premier template réactivation
+test(
+    "T11 Post-essai J+6 (réactivation)",
+    make_user(etat="pause", date_premier_contact=(NOW - timedelta(days=6)).isoformat()),
+    "paid_template_reactivation",
+)
+
+# T12 — Post-essai J+15 : etat=pause, day 15 → deuxième fenêtre réactivation
+test(
+    "T12 Post-essai J+15 (réactivation)",
+    make_user(etat="pause", date_premier_contact=(NOW - timedelta(days=15)).isoformat()),
+    "paid_template_reactivation",
+)
+
+# T13 — Post-essai J+30 : etat=pause, day 30 → troisième fenêtre réactivation
+test(
+    "T13 Post-essai J+30 (réactivation)",
+    make_user(etat="pause", date_premier_contact=(NOW - timedelta(days=30)).isoformat()),
+    "paid_template_reactivation",
+)
+
+# T14 — Post-essai J+5 : etat=pause, day 5 → entre blocage J+3 et fenêtre J+6 → skip
+test(
+    "T14 Post-essai J+5 (entre blocage et première réactivation)",
+    make_user(etat="pause", date_premier_contact=(NOW - timedelta(days=5)).isoformat()),
+    "skip_not_subscribed",
+)
+
+# T15 — Post-essai J+10 : etat=pause, day 10 → entre fenêtres J+6 et J+15 → skip
+test(
+    "T15 Post-essai J+10 (entre fenêtres réactivation)",
+    make_user(etat="pause", date_premier_contact=(NOW - timedelta(days=10)).isoformat()),
+    "skip_not_subscribed",
+)
+
+# T16 — J+3 déjà traité par /cron/daily (relance_j7=True, essai encore actif) → trial window closed
+test(
+    "T16 J+3 déjà traité par daily (relance_j7_envoyee=True)",
+    make_user(
+        onboarding_done=True,
+        etat="attente_paiement",
+        relance_j7_envoyee=True,
+        date_dernier_contact=(NOW - timedelta(hours=30)).isoformat(),
+        date_premier_contact=(NOW - timedelta(days=4)).isoformat(),
+    ),
+    "skip_trial_window_closed",
+)
+
+# T17 — Nouveau user sans onboarding → pas de morning message
+test(
+    "T17 Nouveau user (onboarding_done=False) → skip_not_subscribed",
+    make_user(
+        onboarding_done=False,
+        etat="normal",
+        date_premier_contact=(NOW - timedelta(days=1)).isoformat(),
+    ),
+    "skip_not_subscribed",
+)
+
 print()
 total = len(results)
 passed = sum(results)
