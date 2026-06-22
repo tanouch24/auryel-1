@@ -11,6 +11,8 @@
     X-XSS-Protection = "1; mode=block"
     X-Content-Type-Options = "nosniff"
     Referrer-Policy = "strict-origin-when-cross-origin"
+    Strict-Transport-Security = "max-age=31536000; includeSubDomains"
+    Content-Security-Policy = "default-src 'self' https: data: 'unsafe-inline' 'unsafe-eval'; frame-ancestors 'none'"
 
 # ── Redirects 301 : nettoyage index.html ────────────────────────────────────
 [[redirects]]
@@ -482,5 +484,50 @@
 
 [[redirects]]
   from = "/Procfile"
+  to = "/404"
+  status = 404
+
+[[redirects]]
+  from = "/schema.sql"
+  to = "/404"
+  status = 404
+
+[[redirects]]
+  from = "/migrations/*"
+  to = "/404"
+  status = 404
+
+[[redirects]]
+  from = "/test_guides.py"
+  to = "/404"
+  status = 404
+
+[[redirects]]
+  from = "/test_morning.py"
+  to = "/404"
+  status = 404
+
+[[redirects]]
+  from = "/CLAUDE.md"
+  to = "/404"
+  status = 404
+
+[[redirects]]
+  from = "/CHANGELOG_LANCEMENT.md"
+  to = "/404"
+  status = 404
+
+[[redirects]]
+  from = "/scripts/*"
+  to = "/404"
+  status = 404
+
+[[redirects]]
+  from = "/runtime.txt"
+  to = "/404"
+  status = 404
+
+[[redirects]]
+  from = "/backup_*"
   to = "/404"
   status = 404
