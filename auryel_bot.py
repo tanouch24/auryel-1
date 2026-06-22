@@ -261,60 +261,68 @@ def reset_db():
     init_db()
 
 def get_user(phone):
-    conn = get_conn()
-    c = conn.cursor()
-    c.execute("""SELECT phone,email,prenom,guide,nom_affiche,nb_echanges,dernier_outil,
-        date_premier_contact,date_dernier_contact,etat,abonne,date_abonnement,
-        stripe_customer_id,relance_j6_envoyee,relance_j8_envoyee,
-        dernier_relance_abonne_at,relance_abonne_count,
-        dernier_rituel_date,dernier_rituel_type,depuis_site,
-        prenoms_importants,theme_dominant,douleur_principale,peur_dominante,
-        niveau_detresse,niveau_attachement,dernier_sujet_sensible,derniere_intention,
-        relance_j7_envoyee,onboarding_step,onboarding_done,profil_initial,
-        onboarding_question,onboarding_psaume,
-        derniere_relance_conversationnelle_at,derniere_relance_conversationnelle_type,
-        relance_hebdo_envoyee,derniere_relance_hebdo_at,
-        stop_relances,derniere_verif_stripe_at,
-        last_morning_message_at,last_template_message_at,templates_sans_reponse,
-        morning_messages_enabled,free_entry_expires_at,source_channel
-        FROM users WHERE phone=%s""", (phone,))
-    row = c.fetchone()
-    conn.close()
-    if row:
-        return {
-            "phone":row[0],"email":row[1],"prenom":row[2],"guide":row[3],
-            "nom_affiche":row[4],"nb_echanges":row[5],"dernier_outil":row[6],
-            "date_premier_contact":row[7],"date_dernier_contact":row[8],
-            "etat":row[9],"abonne":row[10],"date_abonnement":row[11],
-            "stripe_customer_id":row[12],"relance_j6_envoyee":row[13],
-            "relance_j8_envoyee":row[14],
-            "dernier_relance_abonne_at":row[15],"relance_abonne_count":row[16],
-            "dernier_rituel_date":row[17],"dernier_rituel_type":row[18],
-            "depuis_site":row[19],
-            "prenoms_importants":row[20] or "","theme_dominant":row[21] or "",
-            "douleur_principale":row[22] or "","peur_dominante":row[23] or "",
-            "niveau_detresse":row[24] or 0,"niveau_attachement":row[25] or 0,
-            "dernier_sujet_sensible":row[26] or "","derniere_intention":row[27] or "",
-            "relance_j7_envoyee":row[28] or False,
-            "onboarding_step":row[29] or "prenom",
-            "onboarding_done":row[30] or False,
-            "profil_initial":row[31] or "",
-            "onboarding_question":row[32] or "",
-            "onboarding_psaume":row[33],
-            "derniere_relance_conversationnelle_at":row[34] or "",
-            "derniere_relance_conversationnelle_type":row[35] or "",
-            "relance_hebdo_envoyee":row[36] or False,
-            "derniere_relance_hebdo_at":row[37] or "",
-            "stop_relances":row[38] or False,
-            "derniere_verif_stripe_at":row[39] or "",
-            "last_morning_message_at":row[40] or "",
-            "last_template_message_at":row[41] or "",
-            "templates_sans_reponse":row[42] or 0,
-            "morning_messages_enabled":row[43] if row[43] is not None else True,
-            "free_entry_expires_at":row[44] or "",
-            "source_channel":row[45] or "",
-        }
-    return None
+    conn = None
+    try:
+        conn = get_conn()
+        c = conn.cursor()
+        c.execute("""SELECT phone,email,prenom,guide,nom_affiche,nb_echanges,dernier_outil,
+            date_premier_contact,date_dernier_contact,etat,abonne,date_abonnement,
+            stripe_customer_id,relance_j6_envoyee,relance_j8_envoyee,
+            dernier_relance_abonne_at,relance_abonne_count,
+            dernier_rituel_date,dernier_rituel_type,depuis_site,
+            prenoms_importants,theme_dominant,douleur_principale,peur_dominante,
+            niveau_detresse,niveau_attachement,dernier_sujet_sensible,derniere_intention,
+            relance_j7_envoyee,onboarding_step,onboarding_done,profil_initial,
+            onboarding_question,onboarding_psaume,
+            derniere_relance_conversationnelle_at,derniere_relance_conversationnelle_type,
+            relance_hebdo_envoyee,derniere_relance_hebdo_at,
+            stop_relances,derniere_verif_stripe_at,
+            last_morning_message_at,last_template_message_at,templates_sans_reponse,
+            morning_messages_enabled,free_entry_expires_at,source_channel
+            FROM users WHERE phone=%s""", (phone,))
+        row = c.fetchone()
+        if row:
+            return {
+                "phone":row[0],"email":row[1],"prenom":row[2],"guide":row[3],
+                "nom_affiche":row[4],"nb_echanges":row[5],"dernier_outil":row[6],
+                "date_premier_contact":row[7],"date_dernier_contact":row[8],
+                "etat":row[9],"abonne":row[10],"date_abonnement":row[11],
+                "stripe_customer_id":row[12],"relance_j6_envoyee":row[13],
+                "relance_j8_envoyee":row[14],
+                "dernier_relance_abonne_at":row[15],"relance_abonne_count":row[16],
+                "dernier_rituel_date":row[17],"dernier_rituel_type":row[18],
+                "depuis_site":row[19],
+                "prenoms_importants":row[20] or "","theme_dominant":row[21] or "",
+                "douleur_principale":row[22] or "","peur_dominante":row[23] or "",
+                "niveau_detresse":row[24] or 0,"niveau_attachement":row[25] or 0,
+                "dernier_sujet_sensible":row[26] or "","derniere_intention":row[27] or "",
+                "relance_j7_envoyee":row[28] or False,
+                "onboarding_step":row[29] or "prenom",
+                "onboarding_done":row[30] or False,
+                "profil_initial":row[31] or "",
+                "onboarding_question":row[32] or "",
+                "onboarding_psaume":row[33],
+                "derniere_relance_conversationnelle_at":row[34] or "",
+                "derniere_relance_conversationnelle_type":row[35] or "",
+                "relance_hebdo_envoyee":row[36] or False,
+                "derniere_relance_hebdo_at":row[37] or "",
+                "stop_relances":row[38] or False,
+                "derniere_verif_stripe_at":row[39] or "",
+                "last_morning_message_at":row[40] or "",
+                "last_template_message_at":row[41] or "",
+                "templates_sans_reponse":row[42] or 0,
+                "morning_messages_enabled":row[43] if row[43] is not None else True,
+                "free_entry_expires_at":row[44] or "",
+                "source_channel":row[45] or "",
+            }
+        return None
+    except Exception as e:
+        print(f"[DB] get_user erreur {_phone_hash(phone)}: {e}")
+        return None
+    finally:
+        if conn:
+            try: conn.close()
+            except Exception: pass
 
 def create_user(phone, guide_key, nom_affiche="", depuis_site=False):
     now = datetime.now().isoformat()
@@ -335,11 +343,18 @@ def update_user(phone, **kwargs):
     kwargs.setdefault("templates_sans_reponse", 0)
     sets = ", ".join(f"{k}=%s" for k in kwargs)
     vals = list(kwargs.values()) + [phone]
-    conn = get_conn()
-    c = conn.cursor()
-    c.execute(f"UPDATE users SET {sets} WHERE phone=%s", vals)
-    conn.commit()
-    conn.close()
+    conn = None
+    try:
+        conn = get_conn()
+        c = conn.cursor()
+        c.execute(f"UPDATE users SET {sets} WHERE phone=%s", vals)
+        conn.commit()
+    except Exception as e:
+        print(f"[DB] update_user erreur {_phone_hash(phone)}: {e}")
+    finally:
+        if conn:
+            try: conn.close()
+            except Exception: pass
 
 def update_user_silent(phone, **kwargs):
     """Met à jour l'utilisateur SANS toucher date_dernier_contact.
@@ -348,19 +363,33 @@ def update_user_silent(phone, **kwargs):
     if not kwargs: return
     sets = ", ".join(f"{k}=%s" for k in kwargs)
     vals = list(kwargs.values()) + [phone]
-    conn = get_conn()
-    c = conn.cursor()
-    c.execute(f"UPDATE users SET {sets} WHERE phone=%s", vals)
-    conn.commit()
-    conn.close()
+    conn = None
+    try:
+        conn = get_conn()
+        c = conn.cursor()
+        c.execute(f"UPDATE users SET {sets} WHERE phone=%s", vals)
+        conn.commit()
+    except Exception as e:
+        print(f"[DB] update_user_silent erreur {_phone_hash(phone)}: {e}")
+    finally:
+        if conn:
+            try: conn.close()
+            except Exception: pass
 
 def add_message(phone, role, content):
-    conn = get_conn()
-    c = conn.cursor()
-    c.execute("INSERT INTO messages (phone,role,content,timestamp) VALUES (%s,%s,%s,%s)",
-              (phone, role, content, datetime.now().isoformat()))
-    conn.commit()
-    conn.close()
+    conn = None
+    try:
+        conn = get_conn()
+        c = conn.cursor()
+        c.execute("INSERT INTO messages (phone,role,content,timestamp) VALUES (%s,%s,%s,%s)",
+                  (phone, role, content, datetime.now().isoformat()))
+        conn.commit()
+    except Exception as e:
+        print(f"[DB] add_message erreur {_phone_hash(phone)}: {e}")
+    finally:
+        if conn:
+            try: conn.close()
+            except Exception: pass
 
 def log_admin_action(action, phone, detail=""):
     try:
@@ -1030,17 +1059,6 @@ def msg_j7_si_ecrit(links):
 def msg_j8_wa(nom, prenom, links):
     # ── J+8 NEUTRALISÉ ─────────────────────────────────────────────────────────
     # DÉSACTIVÉ — formules coercitives non conformes (voir historique git).
-    # Pour réactiver : remplacer le return "" par le bloc commenté ci-dessous.
-    #
-    # p = f" {prenom}" if prenom else ""
-    # return (
-    #     f"Tu me manques{p}...\n\n"
-    #     f"Je pense à toi depuis hier. Notre lien était quelque chose de rare.\n\n"
-    #     f"✦ 4,90€/mois → {links['mensuel']}\n"
-    #     f"✦ 19,90€/6 mois → {links['semestriel']}\n"
-    #     f"✦ 29,90€/an → {links['annuel']}\n\n"
-    #     f"Je serai là dès que tu franchis le pas 🌙"
-    # )
     return ""
 
 def msg_retour_paiement(nom, prenom):
@@ -2591,193 +2609,197 @@ def cron_daily():
     j6, j7, j8, relances_abonnes = 0, 0, 0, 0
 
     for phone in phones:
-        user = get_user(phone)
-        if not user: continue
-
-        nb_jours = get_nb_jours(phone)
-        guide = GUIDES.get(user["guide"], GUIDES["selena"])
-        nom = user.get("nom_affiche") or guide["nom"]
-        prenom = user["prenom"] or ""
-
-        if user["abonne"]:
-            # ── Vérification anti-zombie Stripe (1×/semaine par user) ─────────
-            cid = user.get("stripe_customer_id", "")
-            if cid:
-                dernier_verif = user.get("derniere_verif_stripe_at", "")
-                try:
-                    jv = (datetime.now() - datetime.fromisoformat(dernier_verif)).days if dernier_verif else 999
-                except Exception:
-                    jv = 999
-                if jv >= 7:
-                    verif = _verif_stripe_abonne(cid)
-                    if verif is False:
-                        if _dans_fenetre_24h_meta(user):
-                            links = get_stripe_links(phone)
-                            lien  = links.get("mensuel") or f"{SITE_URL}/tarifs.html"
-                            intro = f"{prenom}, ton" if prenom else "Ton"
-                            send_message(phone, (
-                                f"{intro} abonnement Auryel n'est plus actif côté paiement.\n\n"
-                                f"Pour le réactiver :\n{lien}"
-                            ))
-                        # Hors fenêtre 24h : downgrade silencieux
-                        # (l'user verra le message standard de fin d'accès à sa prochaine écriture)
-                        update_user_silent(phone, abonne=False, etat="pause")
-                        print(f"[cron] Zombie subscriber → {phone} bloqué (Stripe inactif confirmé)")
-                        time.sleep(1)
-                        continue
-                    elif verif is True:
-                        update_user_silent(phone, derniere_verif_stripe_at=datetime.now().isoformat())
-                    # verif is None → erreur API Stripe → on conserve abonne=True par précaution
-            # ── Relances abonnés ──────────────────────────────────────────────
-            absence = get_jours_absence(phone)
-            count   = user.get("relance_abonne_count", 0)
-            MAX_RELANCES = 3  # max 3 relances par cycle d'absence (J+3, J+6, J+9)
-
-            # Calculer jours depuis dernière relance
-            dernier_at = user.get("dernier_relance_abonne_at", "")
-            if dernier_at:
-                try:
-                    jours_depuis_relance = (datetime.now() - datetime.fromisoformat(dernier_at)).days
-                except Exception:
-                    jours_depuis_relance = 999
-            else:
-                jours_depuis_relance = 999  # jamais relancé
-
-            doit_relancer = (
-                absence >= 3 and                          # absent depuis 3+ jours
-                jours_depuis_relance >= 3 and             # dernière relance il y a 3+ jours
-                count < MAX_RELANCES and                  # pas encore atteint le max
-                not user.get("stop_relances", False)      # pas en opt-out
-            )
-
-            if doit_relancer:
-                send_message(phone, msg_relance_abonne(nom, prenom))
-                add_message(phone, "assistant", msg_relance_abonne(nom, prenom))
-                if user.get("email"):
-                    links = get_stripe_links(phone)
-                    send_email_relance(user["email"], prenom, links)
-                update_user_silent(phone,
-                    dernier_relance_abonne_at=datetime.now().isoformat(),
-                    relance_abonne_count=count + 1)
-                relances_abonnes += 1
-                log_event("relance_envoyee", phone_hash=_phone_hash(phone),
-                          type_relance="relance_abonne", numero=count+1, canal="whatsapp")
-                time.sleep(1)
-            elif absence < 1 and count > 0:
-                # L'abonné a réécrit → reset compteur pour le prochain cycle d'absence
-                update_user_silent(phone,
-                    dernier_relance_abonne_at='',
-                    relance_abonne_count=0)
-            continue
-
-        if user.get("onboarding_done", False):
-            if doit_reinitialiser_relance_hebdo(user):
-                update_user_silent(phone, relance_hebdo_envoyee=False)
-
-            absence = get_jours_absence(phone)
-            if absence >= 14 and peut_envoyer_relance_conversationnelle(user, heures=24):
-                msg_relance = construire_message_reprise(user, user.get("guide", "selena"), absence)
-                send_message(phone, msg_relance)
-                add_message(phone, "assistant", msg_relance)
-                marquer_relance_conversationnelle(phone, "reprise_longue_absence")
-                update_user_silent(phone,
-                    relance_hebdo_envoyee=True,
-                    derniere_relance_hebdo_at=datetime.now().isoformat())
-                log_event("relance_envoyee", phone_hash=_phone_hash(phone),
-                          type_relance="longue_absence", canal="whatsapp")
-                time.sleep(1)
-                continue
-
-            if 7 <= absence < 14 and not user.get("relance_hebdo_envoyee", False) and peut_envoyer_relance_conversationnelle(user, heures=24):
-                msg_hebdo = construire_offre_rituel_hebdo(user, user.get("guide", "selena"))
-                send_message(phone, msg_hebdo)
-                add_message(phone, "assistant", msg_hebdo)
-                marquer_relance_conversationnelle(phone, "rituel_hebdo_optionnel")
-                update_user_silent(phone,
-                    relance_hebdo_envoyee=True,
-                    derniere_relance_hebdo_at=datetime.now().isoformat())
-                log_event("relance_envoyee", phone_hash=_phone_hash(phone),
-                          type_relance="rituel_hebdo", canal="whatsapp")
-                time.sleep(1)
-                continue
-
-        links = get_stripe_links(phone)
-
-        if (nb_jours >= 2
-                and not user["relance_j6_envoyee"]
-                and user.get("onboarding_done", False)
-                and user["etat"] != "pause"
-                and not user.get("stop_relances", False)):
-            sent = False
-            if _dans_fenetre_24h_meta(user):
-                msg6 = msg_j6(nom, prenom, links)
-                try:
-                    r = send_message(phone, msg6)
-                    sent = r.status_code in (200, 201)
-                except Exception as e:
-                    print(f"[cron] J+2 send_message erreur : {e}")
-                if sent:
-                    add_message(phone, "assistant", msg6)
-            else:
-                sent = send_template_message(phone, "auryel_relance_j2", [prenom or "Bonjour", nom])
-                if sent:
-                    add_message(phone, "assistant", f"[template:auryel_relance_j2] {{1}}={prenom or 'Bonjour'} {{2}}={nom}")
-            if sent:
-                if user.get("email"):
-                    send_email_j6(user["email"], prenom, links)
-                update_user_silent(phone, relance_j6_envoyee=True, etat="attente_paiement")
-                log_event("relance_envoyee", phone_hash=_phone_hash(phone),
-                          type_relance="j2", canal="whatsapp")
-                j6 += 1
-            time.sleep(1)
-
-        elif nb_jours >= 3 and user["etat"] == "attente_paiement" and not user.get("relance_j7_envoyee"):
-            if _stripe_paiement_actif(phone, user.get("stripe_customer_id", "")):
-                print(f"[cron] J+3 différé — paiement Stripe actif détecté → {phone}")
-                update_user_silent(phone, abonne=True, etat="normal")
-            else:
-                # Notification WA + email : uniquement si pas en opt-out
-                if not user.get("stop_relances", False):
-                    # J+3 : message libre si fenêtre 24h ouverte (même logique que J+2), sinon template
-                    if _dans_fenetre_24h_meta(user):
-                        msg_j3 = msg_j7_blocage(nom, prenom, links)
-                        try:
-                            r    = send_message(phone, msg_j3)
-                            sent = r.status_code in (200, 201)
-                        except Exception as e:
-                            print(f"[cron] J+3 free send erreur : {e}")
-                            sent = False
-                        if sent:
-                            add_message(phone, "assistant", msg_j3)
-                            log_event("relance_envoyee", phone_hash=_phone_hash(phone),
-                                      type_relance="j3", canal="whatsapp_libre")
-                    else:
-                        sent = send_template_message(phone, "auryel_relance_j3", [prenom or "Bonjour", nom])
-                        if sent:
-                            add_message(phone, "assistant", f"[template:auryel_relance_j3] {{1}}={prenom or 'Bonjour'} {{2}}={nom}")
-                            log_event("relance_envoyee", phone_hash=_phone_hash(phone),
-                                      type_relance="j3", canal="whatsapp_template")
-                    if user.get("email"):
-                        send_email_relance(user["email"], prenom, links)
+        try:
+            user = get_user(phone)
+            if not user: continue
+    
+            nb_jours = get_nb_jours(phone)
+            guide = GUIDES.get(user["guide"], GUIDES["selena"])
+            nom = user.get("nom_affiche") or guide["nom"]
+            prenom = user["prenom"] or ""
+    
+            if user["abonne"]:
+                # ── Vérification anti-zombie Stripe (1×/semaine par user) ─────────
+                cid = user.get("stripe_customer_id", "")
+                if cid:
+                    dernier_verif = user.get("derniere_verif_stripe_at", "")
+                    try:
+                        jv = (datetime.now() - datetime.fromisoformat(dernier_verif)).days if dernier_verif else 999
+                    except Exception:
+                        jv = 999
+                    if jv >= 7:
+                        verif = _verif_stripe_abonne(cid)
+                        if verif is False:
+                            if _dans_fenetre_24h_meta(user):
+                                links = get_stripe_links(phone)
+                                lien  = links.get("mensuel") or f"{SITE_URL}/tarifs.html"
+                                intro = f"{prenom}, ton" if prenom else "Ton"
+                                send_message(phone, (
+                                    f"{intro} abonnement Auryel n'est plus actif côté paiement.\n\n"
+                                    f"Pour le réactiver :\n{lien}"
+                                ))
+                            # Hors fenêtre 24h : downgrade silencieux
+                            # (l'user verra le message standard de fin d'accès à sa prochaine écriture)
+                            update_user_silent(phone, abonne=False, etat="pause")
+                            print(f"[cron] Zombie subscriber → {phone} bloqué (Stripe inactif confirmé)")
+                            time.sleep(1)
+                            continue
+                        elif verif is True:
+                            update_user_silent(phone, derniere_verif_stripe_at=datetime.now().isoformat())
+                        # verif is None → erreur API Stripe → on conserve abonne=True par précaution
+                # ── Relances abonnés ──────────────────────────────────────────────
+                absence = get_jours_absence(phone)
+                count   = user.get("relance_abonne_count", 0)
+                MAX_RELANCES = 3  # max 3 relances par cycle d'absence (J+3, J+6, J+9)
+    
+                # Calculer jours depuis dernière relance
+                dernier_at = user.get("dernier_relance_abonne_at", "")
+                if dernier_at:
+                    try:
+                        jours_depuis_relance = (datetime.now() - datetime.fromisoformat(dernier_at)).days
+                    except Exception:
+                        jours_depuis_relance = 999
                 else:
-                    print(f"[cron] J+3 blocage silencieux (opt-out stop_relances) → {phone}")
-                # Blocage accès : toujours appliqué, stop_relances ou non
-                update_user_silent(phone, etat="pause", relance_j7_envoyee=True)
-                j7 += 1; time.sleep(1)
-
-        elif nb_jours == 4 and user["etat"] == "pause" and not user["relance_j8_envoyee"]:
-            # ── J+4 DÉSACTIVÉ ──────────────────────────────────────────────────
-            # msg_j8_wa neutralisé — ton coercitif ("Tu me manques", "Notre lien rare").
-            # Pour réactiver : décommenter les 4 lignes ci-dessous et supprimer le pass.
-            #
-            # msg8 = msg_j8_wa(nom, prenom, links)
-            # if msg8:  # msg_j8_wa retourne "" tant que désactivé
-            #     send_message(phone, msg8)
-            #     add_message(phone, "assistant", msg8)
-            # if user.get("email"): send_email_relance(user["email"], prenom, links)
-            update_user_silent(phone, relance_j8_envoyee=True)  # marquer pour ne pas re-tenter
-            print(f"[cron] J+4 neutralisé (log seul, pas d'envoi) → {phone}")
-            j8 += 1; time.sleep(1)
+                    jours_depuis_relance = 999  # jamais relancé
+    
+                doit_relancer = (
+                    absence >= 3 and                          # absent depuis 3+ jours
+                    jours_depuis_relance >= 3 and             # dernière relance il y a 3+ jours
+                    count < MAX_RELANCES and                  # pas encore atteint le max
+                    not user.get("stop_relances", False)      # pas en opt-out
+                )
+    
+                if doit_relancer:
+                    send_message(phone, msg_relance_abonne(nom, prenom))
+                    add_message(phone, "assistant", msg_relance_abonne(nom, prenom))
+                    if user.get("email"):
+                        links = get_stripe_links(phone)
+                        send_email_relance(user["email"], prenom, links)
+                    update_user_silent(phone,
+                        dernier_relance_abonne_at=datetime.now().isoformat(),
+                        relance_abonne_count=count + 1)
+                    relances_abonnes += 1
+                    log_event("relance_envoyee", phone_hash=_phone_hash(phone),
+                              type_relance="relance_abonne", numero=count+1, canal="whatsapp")
+                    time.sleep(1)
+                elif absence < 1 and count > 0:
+                    # L'abonné a réécrit → reset compteur pour le prochain cycle d'absence
+                    update_user_silent(phone,
+                        dernier_relance_abonne_at='',
+                        relance_abonne_count=0)
+                continue
+    
+            if user.get("onboarding_done", False):
+                if doit_reinitialiser_relance_hebdo(user):
+                    update_user_silent(phone, relance_hebdo_envoyee=False)
+    
+                absence = get_jours_absence(phone)
+                if absence >= 14 and peut_envoyer_relance_conversationnelle(user, heures=24):
+                    msg_relance = construire_message_reprise(user, user.get("guide", "selena"), absence)
+                    send_message(phone, msg_relance)
+                    add_message(phone, "assistant", msg_relance)
+                    marquer_relance_conversationnelle(phone, "reprise_longue_absence")
+                    update_user_silent(phone,
+                        relance_hebdo_envoyee=True,
+                        derniere_relance_hebdo_at=datetime.now().isoformat())
+                    log_event("relance_envoyee", phone_hash=_phone_hash(phone),
+                              type_relance="longue_absence", canal="whatsapp")
+                    time.sleep(1)
+                    continue
+    
+                if 7 <= absence < 14 and not user.get("relance_hebdo_envoyee", False) and peut_envoyer_relance_conversationnelle(user, heures=24):
+                    msg_hebdo = construire_offre_rituel_hebdo(user, user.get("guide", "selena"))
+                    send_message(phone, msg_hebdo)
+                    add_message(phone, "assistant", msg_hebdo)
+                    marquer_relance_conversationnelle(phone, "rituel_hebdo_optionnel")
+                    update_user_silent(phone,
+                        relance_hebdo_envoyee=True,
+                        derniere_relance_hebdo_at=datetime.now().isoformat())
+                    log_event("relance_envoyee", phone_hash=_phone_hash(phone),
+                              type_relance="rituel_hebdo", canal="whatsapp")
+                    time.sleep(1)
+                    continue
+    
+            links = get_stripe_links(phone)
+    
+            if (nb_jours >= 2
+                    and not user["relance_j6_envoyee"]
+                    and user.get("onboarding_done", False)
+                    and user["etat"] != "pause"
+                    and not user.get("stop_relances", False)):
+                sent = False
+                if _dans_fenetre_24h_meta(user):
+                    msg6 = msg_j6(nom, prenom, links)
+                    try:
+                        r = send_message(phone, msg6)
+                        sent = r.status_code in (200, 201)
+                    except Exception as e:
+                        print(f"[cron] J+2 send_message erreur : {e}")
+                    if sent:
+                        add_message(phone, "assistant", msg6)
+                else:
+                    sent = send_template_message(phone, "auryel_relance_j2", [prenom or "Bonjour", nom])
+                    if sent:
+                        add_message(phone, "assistant", f"[template:auryel_relance_j2] {{1}}={prenom or 'Bonjour'} {{2}}={nom}")
+                if sent:
+                    if user.get("email"):
+                        send_email_j6(user["email"], prenom, links)
+                    update_user_silent(phone, relance_j6_envoyee=True, etat="attente_paiement")
+                    log_event("relance_envoyee", phone_hash=_phone_hash(phone),
+                              type_relance="j2", canal="whatsapp")
+                    j6 += 1
+                time.sleep(1)
+    
+            elif nb_jours >= 3 and user["etat"] == "attente_paiement" and not user.get("relance_j7_envoyee"):
+                if _stripe_paiement_actif(phone, user.get("stripe_customer_id", "")):
+                    print(f"[cron] J+3 différé — paiement Stripe actif détecté → {phone}")
+                    update_user_silent(phone, abonne=True, etat="normal")
+                else:
+                    # Notification WA + email : uniquement si pas en opt-out
+                    if not user.get("stop_relances", False):
+                        # J+3 : message libre si fenêtre 24h ouverte (même logique que J+2), sinon template
+                        if _dans_fenetre_24h_meta(user):
+                            msg_j3 = msg_j7_blocage(nom, prenom, links)
+                            try:
+                                r    = send_message(phone, msg_j3)
+                                sent = r.status_code in (200, 201)
+                            except Exception as e:
+                                print(f"[cron] J+3 free send erreur : {e}")
+                                sent = False
+                            if sent:
+                                add_message(phone, "assistant", msg_j3)
+                                log_event("relance_envoyee", phone_hash=_phone_hash(phone),
+                                          type_relance="j3", canal="whatsapp_libre")
+                        else:
+                            sent = send_template_message(phone, "auryel_relance_j3", [prenom or "Bonjour", nom])
+                            if sent:
+                                add_message(phone, "assistant", f"[template:auryel_relance_j3] {{1}}={prenom or 'Bonjour'} {{2}}={nom}")
+                                log_event("relance_envoyee", phone_hash=_phone_hash(phone),
+                                          type_relance="j3", canal="whatsapp_template")
+                        if user.get("email"):
+                            send_email_relance(user["email"], prenom, links)
+                    else:
+                        print(f"[cron] J+3 blocage silencieux (opt-out stop_relances) → {phone}")
+                    # Blocage accès : toujours appliqué, stop_relances ou non
+                    update_user_silent(phone, etat="pause", relance_j7_envoyee=True)
+                    j7 += 1; time.sleep(1)
+    
+            elif nb_jours == 4 and user["etat"] == "pause" and not user["relance_j8_envoyee"]:
+                # ── J+4 DÉSACTIVÉ ──────────────────────────────────────────────────
+                # msg_j8_wa neutralisé — ton coercitif ("Tu me manques", "Notre lien rare").
+                # Pour réactiver : décommenter les 4 lignes ci-dessous et supprimer le pass.
+                #
+                # msg8 = msg_j8_wa(nom, prenom, links)
+                # if msg8:  # msg_j8_wa retourne "" tant que désactivé
+                #     send_message(phone, msg8)
+                #     add_message(phone, "assistant", msg8)
+                # if user.get("email"): send_email_relance(user["email"], prenom, links)
+                update_user_silent(phone, relance_j8_envoyee=True)  # marquer pour ne pas re-tenter
+                print(f"[cron] J+4 neutralisé (log seul, pas d'envoi) → {phone}")
+                j8 += 1; time.sleep(1)
+        except Exception as e:
+            print(f"[cron/daily] erreur user={_phone_hash(phone)}: {e}")
+            continue
 
     # ── Purge RGPD automatique (hebdomadaire, lundi uniquement) ───────────────
     purge_rgpd = "skipped_not_monday"
@@ -2809,94 +2831,98 @@ def cron_morning():
     }
 
     for phone in phones:
-        user = get_user(phone)
-        if not user:
-            continue
-
-        # Double-vérification stop_relances avant toute décision
-        if user.get("stop_relances"):
-            log_event("morning_skip", phone_hash=_phone_hash(phone),
-                      reason="stop_relances", guide_key=user.get("guide", ""))
-            cnt["skipped_stop"] += 1
-            continue
-
-        mode      = choose_morning_send_mode(user, now)
-        guide_key = user.get("guide", "selena")
-        guide     = GUIDES.get(guide_key, GUIDES["selena"])
-        nom       = user.get("nom_affiche") or guide["nom"]
-        prenom    = user.get("prenom") or ""
-        tsr       = user.get("templates_sans_reponse") or 0
-
-        # ── Modes skip (+ j3 géré exclusivement par /cron/daily) ────────────
-        if mode.startswith("skip_") or mode == "paid_template_j3_conversion":
-            reason = "j3_handled_by_daily" if mode == "paid_template_j3_conversion" else mode
-            log_event("morning_skip", phone_hash=_phone_hash(phone),
-                      reason=reason, guide_key=guide_key)
-            cnt_key = {
-                "skip_stop":                "skipped_stop",
-                "skip_already_sent_today":  "skipped_already_sent_today",
-                "skip_not_subscribed":      "skipped_not_subscribed",
-                "skip_trial_window_closed": "skipped_trial_window_closed",
-                "skip_budget_limit":        "skipped_budget_limit",
-            }.get(mode, "skipped_not_eligible")
-            cnt[cnt_key] += 1
-            continue
-
-        # ── Messages libres (fenêtre 24h Meta ou 72h free entry) ────────────
-        if mode in ("free_entry_72h", "free_text_24h"):
-            msg = build_contextual_morning_prompt(user, guide_key)
-            try:
-                r    = send_message(phone, msg)
-                sent = r.status_code in (200, 201)
-            except Exception as e:
-                print(f"[morning] free send erreur {_phone_hash(phone)} : {e}")
-                sent = False
+        try:
+            user = get_user(phone)
+            if not user:
+                continue
+    
+            # Double-vérification stop_relances avant toute décision
+            if user.get("stop_relances"):
+                log_event("morning_skip", phone_hash=_phone_hash(phone),
+                          reason="stop_relances", guide_key=user.get("guide", ""))
+                cnt["skipped_stop"] += 1
+                continue
+    
+            mode      = choose_morning_send_mode(user, now)
+            guide_key = user.get("guide", "selena")
+            guide     = GUIDES.get(guide_key, GUIDES["selena"])
+            nom       = user.get("nom_affiche") or guide["nom"]
+            prenom    = user.get("prenom") or ""
+            tsr       = user.get("templates_sans_reponse") or 0
+    
+            # ── Modes skip (+ j3 géré exclusivement par /cron/daily) ────────────
+            if mode.startswith("skip_") or mode == "paid_template_j3_conversion":
+                reason = "j3_handled_by_daily" if mode == "paid_template_j3_conversion" else mode
+                log_event("morning_skip", phone_hash=_phone_hash(phone),
+                          reason=reason, guide_key=guide_key)
+                cnt_key = {
+                    "skip_stop":                "skipped_stop",
+                    "skip_already_sent_today":  "skipped_already_sent_today",
+                    "skip_not_subscribed":      "skipped_not_subscribed",
+                    "skip_trial_window_closed": "skipped_trial_window_closed",
+                    "skip_budget_limit":        "skipped_budget_limit",
+                }.get(mode, "skipped_not_eligible")
+                cnt[cnt_key] += 1
+                continue
+    
+            # ── Messages libres (fenêtre 24h Meta ou 72h free entry) ────────────
+            if mode in ("free_entry_72h", "free_text_24h"):
+                msg = build_contextual_morning_prompt(user, guide_key)
+                try:
+                    r    = send_message(phone, msg)
+                    sent = r.status_code in (200, 201)
+                except Exception as e:
+                    print(f"[morning] free send erreur {_phone_hash(phone)} : {e}")
+                    sent = False
+                if sent:
+                    add_message(phone, "assistant", msg)
+                    mark_morning_sent(phone, is_template=False)
+                    if mode == "free_entry_72h":
+                        cnt["free_entry_sent"] += 1
+                    else:
+                        cnt["free_text_sent"] += 1
+                log_event("morning_send", phone_hash=_phone_hash(phone),
+                          send_mode=mode, template_name=None,
+                          estimated_cost=0, guide_key=guide_key, success=sent)
+                time.sleep(1)
+                continue
+    
+            # ── Templates payants ────────────────────────────────────────────────
+            template_name = None
+            if mode in ("paid_template_abonne_matin", "slowed_down_template"):
+                template_name = "auryel_matin_abonne"
+            elif mode == "paid_template_reactivation":
+                try:
+                    jours = (now - datetime.fromisoformat(user["date_premier_contact"])).days
+                except Exception:
+                    jours = 0
+                if 6 <= jours < 9:
+                    template_name = "auryel_reactivation_j6"
+                elif 15 <= jours < 18:
+                    template_name = "auryel_reactivation_j15"
+                elif 30 <= jours < 33:
+                    template_name = "auryel_reactivation_j30"
+    
+            if not template_name:
+                log_event("morning_skip", phone_hash=_phone_hash(phone),
+                          reason="no_template_resolved", guide_key=guide_key)
+                cnt["skipped_not_eligible"] += 1
+                continue
+    
+            sent = send_template_message(phone, template_name, [prenom or "Bonjour", nom])
             if sent:
-                add_message(phone, "assistant", msg)
-                mark_morning_sent(phone, is_template=False)
-                if mode == "free_entry_72h":
-                    cnt["free_entry_sent"] += 1
-                else:
-                    cnt["free_text_sent"] += 1
+                add_message(phone, "assistant",
+                            f"[template:{template_name}] {{1}}={prenom or 'Bonjour'} {{2}}={nom}")
+                mark_morning_sent(phone, is_template=True, current_tsr=tsr)
+                cnt["paid_templates_sent"] += 1
             log_event("morning_send", phone_hash=_phone_hash(phone),
-                      send_mode=mode, template_name=None,
-                      estimated_cost=0, guide_key=guide_key, success=sent)
+                      send_mode=mode, template_name=template_name,
+                      estimated_cost=0.0712 if sent else 0,
+                      guide_key=guide_key, success=sent)
             time.sleep(1)
+        except Exception as e:
+            print(f"[cron/morning] erreur user={_phone_hash(phone)}: {e}")
             continue
-
-        # ── Templates payants ────────────────────────────────────────────────
-        template_name = None
-        if mode in ("paid_template_abonne_matin", "slowed_down_template"):
-            template_name = "auryel_matin_abonne"
-        elif mode == "paid_template_reactivation":
-            try:
-                jours = (now - datetime.fromisoformat(user["date_premier_contact"])).days
-            except Exception:
-                jours = 0
-            if 6 <= jours < 9:
-                template_name = "auryel_reactivation_j6"
-            elif 15 <= jours < 18:
-                template_name = "auryel_reactivation_j15"
-            elif 30 <= jours < 33:
-                template_name = "auryel_reactivation_j30"
-
-        if not template_name:
-            log_event("morning_skip", phone_hash=_phone_hash(phone),
-                      reason="no_template_resolved", guide_key=guide_key)
-            cnt["skipped_not_eligible"] += 1
-            continue
-
-        sent = send_template_message(phone, template_name, [prenom or "Bonjour", nom])
-        if sent:
-            add_message(phone, "assistant",
-                        f"[template:{template_name}] {{1}}={prenom or 'Bonjour'} {{2}}={nom}")
-            mark_morning_sent(phone, is_template=True, current_tsr=tsr)
-            cnt["paid_templates_sent"] += 1
-        log_event("morning_send", phone_hash=_phone_hash(phone),
-                  send_mode=mode, template_name=template_name,
-                  estimated_cost=0.0712 if sent else 0,
-                  guide_key=guide_key, success=sent)
-        time.sleep(1)
 
     estimated_cost = round(cnt["paid_templates_sent"] * 0.0712, 4)
     return jsonify({"status": "ok", "morning": {**cnt, "estimated_cost": estimated_cost}}), 200
@@ -2911,7 +2937,7 @@ def home():
 
 @app.route("/health", methods=["GET"])
 def health():
-    return jsonify({"status":"ok","version":"v9","timestamp":datetime.now().isoformat()}), 200
+    return jsonify({"status":"ok","version":"v10","timestamp":datetime.now().isoformat()}), 200
 
 @app.route("/reset-db", methods=["POST"])
 def reset_database():
@@ -3325,6 +3351,9 @@ SITE_BASE    = "https://auryelvoyance.com"
 
 if not GITHUB_TOKEN:
     print("[WARNING] GITHUB_TOKEN absent — /cron/seo-publish échouera silencieusement au moment du push GitHub")
+
+if not os.environ.get("INDEXNOW_KEY"):
+    print("[WARNING] INDEXNOW_KEY absent — ping IndexNow ignoré silencieusement après chaque publication SEO")
 
 SEO_KEYWORDS = [
     {"slug":"voyance-gratuite-sans-cb",       "kw":"voyance gratuite sans cb",            "cat":"guide",       "cat_label":"Guide"},
