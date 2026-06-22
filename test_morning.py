@@ -42,6 +42,7 @@ def make_user(**kwargs):
         "morning_messages_enabled": True,
         "free_entry_expires_at": "",
         "source_channel": "",
+        "nb_echanges": 7,
     }
     base.update(kwargs)
     return base
@@ -243,6 +244,28 @@ test(
         date_premier_contact=(NOW - timedelta(days=1)).isoformat(),
     ),
     "skip_not_subscribed",
+)
+
+# T18 — User cold (nb_echanges=3, J+6, non-abonné) → skip silencieux
+test(
+    "T18 User cold (nb_echanges=3, J+6) → skip_not_subscribed",
+    make_user(
+        etat="pause",
+        nb_echanges=3,
+        date_premier_contact=(NOW - timedelta(days=6)).isoformat(),
+    ),
+    "skip_not_subscribed",
+)
+
+# T19 — User warm (nb_echanges=7, J+6, non-abonné) → template réactivation
+test(
+    "T19 User warm (nb_echanges=7, J+6) → paid_template_reactivation",
+    make_user(
+        etat="pause",
+        nb_echanges=7,
+        date_premier_contact=(NOW - timedelta(days=6)).isoformat(),
+    ),
+    "paid_template_reactivation",
 )
 
 print()

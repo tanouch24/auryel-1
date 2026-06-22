@@ -48,6 +48,10 @@ PRICES = {
     "annuel":  "price_1TiajJFbuWJZYdVOBb4csDgC",
 }
 
+# Seuil engagement minimum pour templates de réactivation post-essai.
+# L'onboarding conversationnel représente ~5 échanges → 6 = au moins 1 vrai échange post-onboarding.
+MORNING_COLD_THRESHOLD = 6
+
 stripe.api_key = STRIPE_SK
 groq_client = Groq(api_key=GROQ_API_KEY)
 LLM_PROVIDER       = os.environ.get("LLM_PROVIDER", "openai").strip().lower()
@@ -2408,7 +2412,8 @@ def choose_morning_send_mode(user, now):
     #  elles sont déjà True avant J+6, posées à J+2 et J+4 dans /cron/daily.)
     jours = _jours(user.get("date_premier_contact"))
     if jours is not None and (6 <= jours < 9 or 15 <= jours < 18 or 30 <= jours < 33):
-        return "paid_template_reactivation"
+        if (user.get("nb_echanges") or 0) >= MORNING_COLD_THRESHOLD:
+            return "paid_template_reactivation"
     return "skip_not_subscribed"
 
 # ============================================================
