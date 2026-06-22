@@ -2736,12 +2736,25 @@ def cron_daily():
             else:
                 # Notification WA + email : uniquement si pas en opt-out
                 if not user.get("stop_relances", False):
-                    # J+3 : fenêtre 24h Meta forcément fermée — template obligatoire
-                    sent = send_template_message(phone, "auryel_relance_j3", [prenom or "Bonjour", nom])
-                    if sent:
-                        add_message(phone, "assistant", f"[template:auryel_relance_j3] {{1}}={prenom or 'Bonjour'} {{2}}={nom}")
-                        log_event("relance_envoyee", phone_hash=_phone_hash(phone),
-                                  type_relance="j3", canal="whatsapp")
+                    # J+3 : message libre si fenêtre 24h ouverte (même logique que J+2), sinon template
+                    if _dans_fenetre_24h_meta(user):
+                        msg_j3 = msg_j7_blocage(nom, prenom, links)
+                        try:
+                            r    = send_message(phone, msg_j3)
+                            sent = r.status_code in (200, 201)
+                        except Exception as e:
+                            print(f"[cron] J+3 free send erreur : {e}")
+                            sent = False
+                        if sent:
+                            add_message(phone, "assistant", msg_j3)
+                            log_event("relance_envoyee", phone_hash=_phone_hash(phone),
+                                      type_relance="j3", canal="whatsapp_libre")
+                    else:
+                        sent = send_template_message(phone, "auryel_relance_j3", [prenom or "Bonjour", nom])
+                        if sent:
+                            add_message(phone, "assistant", f"[template:auryel_relance_j3] {{1}}={prenom or 'Bonjour'} {{2}}={nom}")
+                            log_event("relance_envoyee", phone_hash=_phone_hash(phone),
+                                      type_relance="j3", canal="whatsapp_template")
                     if user.get("email"):
                         send_email_relance(user["email"], prenom, links)
                 else:
