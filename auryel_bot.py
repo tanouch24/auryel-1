@@ -2434,6 +2434,46 @@ MSG_MATIN_LIBRE = {
 _MSG_MATIN_FALLBACK = "Bonjour {prenom}. Je pensais à ta situation ce matin. Aujourd'hui tu reprends ta place. Tu veux qu'on continue ?"
 
 
+def build_contextual_morning_prompt(user, guide_key):
+    """Génère un message matin personnalisé via LLM.
+    Fallback sur MSG_MATIN_LIBRE si le LLM échoue (erreur, timeout, réponse vide)."""
+    guide   = GUIDES.get(guide_key) or GUIDES["selena"]
+    prenom  = user.get("prenom") or "toi"
+    memoire = construire_memoire_emotionnelle(user)
+
+    system_content = (
+        f"Tu es {guide.get('nom')}, {guide.get('style_relationnel')}. "
+        f"Tu envoies un message WhatsApp du matin à {prenom}. "
+        "Structure obligatoire : "
+        "1) Bonjour + prénom "
+        "2) Motivation courte (1 phrase — reprendre sa place, respirer, ne pas courir derrière le silence) "
+        "3) Rappel discret de la discussion ou du lien "
+        "4) Question finale simple qui invite à répondre. "
+        "2 à 4 phrases maximum. Jamais de pavé. "
+        "Style WhatsApp naturel, pas de liste, pas de bullet points. "
+        f"{memoire}"
+    )
+    messages = [
+        {"role": "system", "content": system_content},
+        {"role": "user",   "content": "Génère le message du matin."},
+    ]
+    try:
+        result = call_llm(messages, temperature=0.85, max_tokens=120)
+        if result and result.strip():
+            log_event("morning_contextual_generated",
+                      phone_hash=_phone_hash(user.get("phone", "")),
+                      guide_key=guide_key)
+            return result.strip()
+    except Exception as e:
+        print(f"[morning] LLM contextuel erreur guide={guide_key} : {e}")
+
+    log_event("morning_contextual_fallback",
+              phone_hash=_phone_hash(user.get("phone", "")),
+              guide_key=guide_key)
+    tpl = MSG_MATIN_LIBRE.get(guide_key, _MSG_MATIN_FALLBACK)
+    return tpl.format(prenom=prenom)
+
+
 def mark_morning_sent(phone, is_template=False, current_tsr=0):
     """Met à jour les champs morning après un envoi réussi.
     Ne jamais appeler si l'envoi a échoué.
@@ -2789,8 +2829,7 @@ def cron_morning():
 
         # ── Messages libres (fenêtre 24h Meta ou 72h free entry) ────────────
         if mode in ("free_entry_72h", "free_text_24h"):
-            tpl = MSG_MATIN_LIBRE.get(guide_key, _MSG_MATIN_FALLBACK)
-            msg = tpl.format(prenom=prenom) if prenom else tpl.format(prenom="")
+            msg = build_contextual_morning_prompt(user, guide_key)
             try:
                 r    = send_message(phone, msg)
                 sent = r.status_code in (200, 201)
