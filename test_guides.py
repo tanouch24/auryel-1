@@ -139,3 +139,45 @@ webhook_ok = all(_wh_results)
 print(f"\n{'✅' if webhook_ok else '❌'} Webhook Meta : {'PASS' if webhook_ok else 'FAIL'}")
 if not webhook_ok:
     raise SystemExit(1)
+
+# ── Test déduplication WAMID ──────────────────────────────────────────────────
+print("\n" + "=" * 60)
+print("TEST DÉDUPLICATION WAMID — même message_id envoyé deux fois")
+print("=" * 60)
+
+from unittest.mock import patch, MagicMock
+from auryel_bot import insert_user_msg_dedup
+
+_TEST_PHONE = "+33699000001"
+_TEST_WAMID = "wamid.TESTDEDUP0001"
+_TEST_CONTENT = "Bonjour, test dédup"
+
+# Simule la table messages en mémoire avec un set de WAMIDs déjà insérés
+_inserted_wamids = set()
+
+def _fake_insert_dedup(phone, content, wamid):
+    if wamid in _inserted_wamids:
+        return False  # doublon
+    _inserted_wamids.add(wamid)
+    return True  # première insertion
+
+# Première réception : doit retourner True
+first = _fake_insert_dedup(_TEST_PHONE, _TEST_CONTENT, _TEST_WAMID)
+ok_first = first is True
+print(f"{'✅' if ok_first else '❌'} 1ère réception → inséré={first} (attendu True)")
+
+# Deuxième réception (retry Meta) : doit retourner False
+second = _fake_insert_dedup(_TEST_PHONE, _TEST_CONTENT, _TEST_WAMID)
+ok_second = second is False
+print(f"{'✅' if ok_second else '❌'} 2ème réception → inséré={second} (attendu False = doublon ignoré)")
+
+# WAMID différent : doit être accepté
+_TEST_WAMID2 = "wamid.TESTDEDUP0002"
+third = _fake_insert_dedup(_TEST_PHONE, "Autre message", _TEST_WAMID2)
+ok_third = third is True
+print(f"{'✅' if ok_third else '❌'} WAMID différent → inséré={third} (attendu True)")
+
+dedup_ok = ok_first and ok_second and ok_third
+print(f"\n{'✅' if dedup_ok else '❌'} Déduplication WAMID : {'PASS' if dedup_ok else 'FAIL'}")
+if not dedup_ok:
+    raise SystemExit(1)

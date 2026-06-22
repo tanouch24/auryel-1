@@ -248,6 +248,16 @@ def init_db():
         c.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS source_channel TEXT DEFAULT ''")
     except Exception as e:
         print(f"Migration v10: {e}")
+    # Migration v11 — anti-doublon webhook Meta (WAMID)
+    try:
+        c.execute("ALTER TABLE messages ADD COLUMN IF NOT EXISTS meta_message_id TEXT DEFAULT ''")
+        c.execute("""
+            CREATE UNIQUE INDEX IF NOT EXISTS idx_unique_meta_msg
+            ON messages (meta_message_id)
+            WHERE meta_message_id != ''
+        """)
+    except Exception as e:
+        print(f"Migration v11: {e}")
     conn.commit()
     conn.close()
 
@@ -376,13 +386,15 @@ def update_user_silent(phone, **kwargs):
             try: conn.close()
             except Exception: pass
 
-def add_message(phone, role, content):
+def add_message(phone, role, content, meta_message_id=''):
     conn = None
     try:
         conn = get_conn()
         c = conn.cursor()
-        c.execute("INSERT INTO messages (phone,role,content,timestamp) VALUES (%s,%s,%s,%s)",
-                  (phone, role, content, datetime.now().isoformat()))
+        c.execute(
+            "INSERT INTO messages (phone,role,content,timestamp,meta_message_id) VALUES (%s,%s,%s,%s,%s)",
+            (phone, role, content, datetime.now().isoformat(), meta_message_id)
+        )
         conn.commit()
     except Exception as e:
         print(f"[DB] add_message erreur {_phone_hash(phone)}: {e}")
@@ -390,6 +402,31 @@ def add_message(phone, role, content):
         if conn:
             try: conn.close()
             except Exception: pass
+
+def insert_user_msg_dedup(phone, content, wamid):
+    """Tente d'insérer le message utilisateur avec son WAMID Meta.
+    Retourne True si inséré (première réception), False si doublon (ON CONFLICT).
+    En cas d'erreur DB inattendue, retourne True (fail-open) pour ne pas bloquer le flux."""
+    conn = None
+    try:
+        conn = get_conn()
+        c = conn.cursor()
+        c.execute(
+            "INSERT INTO messages (phone,role,content,timestamp,meta_message_id) "
+            "VALUES (%s,'user',%s,%s,%s) ON CONFLICT DO NOTHING",
+            (phone, content, datetime.now().isoformat(), wamid)
+        )
+        inserted = c.rowcount == 1
+        conn.commit()
+        return inserted
+    except Exception as e:
+        print(f"[DB] insert_user_msg_dedup erreur {_phone_hash(phone)}: {e}")
+        return True  # fail-open : on laisse passer en cas d'erreur inattendue
+    finally:
+        if conn:
+            try: conn.close()
+            except Exception: pass
+
 
 def log_admin_action(action, phone, detail=""):
     try:
@@ -1850,7 +1887,7 @@ def gerer_onboarding(phone, user, user_message):
 # ============================================================
 # GET REPLY
 # ============================================================
-def get_reply(phone, user_message, depuis_pub=False):
+def get_reply(phone, user_message, depuis_pub=False, user_msg_pre_inserted=False):
     user = get_user(phone)
     if not user: return "Je suis là..."
 
@@ -1866,7 +1903,8 @@ def get_reply(phone, user_message, depuis_pub=False):
 
     if detecter_pas_les_moyens(user_message):
         reply = msg_pas_les_moyens()
-        add_message(phone, "user", user_message)
+        if not user_msg_pre_inserted:
+            add_message(phone, "user", user_message)
         add_message(phone, "assistant", reply)
         update_user(phone, nb_echanges=user.get("nb_echanges", 0) + 1)
         return reply
@@ -1901,7 +1939,8 @@ def get_reply(phone, user_message, depuis_pub=False):
     # courant, qui est ajouté explicitement en fin de tableau messages à l’appel LLM.
     # Inverser ces deux lignes provoquerait un doublon du dernier message utilisateur.
     history = get_history(phone, limit=20)
-    add_message(phone, "user", user_message)
+    if not user_msg_pre_inserted:
+        add_message(phone, "user", user_message)
     update_user(phone, nb_echanges=user.get("nb_echanges", 0) + 1)
 
     user_fresh = get_user(phone)
@@ -2032,6 +2071,7 @@ def receive():
 
         if msg["type"] == "text":
             user_text = msg["text"]["body"]
+            wamid = msg.get("id", "")
             print(f"👤 {from_num}: {user_text}")
             est_depuis_pub = user_text.lower().strip() == MSG_PUB
 
@@ -2040,6 +2080,9 @@ def receive():
             if is_new:
                 if guide_key_code:
                     create_user(from_num, guide_key_code, nom_affiche_code, depuis_site=True)
+                    if wamid and not insert_user_msg_dedup(from_num, user_text, wamid):
+                        print(f"[webhook] doublon ignoré wamid={wamid}")
+                        return jsonify({"status": "ok"}), 200
                     def send_welcome_site(num, nom):
                         time.sleep(2)
                         bv = msg_bienvenue_site(nom)
@@ -2050,6 +2093,9 @@ def receive():
                     guide_key = detecter_guide(user_text)
                     nom_affiche = "Séléna"
                     create_user(from_num, guide_key, nom_affiche, depuis_site=False)
+                    if wamid and not insert_user_msg_dedup(from_num, user_text, wamid):
+                        print(f"[webhook] doublon ignoré wamid={wamid}")
+                        return jsonify({"status": "ok"}), 200
                     def send_welcome(num, nom, depuis_pub):
                         time.sleep(2)
                         bv = msg_bienvenue_pub(nom) if depuis_pub else msg_bienvenue(nom)
@@ -2089,7 +2135,12 @@ def receive():
 
                 # Le flow onboarding doit toujours être exécuté avant toute logique métier ou émotionnelle.
                 if onboarding_ok and user.get("etat") == "pause":
-                    add_message(from_num, "user", user_text)
+                    if wamid:
+                        if not insert_user_msg_dedup(from_num, user_text, wamid):
+                            print(f"[webhook] doublon ignoré wamid={wamid}")
+                            return jsonify({"status": "ok"}), 200
+                    else:
+                        add_message(from_num, "user", user_text)
                     def send_pause(num):
                         time.sleep(1)
                         links = get_stripe_links(num)
@@ -2100,6 +2151,14 @@ def receive():
                     return jsonify({"status":"ok"}), 200
 
                 nom_affiche = user.get("nom_affiche") or user.get("guide", "selena")
+
+                # Déduplication WAMID — évite double traitement LLM sur retry Meta
+                _user_msg_pre_inserted = False
+                if onboarding_ok and wamid:
+                    if not insert_user_msg_dedup(from_num, user_text, wamid):
+                        print(f"[webhook] doublon ignoré wamid={wamid}")
+                        return jsonify({"status": "ok"}), 200
+                    _user_msg_pre_inserted = True
 
                 def send_reply(num, text, depuis_pub, u, nom):
                     time.sleep(2)
@@ -2115,7 +2174,8 @@ def receive():
                         reply = msg_fin_conv(nom)
                         send_message(num, reply)
                         add_message(num, "assistant", reply)
-                        add_message(num, "user", text)
+                        if not _user_msg_pre_inserted:
+                            add_message(num, "user", text)
                         u_fresh = get_user(num)
                         nb = u_fresh.get("nb_echanges", 0) + 1 if u_fresh else 1
                         update_user(num, nb_echanges=nb)
@@ -2147,7 +2207,8 @@ def receive():
                         derniere_intention=u.get("derniere_intention", ""),
                     )
 
-                    reply = get_reply(num, text, depuis_pub=depuis_pub)
+                    reply = get_reply(num, text, depuis_pub=depuis_pub,
+                                      user_msg_pre_inserted=_user_msg_pre_inserted)
                     print(f"🔮 {nom}: {reply}")
                     send_message(num, reply)
 
