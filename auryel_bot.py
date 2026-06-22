@@ -1004,23 +1004,13 @@ def _stripe_status_to_user(status):
     return False, 'pause'
 
 def get_stripe_links(phone):
-    links = {}
-    for name, price_id in PRICES.items():
-        try:
-            s = stripe.checkout.Session.create(
-                payment_method_types=["card"],
-                line_items=[{"price": price_id, "quantity": 1}],
-                mode="subscription",
-                success_url=f"{SITE_URL}/landing-tiktok.html?success=1&plan={name}",
-                cancel_url=f"{SITE_URL}/tarifs.html",
-                client_reference_id=phone,
-                metadata={"phone": phone},
-            )
-            links[name] = s.url
-        except Exception as e:
-            print(f"Stripe error {name}: {e}")
-            links[name] = f"{SITE_URL}/tarifs.html"
-    return links
+    """Liens statiques vers /tarifs avec UTM source=whatsapp.
+    Le checkout Stripe est créé quand l'utilisateur clique sur la page tarifs."""
+    base = f"{SITE_URL}/tarifs"
+    return {
+        "mensuel": f"{base}?source=whatsapp&plan=mensuel",
+        "annuel":  f"{base}?source=whatsapp&plan=annuel",
+    }
 
 # ============================================================
 # MESSAGES
@@ -1821,13 +1811,21 @@ def gerer_onboarding(phone, user, user_message):
         enregistrer_echange_onboarding(phone, user, user_message, reply)
         return reply
 
-    if step == "psaume":
+    if step == "psaume" or step.startswith("psaume_"):
+        tentatives = int(step.split("_")[1]) if "_" in step else 1
         nombres = [int(w) for w in re.findall(r"\b\d+\b", user_message)]
         numero = nombres[0] if nombres else None
         if not numero or not 1 <= numero <= 150:
-            reply = "Choisis maintenant un chiffre entre 1 et 150."
-            enregistrer_echange_onboarding(phone, user, user_message, reply)
-            return reply
+            if tentatives >= 3:
+                # 3 tentatives sans chiffre valide → psaume aléatoire
+                numero = random.randint(1, 150)
+                log_event("onboarding_psaume_auto", phone_hash=_phone_hash(phone),
+                          tentatives=tentatives)
+            else:
+                update_user_silent(phone, onboarding_step=f"psaume_{tentatives + 1}")
+                reply = "Choisis un chiffre entre 1 et 150."
+                enregistrer_echange_onboarding(phone, user, user_message, reply)
+                return reply
 
         psaume = PSAUMES.get(numero, PSAUMES[63])
         user_psaume = {**user, "onboarding_psaume": numero}
@@ -2315,6 +2313,8 @@ def create_checkout():
             return jsonify({"error": "Paramètres manquants"}), 400
         if not phone:
             return jsonify({"error": "Numéro WhatsApp requis"}), 400
+        if not get_user(phone):
+            return jsonify({"error": "Numéro non reconnu"}), 400
 
         session_stripe = stripe.checkout.Session.create(
             mode="subscription",
