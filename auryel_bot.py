@@ -2459,6 +2459,13 @@ def choose_morning_send_mode(user, now):
         if free_expires and free_expires > now:
             return "free_entry_72h"
 
+    # Essai actif mais onboarding non terminé + fenêtre 24h fermée : skip distinct (T23)
+    if (not user.get("abonne") and
+            not user.get("onboarding_done", False) and
+            user.get("etat", "normal") != "pause" and
+            _secs(user.get("date_dernier_contact")) >= 86400):
+        return "skip_trial_window_closed"
+
     # Essai actif : non-abonné, onboarding terminé, pas encore bloqué (même logique que /cron/daily)
     # TikTok/SEO n'a jamais de free_entry_expires_at — ce check est le seul proxy valide pour eux
     is_trial_active = (
@@ -2474,7 +2481,9 @@ def choose_morning_send_mode(user, now):
         # J+3 : protégé par relance_j7_envoyee (posée par /cron/daily au moment du blocage)
         if jours is not None and jours >= 3 and not user.get("relance_j7_envoyee"):
             return "paid_template_j3_conversion"
-        return "skip_trial_window_closed"
+        if jours is None or jours <= 2:
+            return "paid_template_essai_matin"
+        return "paid_template_matin_j3"
 
     if user.get("abonne"):
         if _secs(user.get("date_dernier_contact")) < 86400:
@@ -2952,6 +2961,10 @@ def cron_morning():
             template_name = None
             if mode in ("paid_template_abonne_matin", "slowed_down_template"):
                 template_name = "auryel_matin_abonne"
+            elif mode == "paid_template_essai_matin":
+                template_name = "auryel_matin_essai"   # template en attente d'approbation Meta
+            elif mode == "paid_template_matin_j3":
+                template_name = "auryel_matin_j3"      # template en attente d'approbation Meta
             elif mode == "paid_template_reactivation":
                 try:
                     jours = (now - datetime.fromisoformat(user["date_premier_contact"])).days

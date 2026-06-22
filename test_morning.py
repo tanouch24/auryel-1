@@ -90,9 +90,9 @@ test(
     "free_text_24h",
 )
 
-# T3 — Essai actif silencieux : onboarding_done, pas actif 24h, avant J+3 → skip_trial_window_closed
+# T3 — Essai actif J+2 : onboarding_done=True, fenêtre 24h fermée, jours<=2 → paid_template_essai_matin
 test(
-    "T3  Essai actif silencieux (fenêtre 24h fermée, avant J+3)",
+    "T3  Essai actif J+2 (fenêtre 24h fermée, avant J+3)",
     make_user(
         onboarding_done=True,
         etat="normal",
@@ -101,7 +101,7 @@ test(
         date_premier_contact=(NOW - timedelta(days=2)).isoformat(),
         source_channel="seo",
     ),
-    "skip_trial_window_closed",
+    "paid_template_essai_matin",
 )
 
 # T4 — J+3 : onboarding_done, etat=attente_paiement (J+2 envoyé), relance_j7 pas encore posée → template conversion
@@ -222,9 +222,9 @@ test(
     "skip_not_subscribed",
 )
 
-# T16 — J+3 déjà traité par /cron/daily (relance_j7=True, essai encore actif) → trial window closed
+# T16 — J+4, relance_j7=True (daily déjà passé), fenêtre fermée → paid_template_matin_j3
 test(
-    "T16 J+3 déjà traité par daily (relance_j7_envoyee=True)",
+    "T16 J+4 relance_j7=True (daily déjà passé) → paid_template_matin_j3",
     make_user(
         onboarding_done=True,
         etat="attente_paiement",
@@ -232,7 +232,7 @@ test(
         date_dernier_contact=(NOW - timedelta(hours=30)).isoformat(),
         date_premier_contact=(NOW - timedelta(days=4)).isoformat(),
     ),
-    "skip_trial_window_closed",
+    "paid_template_matin_j3",
 )
 
 # T17 — Nouveau user sans onboarding → pas de morning message
@@ -266,6 +266,60 @@ test(
         date_premier_contact=(NOW - timedelta(days=6)).isoformat(),
     ),
     "paid_template_reactivation",
+)
+
+# T20 — Essai J+1 : onboarding_done=True, fenêtre fermée, jours=1 ≤ 2 → paid_template_essai_matin
+test(
+    "T20 Essai J+1, fenêtre fermée, onboarding=True → paid_template_essai_matin",
+    make_user(
+        onboarding_done=True,
+        etat="normal",
+        free_entry_expires_at="",
+        date_dernier_contact=(NOW - timedelta(hours=30)).isoformat(),
+        date_premier_contact=(NOW - timedelta(days=1)).isoformat(),
+    ),
+    "paid_template_essai_matin",
+)
+
+# T21 — Essai J+2 : onboarding_done=True, fenêtre fermée, jours=2 ≤ 2 → paid_template_essai_matin
+test(
+    "T21 Essai J+2, fenêtre fermée, onboarding=True → paid_template_essai_matin",
+    make_user(
+        onboarding_done=True,
+        etat="normal",
+        free_entry_expires_at="",
+        date_dernier_contact=(NOW - timedelta(hours=30)).isoformat(),
+        date_premier_contact=(NOW - timedelta(days=2)).isoformat(),
+    ),
+    "paid_template_essai_matin",
+)
+
+# T22 — Essai J+3 : relance_j7=True (daily déjà passé), fenêtre fermée → paid_template_matin_j3
+test(
+    "T22 Essai J+3, relance_j7=True, fenêtre fermée → paid_template_matin_j3",
+    make_user(
+        onboarding_done=True,
+        etat="normal",
+        relance_j7_envoyee=True,
+        free_entry_expires_at="",
+        date_dernier_contact=(NOW - timedelta(hours=30)).isoformat(),
+        date_premier_contact=(NOW - timedelta(days=3)).isoformat(),
+    ),
+    "paid_template_matin_j3",
+)
+
+# T23 — Onboarding non terminé, fenêtre 24h fermée → skip_trial_window_closed
+test(
+    "T23 onboarding_done=False, fenêtre fermée → skip_trial_window_closed",
+    make_user(
+        onboarding_done=False,
+        abonne=False,
+        etat="normal",
+        free_entry_expires_at="",
+        date_dernier_contact=(NOW - timedelta(hours=30)).isoformat(),
+        date_premier_contact=(NOW - timedelta(days=2)).isoformat(),
+    ),
+    "skip_trial_window_closed",
 )
 
 print()
