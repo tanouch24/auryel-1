@@ -331,6 +331,8 @@ def update_user(phone, **kwargs):
     À utiliser uniquement quand l'utilisateur interagit réellement."""
     if not kwargs: return
     kwargs["date_dernier_contact"] = datetime.now().isoformat()
+    # Toute interaction réelle remet le compteur de templates sans réponse à 0
+    kwargs.setdefault("templates_sans_reponse", 0)
     sets = ", ".join(f"{k}=%s" for k in kwargs)
     vals = list(kwargs.values()) + [phone]
     conn = get_conn()
@@ -3320,6 +3322,9 @@ if __name__ == "__main__":
 GITHUB_TOKEN = os.environ.get("GITHUB_TOKEN")
 GITHUB_REPO  = os.environ.get("GITHUB_REPO", "tanouch24/auryel-1")
 SITE_BASE    = "https://auryelvoyance.com"
+
+if not GITHUB_TOKEN:
+    print("[WARNING] GITHUB_TOKEN absent — /cron/seo-publish échouera silencieusement au moment du push GitHub")
 
 SEO_KEYWORDS = [
     {"slug":"voyance-gratuite-sans-cb",       "kw":"voyance gratuite sans cb",            "cat":"guide",       "cat_label":"Guide"},
