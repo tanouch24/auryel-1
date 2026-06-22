@@ -48,6 +48,11 @@
   status = 200
 
 [[redirects]]
+  from = "/payer"
+  to = "/payer.html"
+  status = 200
+
+[[redirects]]
   from = "/comment-ca-marche"
   to = "/comment-ca-marche.html"
   status = 200
