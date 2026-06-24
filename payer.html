@@ -240,6 +240,7 @@ body{
     })
     .then(function (data) {
       if (!data.url) throw new Error('Lien Stripe manquant');
+      if (typeof fbq !== 'undefined') fbq('track', 'InitiateCheckout');
       window.location.href = data.url;
     })
     .catch(function () {

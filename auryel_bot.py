@@ -2275,6 +2275,7 @@ def stripe_webhook():
             update_user_silent(phone, abonne=True, etat="normal",
                        stripe_customer_id=cus_id,
                        date_abonnement=datetime.now().isoformat())
+            print(f"[EVENT] type=purchase phone={phone} stripe_customer={cus_id}")
 
             def send_retour(num, u):
                 time.sleep(3)
