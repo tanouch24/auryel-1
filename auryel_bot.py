@@ -231,12 +231,16 @@ def init_db():
                 FOREIGN KEY (phone) REFERENCES users(phone)
                 ON DELETE CASCADE
         """)
+        conn.commit()
     except Exception as e:
+        conn.rollback()
         print(f"Migration v8: {e}")
     # Migration v9 — colonne vérification Stripe anti-zombie (1×/semaine)
     try:
         c.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS derniere_verif_stripe_at TEXT DEFAULT ''")
+        conn.commit()
     except Exception as e:
+        conn.rollback()
         print(f"Migration v9: {e}")
     # Migration v10 — morning routine
     try:
@@ -246,7 +250,9 @@ def init_db():
         c.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS morning_messages_enabled BOOLEAN DEFAULT TRUE")
         c.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS free_entry_expires_at TEXT DEFAULT ''")
         c.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS source_channel TEXT DEFAULT ''")
+        conn.commit()
     except Exception as e:
+        conn.rollback()
         print(f"Migration v10: {e}")
     # Migration v11 — anti-doublon webhook Meta (WAMID)
     try:
@@ -256,9 +262,10 @@ def init_db():
             ON messages (meta_message_id)
             WHERE meta_message_id != ''
         """)
+        conn.commit()
     except Exception as e:
+        conn.rollback()
         print(f"Migration v11: {e}")
-    conn.commit()
     conn.close()
 
 def reset_db():
