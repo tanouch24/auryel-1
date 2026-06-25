@@ -253,6 +253,8 @@ def init_db():
         c.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS categorie_principale TEXT DEFAULT ''")
         c.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS last_h4_relance_at TEXT DEFAULT ''")
         c.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS last_h22_relance_at TEXT DEFAULT ''")
+        c.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS messages_today_count INTEGER DEFAULT 0")
+        c.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS messages_today_date TEXT DEFAULT ''")
         conn.commit()
     except Exception as e:
         conn.rollback()
@@ -299,7 +301,8 @@ def get_user(phone):
             stop_relances,derniere_verif_stripe_at,
             last_morning_message_at,last_template_message_at,templates_sans_reponse,
             morning_messages_enabled,free_entry_expires_at,source_channel,
-            last_h4_relance_at,last_h22_relance_at
+            last_h4_relance_at,last_h22_relance_at,
+            messages_today_count,messages_today_date
             FROM users WHERE phone=%s""", (phone,))
         row = c.fetchone()
         if row:
@@ -337,6 +340,8 @@ def get_user(phone):
                 "source_channel":row[45] or "",
                 "last_h4_relance_at":row[46] or "",
                 "last_h22_relance_at":row[47] or "",
+                "messages_today_count":row[48] or 0,
+                "messages_today_date":row[49] or "",
             }
         return None
     except Exception as e:
@@ -1898,6 +1903,9 @@ def gerer_onboarding(phone, user, user_message):
 def get_reply(phone, user_message, depuis_pub=False, user_msg_pre_inserted=False):
     user = get_user(phone)
     if not user: return "Je suis là..."
+
+    if check_and_increment_daily_limit(phone, user):
+        return "On a beaucoup avancé aujourd'hui.\nJe préfère te répondre avec justesse plutôt que de te laisser tourner en boucle.\nOn reprend demain matin, et je garde le fil de ton histoire."
 
     guide_key = user.get("guide", "selena")
 
@@ -3507,6 +3515,25 @@ def cron_relances_intraday():
 
         except Exception as e:
             print(f"[h4/h22] erreur user {phone} : {e}")
+
+DAILY_LIMIT = 150
+
+def check_and_increment_daily_limit(phone, user):
+    """Vérifie le plafond 150 messages/jour. Retourne True si limite atteinte."""
+    today = datetime.now(timezone(timedelta(hours=2))).date().isoformat()
+    count = user.get("messages_today_count") or 0
+    last_date = user.get("messages_today_date") or ""
+
+    if last_date != today:
+        # Nouveau jour — reset
+        update_user_silent(phone, messages_today_count=1, messages_today_date=today)
+        return False
+
+    if count >= DAILY_LIMIT:
+        return True
+
+    update_user_silent(phone, messages_today_count=count + 1)
+    return False
 
 # Démarrage APScheduler
 scheduler = BackgroundScheduler(timezone="Europe/Paris")
