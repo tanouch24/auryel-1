@@ -1021,11 +1021,7 @@ def detecter_pas_les_moyens(message):
     return any(w in msg for w in ["pas les moyens","trop cher","pas d'argent","pas assez","budget"])
 
 def doit_proposer_rituel(user):
-    today = date.today().isoformat()
-    if user.get("dernier_rituel_date") == today: return None
-    if user.get("nb_echanges", 0) < 3: return None
-    day_num = date.today().toordinal()
-    return RITUELS[day_num % 3]
+    return None  # rituels désactivés
 
 def get_message_rituel(type_rituel):
     if type_rituel == "psaume":
@@ -1794,41 +1790,18 @@ def gerer_onboarding(phone, user, user_message):
         update_user_silent(
             phone,
             onboarding_question=user_message.strip(),
-            onboarding_step="psaume"
-        )
-        reply = "Choisis maintenant un chiffre entre 1 et 150."
-        enregistrer_echange_onboarding(phone, user, user_message, reply)
-        return reply
-
-    if step == "psaume" or step.startswith("psaume_"):
-        tentatives = int(step.split("_")[1]) if "_" in step else 1
-        nombres = [int(w) for w in re.findall(r"\b\d+\b", user_message)]
-        numero = nombres[0] if nombres else None
-        if not numero or not 1 <= numero <= 150:
-            if tentatives >= 3:
-                # 3 tentatives sans chiffre valide → psaume aléatoire
-                numero = random.randint(1, 150)
-                log_event("onboarding_psaume_auto", phone_hash=_phone_hash(phone),
-                          tentatives=tentatives)
-            else:
-                update_user_silent(phone, onboarding_step=f"psaume_{tentatives + 1}")
-                reply = "Choisis un chiffre entre 1 et 150."
-                enregistrer_echange_onboarding(phone, user, user_message, reply)
-                return reply
-
-        psaume = PSAUMES.get(numero, PSAUMES[63])
-        user_psaume = {**user, "onboarding_psaume": numero}
-        reply = construire_lecture_psaume_onboarding(numero, psaume, user_psaume)
-        update_user_silent(
-            phone,
-            onboarding_psaume=numero,
             onboarding_done=True,
             onboarding_step=""
         )
-        enregistrer_echange_onboarding(phone, user, user_message, reply)
         log_event("onboarding_done", phone_hash=_phone_hash(phone),
                   guide=user.get("guide", ""), ts=datetime.utcnow().isoformat())
-        return reply
+        return None
+
+    if step == "psaume" or step.startswith("psaume_"):
+        update_user_silent(phone, onboarding_done=True, onboarding_step="")
+        log_event("onboarding_done", phone_hash=_phone_hash(phone),
+                  guide=user.get("guide", ""), ts=datetime.utcnow().isoformat())
+        return None
 
     update_user_silent(phone, onboarding_step="prenom")
     reply = "Avant de commencer, comment t’appelles-tu ?"
@@ -2134,17 +2107,6 @@ def receive():
                         return
 
                     relance_autorisee = peut_envoyer_relance_conversationnelle(u, heures=3)
-                    rituel_prop = doit_proposer_rituel(u) if relance_autorisee else None
-                    relance_envoyee = False
-                    if rituel_prop:
-                        msg_r = get_message_rituel(rituel_prop)
-                        send_message(num, msg_r)
-                        add_message(num, "assistant", msg_r)
-                        update_user(num, dernier_rituel_date=date.today().isoformat(),
-                                   dernier_rituel_type=rituel_prop, dernier_outil=rituel_prop)
-                        marquer_relance_conversationnelle(num, f"rituel_{rituel_prop}")
-                        relance_envoyee = True
-                        time.sleep(3)
 
                     # Analyse émotionnelle + sauvegarde silencieuse
                     u = detecter_contexte_emotionnel(text, u)
@@ -2163,16 +2125,6 @@ def receive():
                                       user_msg_pre_inserted=_user_msg_pre_inserted)
                     print(f"🔮 {nom}: {reply}")
                     send_message(num, reply)
-
-                    # Rituel automatique pour abonnés (après la réponse principale)
-                    u_after = get_user(num)
-                    if u_after and not relance_envoyee and relance_autorisee:
-                        rituel_auto = get_rituel(u_after)
-                        if rituel_auto:
-                            time.sleep(2)
-                            send_message(num, rituel_auto)
-                            add_message(num, "assistant", rituel_auto)
-                            marquer_relance_conversationnelle(num, "rituel_auto")
 
                 threading.Thread(target=send_reply,
                     args=(from_num, user_text, est_depuis_pub, user, nom_affiche),
@@ -2735,19 +2687,6 @@ def cron_daily():
                         derniere_relance_hebdo_at=datetime.now().isoformat())
                     log_event("relance_envoyee", phone_hash=_phone_hash(phone),
                               type_relance="longue_absence", canal="whatsapp")
-                    time.sleep(1)
-                    continue
-    
-                if 7 <= absence < 14 and not user.get("relance_hebdo_envoyee", False) and peut_envoyer_relance_conversationnelle(user, heures=24):
-                    msg_hebdo = construire_offre_rituel_hebdo(user, user.get("guide", "selena"))
-                    send_message(phone, msg_hebdo)
-                    add_message(phone, "assistant", msg_hebdo)
-                    marquer_relance_conversationnelle(phone, "rituel_hebdo_optionnel")
-                    update_user_silent(phone,
-                        relance_hebdo_envoyee=True,
-                        derniere_relance_hebdo_at=datetime.now().isoformat())
-                    log_event("relance_envoyee", phone_hash=_phone_hash(phone),
-                              type_relance="rituel_hebdo", canal="whatsapp")
                     time.sleep(1)
                     continue
     
