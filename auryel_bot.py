@@ -6,6 +6,7 @@ from flask_limiter import Limiter
 from flask_limiter.util import get_remote_address
 from werkzeug.middleware.proxy_fix import ProxyFix
 from groq import Groq
+from apscheduler.schedulers.background import BackgroundScheduler
 
 app = Flask(__name__)
 app.secret_key = os.environ.get("SECRET_KEY")
@@ -250,6 +251,8 @@ def init_db():
         c.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS free_entry_expires_at TEXT DEFAULT ''")
         c.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS source_channel TEXT DEFAULT ''")
         c.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS categorie_principale TEXT DEFAULT ''")
+        c.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS last_h4_relance_at TEXT DEFAULT ''")
+        c.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS last_h22_relance_at TEXT DEFAULT ''")
         conn.commit()
     except Exception as e:
         conn.rollback()
@@ -295,7 +298,8 @@ def get_user(phone):
             relance_hebdo_envoyee,derniere_relance_hebdo_at,
             stop_relances,derniere_verif_stripe_at,
             last_morning_message_at,last_template_message_at,templates_sans_reponse,
-            morning_messages_enabled,free_entry_expires_at,source_channel
+            morning_messages_enabled,free_entry_expires_at,source_channel,
+            last_h4_relance_at,last_h22_relance_at
             FROM users WHERE phone=%s""", (phone,))
         row = c.fetchone()
         if row:
@@ -331,6 +335,8 @@ def get_user(phone):
                 "morning_messages_enabled":row[43] if row[43] is not None else True,
                 "free_entry_expires_at":row[44] or "",
                 "source_channel":row[45] or "",
+                "last_h4_relance_at":row[46] or "",
+                "last_h22_relance_at":row[47] or "",
             }
         return None
     except Exception as e:
@@ -3414,6 +3420,100 @@ def admin_logout():
     return redirect("/admin/login")
 
 
+
+def cron_relances_intraday():
+    """Vérifie toutes les heures si H+4 ou H+22 doit être envoyé."""
+    now = datetime.now()
+    try:
+        conn = get_conn()
+        c = conn.cursor()
+        c.execute("SELECT phone FROM users")
+        phones = [r[0] for r in c.fetchall()]
+        conn.close()
+    except Exception as e:
+        print(f"[h4/h22] erreur DB : {e}")
+        return
+
+    for phone in phones:
+        try:
+            user = get_user(phone)
+            if not user:
+                continue
+            if user.get("stop_relances"):
+                continue
+            if not user.get("onboarding_done"):
+                continue
+
+            dc = user.get("date_dernier_contact", "")
+            if not dc:
+                continue
+
+            try:
+                t0 = datetime.fromisoformat(dc)
+            except Exception:
+                continue
+
+            secs_since = (now - t0).total_seconds()
+
+            # Fenêtre 24h fermée — pas de message libre possible
+            if secs_since >= 86400:
+                continue
+
+            last_h4 = user.get("last_h4_relance_at", "")
+            last_h22 = user.get("last_h22_relance_at", "")
+
+            # H+4 : entre 4h et 22h après le dernier message utilisateur
+            if secs_since >= 14400 and secs_since < 79200:
+                h4_already = False
+                if last_h4:
+                    try:
+                        if datetime.fromisoformat(last_h4) >= t0:
+                            h4_already = True
+                    except Exception:
+                        pass
+                if not h4_already:
+                    msg = f"Je repense à ce que tu m'as confié tout à l'heure.\nTu te sens plus apaisé{'e' if user.get('genre','f')=='f' else ''}, ou ça tourne encore dans ta tête ?"
+                    try:
+                        r = send_message(phone, msg)
+                        if r and r.status_code in (200, 201):
+                            add_message(phone, "assistant", msg)
+                            update_user_silent(phone, last_h4_relance_at=now.isoformat())
+                            log_event("h4_relance_sent", phone_hash=_phone_hash(phone))
+                            print(f"[h4] envoyé → {phone}")
+                    except Exception as e:
+                        print(f"[h4] erreur envoi {phone} : {e}")
+                    continue
+
+            # H+22 : entre 22h et 24h après le dernier message utilisateur
+            if secs_since >= 79200 and secs_since < 86400:
+                h22_already = False
+                if last_h22:
+                    try:
+                        if datetime.fromisoformat(last_h22) >= t0:
+                            h22_already = True
+                    except Exception:
+                        pass
+                if not h22_already:
+                    msg = f"Je repense à notre échange.\nJe sens qu'il reste quelque chose à éclaircir avant de laisser cette journée se fermer.\nTu veux qu'on reprenne là où on s'est arrêté ?"
+                    try:
+                        r = send_message(phone, msg)
+                        if r and r.status_code in (200, 201):
+                            add_message(phone, "assistant", msg)
+                            update_user_silent(phone, last_h22_relance_at=now.isoformat())
+                            log_event("h22_relance_sent", phone_hash=_phone_hash(phone))
+                            print(f"[h22] envoyé → {phone}")
+                    except Exception as e:
+                        print(f"[h22] erreur envoi {phone} : {e}")
+
+        except Exception as e:
+            print(f"[h4/h22] erreur user {phone} : {e}")
+
+# Démarrage APScheduler
+scheduler = BackgroundScheduler(timezone="Europe/Paris")
+scheduler.add_job(cron_relances_intraday, 'interval', hours=1, id='relances_intraday')
+scheduler.start()
+import atexit
+atexit.register(lambda: scheduler.shutdown())
 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 5000))

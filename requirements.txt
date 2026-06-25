@@ -8,3 +8,5 @@ requests==2.32.3
 resend==2.3.0
 gunicorn==22.0.0
 flask-limiter==3.9.0
+apscheduler==3.10.4
+openai==1.35.0
