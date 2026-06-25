@@ -45,7 +45,6 @@ if _missing_env:
 
 PRICES = {
     "mensuel": "price_1TiaigFbuWJZYdVOepK7JtKw",
-    "annuel":  "price_1TiajJFbuWJZYdVOBb4csDgC",
 }
 
 # Seuil engagement minimum pour templates de réactivation post-essai.
@@ -1053,7 +1052,6 @@ def get_stripe_links(phone):
     base = f"{SITE_URL}/tarifs"
     return {
         "mensuel": f"{base}?source=whatsapp&plan=mensuel",
-        "annuel":  f"{base}?source=whatsapp&plan=annuel",
     }
 
 # ============================================================
@@ -1067,8 +1065,7 @@ def msg_j6(nom, prenom, links):
     return (
         f"{intro}, ta guidance Auryel se termine demain 🌙\n\n"
         f"Si tu veux continuer à échanger avec {nom}, tu peux choisir une formule ici :\n\n"
-        f"Mensuel — 9,90€/mois :\n{links['mensuel']}\n\n"
-        f"Annuel — 49,90€/an :\n{links['annuel']}"
+        f"Mensuel — 9,90€/mois :\n{links['mensuel']}"
     )
 
 def msg_j7_blocage(nom, prenom, links):
@@ -1077,8 +1074,7 @@ def msg_j7_blocage(nom, prenom, links):
         f"{intro} essai gratuit est terminé 🌙\n\n"
         f"Je ne peux plus répondre tant que ton accès n'est pas activé.\n\n"
         f"Tu peux continuer ici :\n\n"
-        f"Mensuel — 9,90€/mois :\n{links['mensuel']}\n\n"
-        f"Annuel — 49,90€/an :\n{links['annuel']}"
+        f"Mensuel — 9,90€/mois :\n{links['mensuel']}"
     )
 
 def msg_j7_si_ecrit(links):
@@ -1086,8 +1082,7 @@ def msg_j7_si_ecrit(links):
         f"Ton essai gratuit est terminé 🌙\n\n"
         f"Je ne peux plus répondre pour l'instant.\n\n"
         f"Tu peux activer ton accès ici :\n\n"
-        f"Mensuel — 9,90€/mois :\n{links['mensuel']}\n\n"
-        f"Annuel — 49,90€/an :\n{links['annuel']}"
+        f"Mensuel — 9,90€/mois :\n{links['mensuel']}"
     )
 
 def msg_j8_wa(nom, prenom, links):
@@ -1138,8 +1133,7 @@ def send_email_j6(email, prenom, links):
   <p style="font-size:22px;font-style:italic;color:#E2C98A;margin:32px 0">Bonjour {p} 🌙</p>
   <p style="font-size:15px;line-height:1.85;color:#BDB5A6;margin-bottom:32px">Ton accès gratuit Auryel se termine demain. Si tu veux continuer à échanger, tu peux choisir une formule ci-dessous.</p>
   <div style="border:1px solid rgba(200,169,110,0.2);padding:32px;margin-bottom:32px">
-    <a href="{links['mensuel']}" style="display:block;background:linear-gradient(135deg,#C8A96E,#E2C98A);color:#05040A;text-decoration:none;padding:14px 24px;text-align:center;font-weight:bold;margin-bottom:12px">✦ Mensuel — 9,90€/mois</a>
-    <a href="{links['annuel']}" style="display:block;border:1px solid rgba(200,169,110,0.2);color:#BDB5A6;text-decoration:none;padding:14px 24px;text-align:center">✦ Annuel — 49,90€ / an</a>
+    <a href="{links['mensuel']}" style="display:block;background:linear-gradient(135deg,#C8A96E,#E2C98A);color:#05040A;text-decoration:none;padding:14px 24px;text-align:center;font-weight:bold">✦ Mensuel — 9,90€/mois</a>
   </div>
   <p style="font-size:10px;color:#4A4060;text-align:center">© 2026 AURYEL — Consultations à titre de divertissement.</p>
 </div></body></html>"""
@@ -1165,8 +1159,7 @@ def send_email_relance(email, prenom, links):
   <p style="font-size:22px;font-style:italic;color:#E2C98A;margin:32px 0">Bonjour {p} 🌙</p>
   <p style="font-size:15px;line-height:1.85;color:#BDB5A6;margin-bottom:32px">Ton essai gratuit est terminé. Si tu veux continuer à échanger, tu peux choisir une formule ci-dessous.</p>
   <div style="border:1px solid rgba(200,169,110,0.2);padding:32px;margin-bottom:32px">
-    <a href="{links['mensuel']}" style="display:block;background:linear-gradient(135deg,#C8A96E,#E2C98A);color:#05040A;text-decoration:none;padding:14px 24px;text-align:center;font-weight:bold;margin-bottom:12px">✦ Mensuel — 9,90€/mois</a>
-    <a href="{links['annuel']}" style="display:block;border:1px solid rgba(200,169,110,0.2);color:#BDB5A6;text-decoration:none;padding:14px 24px;text-align:center">✦ Annuel — 49,90€ / an</a>
+    <a href="{links['mensuel']}" style="display:block;background:linear-gradient(135deg,#C8A96E,#E2C98A);color:#05040A;text-decoration:none;padding:14px 24px;text-align:center;font-weight:bold">✦ Mensuel — 9,90€/mois</a>
   </div>
   <p style="font-size:10px;color:#4A4060;text-align:center">© 2026 AURYEL — Consultations à titre de divertissement.</p>
 </div></body></html>"""
@@ -2370,7 +2363,7 @@ def create_checkout():
         plan        = data.get("plan")
         price_id    = PRICES.get(plan)
         if not price_id:
-            return jsonify({"error": "Plan invalide. Valeurs acceptées : mensuel, annuel"}), 400
+            return jsonify({"error": "Plan invalide. Valeurs acceptées : mensuel"}), 400
         success_url = data.get("successUrl")
         cancel_url  = data.get("cancelUrl")
         trial_days  = int(data.get("trialDays", 3))
