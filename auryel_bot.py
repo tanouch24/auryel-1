@@ -1819,6 +1819,7 @@ def gerer_onboarding(phone, user, user_message):
         nom_affiche = guide_obj["nom"]
         update_user_silent(phone, guide=guide_key_choix, nom_affiche=nom_affiche,
                            onboarding_step="prenom")
+        log_event("advisor_assigned", phone_hash=_phone_hash(phone), guide=guide_key_choix)
         def send_connexion(num, nom):
             time.sleep(1)
             send_message(num, "Connexion en cours...")
@@ -1908,6 +1909,7 @@ def get_reply(phone, user_message, depuis_pub=False, user_msg_pre_inserted=False
         return "On a beaucoup avancé aujourd'hui.\nJe préfère te répondre avec justesse plutôt que de te laisser tourner en boucle.\nOn reprend demain matin, et je garde le fil de ton histoire."
 
     guide_key = user.get("guide", "selena")
+    log_event("user_message_received", phone_hash=_phone_hash(phone), guide=guide_key)
 
     onboarding_reply = gerer_onboarding(phone, user, user_message)
     if onboarding_reply is not None:
@@ -1984,6 +1986,7 @@ def get_reply(phone, user_message, depuis_pub=False, user_msg_pre_inserted=False
     user_after = get_user(phone)
 
     add_message(phone, "assistant", reply)
+    log_event("bot_response_sent", phone_hash=_phone_hash(phone), guide=guide_key)
     return reply
 
 # ============================================================
@@ -2115,6 +2118,8 @@ def receive():
                         create_user(from_num, guide_key_sit, nom_affiche, depuis_site=True)
                         if categorie_sit:
                             update_user_silent(from_num, categorie_principale=categorie_sit)
+                            log_event("category_selected", phone_hash=_phone_hash(from_num), categorie=categorie_sit)
+                        log_event("advisor_assigned", phone_hash=_phone_hash(from_num), guide=guide_key_sit)
                         if wamid and not insert_user_msg_dedup(from_num, user_text, wamid):
                             return jsonify({"status": "ok"}), 200
                         def send_welcome_situation(num, nom):
@@ -2171,6 +2176,18 @@ def receive():
                         args=(from_num,), daemon=True).start()
                     return jsonify({"status": "ok"}), 200
                 # ── Fin détection STOP / RELANCE ────────────────────────────────────
+
+                if user:
+                    _now_h = datetime.now()
+                    _last_h4 = user.get("last_h4_relance_at", "")
+                    _last_h22 = user.get("last_h22_relance_at", "")
+                    try:
+                        if _last_h4 and (_now_h - datetime.fromisoformat(_last_h4)) < timedelta(hours=4):
+                            log_event("h4_relance_answered", phone_hash=_phone_hash(from_num))
+                        elif _last_h22 and (_now_h - datetime.fromisoformat(_last_h22)) < timedelta(hours=4):
+                            log_event("h22_relance_answered", phone_hash=_phone_hash(from_num))
+                    except Exception:
+                        pass
 
                 # Le flow onboarding doit toujours être exécuté avant toute logique métier ou émotionnelle.
                 if onboarding_ok and user.get("etat") == "pause":
@@ -3530,6 +3547,7 @@ def check_and_increment_daily_limit(phone, user):
         return False
 
     if count >= DAILY_LIMIT:
+        log_event("daily_limit_reached", phone_hash=_phone_hash(phone))
         return True
 
     update_user_silent(phone, messages_today_count=count + 1)
