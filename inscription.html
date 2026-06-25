@@ -170,7 +170,20 @@ function G3(){
   if(!sel)return;
   var cd=document.getElementById("code-display");if(cd)cd.textContent=sel.code;
   var cs=document.getElementById("c3-sub");if(cs)cs.innerHTML=sel.name+" vous attend. Envoyez votre code sur WhatsApp pour commencer votre accompagnement.";
-  var wf=document.getElementById("wa-final");if(wf)wf.href="https://wa.me/33757830241?text="+encodeURIComponent("Bonjour, je souhaite commencer une consultation avec " + sel.name + " (code " + sel.code + "). Pouvez-vous me répondre ?");
+  var sit_msgs = {
+    "selena":    "Je veux une guidance amour avec Selena",
+    "ezra":      "Je veux comprendre son silence avec Ezra",
+    "cassandre": "Je veux éclaircir une situation cachée avec Cassandre",
+    "raphael":   "Je veux une guidance couple avec Raphael",
+    "orion":     "Je veux une guidance travail avec Orion",
+    "myriam":    "Je veux une guidance famille avec Myriam",
+    "maia":      "Je veux une guidance morale avec Maia",
+    "luna":      "Je veux comprendre un signe avec Luna",
+    "thea":      "Je ne sais pas par où commencer, guidez-moi",
+    "kael":      "Je veux une guidance protection avec Kael"
+  };
+  var sit_msg = sit_msgs[sel.id] || ("Je veux commencer avec " + sel.name);
+  var wf=document.getElementById("wa-final");if(wf)wf.href="https://wa.me/33757830241?text="+encodeURIComponent(sit_msg);
   var s3=document.getElementById("step3");
   if(s3){s3.classList.add("show");setTimeout(function(){s3.scrollIntoView({behavior:"smooth",block:"start"});},100);}
   SS(3);

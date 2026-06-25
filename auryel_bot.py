@@ -249,6 +249,7 @@ def init_db():
         c.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS morning_messages_enabled BOOLEAN DEFAULT TRUE")
         c.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS free_entry_expires_at TEXT DEFAULT ''")
         c.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS source_channel TEXT DEFAULT ''")
+        c.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS categorie_principale TEXT DEFAULT ''")
         conn.commit()
     except Exception as e:
         conn.rollback()
@@ -944,6 +945,58 @@ GUIDES = {
 
 MSG_PUB = "bonjour, êtes-vous disponible"
 RITUELS = ["psaume", "carte", "chiffre"]
+
+SITUATION_ROUTING = {
+    "guidance amour avec selena":       ("selena",    "amour_retour"),
+    "comprendre son silence avec ezra": ("ezra",      "silence_distance"),
+    "situation cachée avec cassandre":  ("cassandre", "tromperie_relation_cachee"),
+    "guidance couple avec raphael":     ("raphael",   "couple_dispute_separation"),
+    "guidance travail avec orion":      ("orion",     "travail_argent_avenir"),
+    "guidance famille avec myriam":     ("myriam",    "famille_enfant_choix"),
+    "guidance morale avec maia":        ("maia",      "sante_morale_fatigue"),
+    "comprendre un signe avec luna":    ("luna",      "reves_signes_protection"),
+    "commencer, guidez-moi":            ("thea",      "besoin_guidance"),
+    "guidance protection avec kael":    ("kael",      "relation_toxique"),
+}
+
+LISTE_CONSEILLERS_WA = """🌙 Choisis ton conseiller :
+
+1. Selena — Amour & retour
+2. Ezra — Silence & distance
+3. Cassandre — Tromperie & secret
+4. Raphael — Couple & dispute
+5. Orion — Travail & argent
+6. Myriam — Famille & enfant
+7. Maia — Fatigue morale
+8. Luna — Rêves & signes
+9. Thea — Je ne sais pas par où commencer
+10. Kael — Protection & limites
+
+Réponds avec le numéro ou le prénom."""
+
+def detecter_situation_routing(message):
+    msg = message.lower()
+    for kw, (guide_key, categorie) in SITUATION_ROUTING.items():
+        if kw in msg:
+            return guide_key, categorie
+    return None, None
+
+def detecter_choix_conseiller(message):
+    """Détecte si l'utilisateur choisit un conseiller dans la liste (numéro ou prénom)."""
+    msg = message.lower().strip()
+    mapping = {
+        "1": "selena", "selena": "selena",
+        "2": "ezra", "ezra": "ezra",
+        "3": "cassandre", "cassandre": "cassandre",
+        "4": "raphael", "raphael": "raphael", "raphaël": "raphael",
+        "5": "orion", "orion": "orion",
+        "6": "myriam", "myriam": "myriam",
+        "7": "maia", "maia": "maia", "maïa": "maia",
+        "8": "luna", "luna": "luna",
+        "9": "thea", "thea": "thea", "théa": "thea",
+        "10": "kael", "kael": "kael", "kaël": "kael",
+    }
+    return mapping.get(msg)
 
 # ============================================================
 # DÉTECTION
@@ -1745,6 +1798,30 @@ def gerer_onboarding(phone, user, user_message):
 
     step = user.get("onboarding_step") or "prenom"
 
+    if step == "choix_conseiller":
+        guide_key_choix = detecter_choix_conseiller(user_message)
+        if not guide_key_choix:
+            reply = "Je n'ai pas bien compris. Réponds avec le numéro (1 à 10) ou le prénom du conseiller."
+            enregistrer_echange_onboarding(phone, user, user_message, reply)
+            return reply
+        guide_obj = GUIDES.get(guide_key_choix, GUIDES["selena"])
+        nom_affiche = guide_obj["nom"]
+        update_user_silent(phone, guide=guide_key_choix, nom_affiche=nom_affiche,
+                           onboarding_step="prenom")
+        def send_connexion(num, nom):
+            time.sleep(1)
+            send_message(num, "Connexion en cours...")
+            add_message(num, "assistant", "Connexion en cours...")
+            time.sleep(2)
+            send_message(num, f"Connexion établie avec {nom} ✨")
+            add_message(num, "assistant", f"Connexion établie avec {nom} ✨")
+            time.sleep(1)
+            msg3 = "Avant de commencer, comment t'appelles-tu ?"
+            send_message(num, msg3)
+            add_message(num, "assistant", msg3)
+        threading.Thread(target=send_connexion, args=(phone, nom_affiche), daemon=True).start()
+        return ""
+
     if step == "prenom":
         prenom = user.get("prenom") or detecter_prenom(user_message)
         if not prenom:
@@ -2015,18 +2092,41 @@ def receive():
                         add_message(num, "assistant", bv)
                     threading.Thread(target=send_welcome_site, args=(from_num, nom_affiche_code), daemon=True).start()
                 else:
-                    guide_key = detecter_guide(user_text)
-                    nom_affiche = "Séléna"
-                    create_user(from_num, guide_key, nom_affiche, depuis_site=False)
-                    if wamid and not insert_user_msg_dedup(from_num, user_text, wamid):
-                        print(f"[webhook] doublon ignoré wamid={wamid}")
-                        return jsonify({"status": "ok"}), 200
-                    def send_welcome(num, nom, depuis_pub):
-                        time.sleep(2)
-                        bv = msg_bienvenue_pub(nom) if depuis_pub else msg_bienvenue(nom)
-                        send_message(num, bv)
-                        add_message(num, "assistant", bv)
-                    threading.Thread(target=send_welcome, args=(from_num, nom_affiche, est_depuis_pub), daemon=True).start()
+                    # Routing V10 : détection message pré-rempli depuis site
+                    guide_key_sit, categorie_sit = detecter_situation_routing(user_text)
+                    if guide_key_sit:
+                        # Vient du site avec message pré-rempli situation
+                        guide_obj = GUIDES.get(guide_key_sit, GUIDES["selena"])
+                        nom_affiche = guide_obj["nom"]
+                        create_user(from_num, guide_key_sit, nom_affiche, depuis_site=True)
+                        if categorie_sit:
+                            update_user_silent(from_num, categorie_principale=categorie_sit)
+                        if wamid and not insert_user_msg_dedup(from_num, user_text, wamid):
+                            return jsonify({"status": "ok"}), 200
+                        def send_welcome_situation(num, nom):
+                            time.sleep(1)
+                            send_message(num, "Connexion en cours...")
+                            add_message(num, "assistant", "Connexion en cours...")
+                            time.sleep(2)
+                            send_message(num, f"Connexion établie avec {nom} ✨")
+                            add_message(num, "assistant", f"Connexion établie avec {nom} ✨")
+                            time.sleep(1)
+                            msg3 = "Avant de commencer, comment t'appelles-tu ?"
+                            send_message(num, msg3)
+                            add_message(num, "assistant", msg3)
+                        threading.Thread(target=send_welcome_situation, args=(from_num, nom_affiche), daemon=True).start()
+                    else:
+                        # Vient de Meta Ads ou message inconnu — envoie la liste des conseillers
+                        guide_key = detecter_guide(user_text)
+                        create_user(from_num, guide_key, "Séléna", depuis_site=False)
+                        update_user_silent(from_num, onboarding_step="choix_conseiller")
+                        if wamid and not insert_user_msg_dedup(from_num, user_text, wamid):
+                            return jsonify({"status": "ok"}), 200
+                        def send_liste(num):
+                            time.sleep(1)
+                            send_message(num, LISTE_CONSEILLERS_WA)
+                            add_message(num, "assistant", LISTE_CONSEILLERS_WA)
+                        threading.Thread(target=send_liste, args=(from_num,), daemon=True).start()
             else:
                 user = get_user(from_num)
                 onboarding_ok = bool(user and user.get("onboarding_done"))
