@@ -1129,9 +1129,9 @@ def _stripe_status_to_user(status):
 def get_stripe_links(phone):
     """Liens statiques vers /tarifs avec UTM source=whatsapp.
     Le checkout Stripe est créé quand l'utilisateur clique sur la page tarifs."""
-    base = f"{SITE_URL}/tarifs"
+    base = f"{SITE_URL}/payer"
     return {
-        "mensuel": f"{base}?source=whatsapp&plan=mensuel",
+        "mensuel": f"{base}?source=whatsapp&phone={phone}",
     }
 
 # ============================================================
