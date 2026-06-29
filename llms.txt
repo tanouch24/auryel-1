@@ -67,8 +67,7 @@ Auryel ne fait pas de promesses absolues. La guidance est présentée comme un o
 
 ## Tarifs
 
-- Formule Mensuelle : 9,90€/mois (3 jours de guidance offerts, sans engagement)
-- Formule Annuelle : 49,90€/an — soit 4,16€/mois (économie de 58%)
+- Abonnement Premium : 9,90€/mois après 3 jours de guidance offerts.
 
 ## Articles du blog — Voyance & Guidance
 
@@ -140,7 +139,7 @@ Ton éditorial : humain, émotionnel, non-spectaculaire. Pas de promesses absolu
 
 ## Informations légales
 
-- Éditeur : Auryel Inc. (Wyoming, USA)
+- Éditeur : 3E Technology Ltd (Londres, Royaume-Uni)
 - Hébergeur : Vercel Inc.
 - Contact : contact@auryelvoyance.com
 - Les consultations sont fournies à titre de divertissement et de guidance personnelle. Elles ne constituent pas un avis médical, psychologique, juridique ou financier.
