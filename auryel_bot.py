@@ -2542,6 +2542,28 @@ def choose_morning_send_mode(user, now):
             return "slowed_down_template"
         return "skip_budget_limit"
 
+    # Ex-abonné : a déjà payé, désabonné, etat=pause
+    # Relances de réactivation selon jours depuis fin abonnement
+    ex_abonne = (
+        not user.get("abonne") and
+        user.get("etat") == "pause" and
+        user.get("onboarding_done", False) and
+        user.get("date_abonnement")  # a déjà eu un abonnement
+    )
+    if ex_abonne:
+        jours_depuis_contact = _jours(user.get("date_dernier_contact"))
+        if jours_depuis_contact is None:
+            return "skip_not_subscribed"
+        if 1 <= jours_depuis_contact < 10:
+            return "paid_template_reactivation"  # auryel_retour_j7
+        elif 10 <= jours_depuis_contact < 20:
+            return "paid_template_reactivation"  # auryel_retour_j15
+        elif 20 <= jours_depuis_contact < 45:
+            return "paid_template_reactivation"  # auryel_retour_j30
+        elif 45 <= jours_depuis_contact < 75:
+            return "paid_template_reactivation"  # auryel_retour_j60
+        return "skip_not_subscribed"
+
     # Non-abonné post-essai : jalons selon profil d'engagement (cold / warm / hot).
     # Fenêtre de 3 jours : résilience si cron raté un jour.
     jours = _jours(user.get("date_premier_contact"))
