@@ -17,6 +17,13 @@ except Exception as _e:
     print(f"[relances] JSON non charge : {_e}")
     RELANCES_H4_H22 = []
 
+TEMPLATES_MATIN_ABONNE = [
+    "auryel_abo_matin_1", "auryel_abo_matin_2", "auryel_abo_matin_3",
+    "auryel_abo_matin_4", "auryel_abo_matin_5", "auryel_abo_matin_6",
+    "auryel_abo_matin_7", "auryel_abo_matin_8", "auryel_abo_matin_9",
+    "auryel_abo_matin_10"
+]
+
 app = Flask(__name__)
 app.secret_key = os.environ.get("SECRET_KEY")
 app.config["SESSION_COOKIE_SECURE"]       = True
@@ -2852,9 +2859,9 @@ def cron_daily():
                     if sent:
                         add_message(phone, "assistant", msg6)
                 else:
-                    sent = send_template_message(phone, "auryel_relance_j2", [prenom or "Bonjour", nom])
+                    sent = send_template_message(phone, "auryel_relance_j2_new", [prenom or "Bonjour", nom])
                     if sent:
-                        add_message(phone, "assistant", f"[template:auryel_relance_j2] {{1}}={prenom or 'Bonjour'} {{2}}={nom}")
+                        add_message(phone, "assistant", f"[template:auryel_relance_j2_new] {{1}}={prenom or 'Bonjour'} {{2}}={nom}")
                 if sent:
                     if user.get("email"):
                         send_email_j6(user["email"], prenom, links)
@@ -2885,9 +2892,9 @@ def cron_daily():
                                 log_event("relance_envoyee", phone_hash=_phone_hash(phone),
                                           type_relance="j3", canal="whatsapp_libre")
                         else:
-                            sent = send_template_message(phone, "auryel_relance_j3", [prenom or "Bonjour", nom])
+                            sent = send_template_message(phone, "auryel_relance_j3_new", [prenom or "Bonjour", nom])
                             if sent:
-                                add_message(phone, "assistant", f"[template:auryel_relance_j3] {{1}}={prenom or 'Bonjour'} {{2}}={nom}")
+                                add_message(phone, "assistant", f"[template:auryel_relance_j3_new] {{1}}={prenom or 'Bonjour'} {{2}}={nom}")
                                 log_event("relance_envoyee", phone_hash=_phone_hash(phone),
                                           type_relance="j3", canal="whatsapp_template")
                         if user.get("email"):
@@ -3004,26 +3011,26 @@ def cron_morning():
             # ── Templates payants ────────────────────────────────────────────────
             template_name = None
             if mode in ("paid_template_abonne_matin", "slowed_down_template"):
-                template_name = "auryel_matin_abonne"
+                template_name = random.choice(TEMPLATES_MATIN_ABONNE)
             elif mode == "paid_template_essai_matin":
-                template_name = "auryel_matin_essai"   # template en attente d'approbation Meta
+                template_name = "auryel_matin_essai_new"
             elif mode == "paid_template_matin_j3":
-                template_name = "auryel_matin_j3"      # template en attente d'approbation Meta
+                template_name = "auryel_matin_j3_new"
             elif mode == "paid_template_post_essai_j4":
-                template_name = "auryel_post_essai_j4" # template en attente d'approbation Meta
+                template_name = "auryel_post_essai_new"
             elif mode == "paid_template_reactivation":
                 try:
                     jours = (now - datetime.fromisoformat(user["date_premier_contact"])).days
                 except Exception:
                     jours = 0
                 if 5 <= jours < 10:     # couvre 5-7 (hot) + 6-8 (cold/warm) + 7-9 (hot) → proxy j6
-                    template_name = "auryel_reactivation_j6"
+                    template_name = "auryel_retour_j7"
                 elif 10 <= jours < 13:  # couvre 10-12 (warm/hot) → proxy j15
-                    template_name = "auryel_reactivation_j15"
+                    template_name = "auryel_retour_j15"
                 elif 15 <= jours < 18:
-                    template_name = "auryel_reactivation_j15"
+                    template_name = "auryel_retour_j15"
                 elif 30 <= jours < 33:
-                    template_name = "auryel_reactivation_j30"
+                    template_name = "auryel_retour_j30"
     
             if not template_name:
                 log_event("morning_skip", phone_hash=_phone_hash(phone),
