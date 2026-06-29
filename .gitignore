@@ -16,3 +16,14 @@ backup_*.sql
 backup_*.sql
 *.dump
 *.bak
+
+# Fichiers backend / dev — ne pas déployer sur Netlify
+*.py
+Procfile
+runtime.txt
+requirements.txt
+auryel_relances_h4_h22.json
+
+# Docs internes
+CLAUDE.md
+CHANGELOG_LANCEMENT.md
