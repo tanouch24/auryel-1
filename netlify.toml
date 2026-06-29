@@ -34,6 +34,18 @@
   force = true
 
 [[redirects]]
+  from = "/robots.txt"
+  to = "/robots.txt"
+  status = 200
+  force = false
+
+[[redirects]]
+  from = "/llms.txt"
+  to = "/llms.txt"
+  status = 200
+  force = false
+
+[[redirects]]
   from = "/*.txt"
   to = "/404"
   status = 404
