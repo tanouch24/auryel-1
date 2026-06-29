@@ -40,7 +40,7 @@
 | Section | Avant | Après |
 |---------|-------|-------|
 | Section 2 — Prix | Plusieurs prix incohérents | 9,90€/mois uniquement |
-| Section 2 — Offres multiples | Mensuel / Annuel / Semestriel | Supprimées — une seule offre Premium |
+| Section 2 — Offre unique | Anciennes offres multiples | Offre Premium unique à 9,90€/mois |
 | Section 2 — Essai gratuit | Absent | "3 jours de guidance offerts sur WhatsApp, sans carte bancaire requise" |
 | Section 2 — Activation | Absent | "L'accès payant ne s'active que si l'utilisateur choisit volontairement de souscrire" |
 | Section 3 — Résiliation | "depuis son espace membre" | "en envoyant un message WhatsApp à son conseiller ou par email à contact@auryelvoyance.com" |
@@ -75,7 +75,7 @@
 | Plan | Price ID | Statut |
 |------|----------|--------|
 | `mensuel` (Premium) | `price_1TiaigFbuWJZYdVOepK7JtKw` | ✅ Actif — offre unique |
-| `annuel` | `price_1TiajJFbuWJZYdVOBb4csDgC` | ⛔ Supprimé du produit et du code |
+| Ancienne offre supprimée | Ancien Price Stripe retiré | ⛔ Supprimé du produit et du code |
 | `semestriel` | — | ✅ Absent du code et du dict `PRICES` |
 
 ### Risques documentés
