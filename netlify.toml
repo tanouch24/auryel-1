@@ -14,6 +14,37 @@
     Strict-Transport-Security = "max-age=31536000; includeSubDomains"
     Content-Security-Policy = "default-src 'self' https: data: 'unsafe-inline' 'unsafe-eval'; frame-ancestors 'none'"
 
+# ── Blocage fichiers sensibles (wildcards) ──────────────────────────────────
+[[redirects]]
+  from = "/*.py"
+  to = "/404"
+  status = 404
+  force = true
+
+[[redirects]]
+  from = "/*.sql"
+  to = "/404"
+  status = 404
+  force = true
+
+[[redirects]]
+  from = "/*.md"
+  to = "/404"
+  status = 404
+  force = true
+
+[[redirects]]
+  from = "/*.txt"
+  to = "/404"
+  status = 404
+  force = true
+
+[[redirects]]
+  from = "/requirements.txt"
+  to = "/404"
+  status = 404
+  force = true
+
 # ── Proxy API backend Railway ───────────────────────────────────────────────
 [[redirects]]
   from = "/stripe/*"
