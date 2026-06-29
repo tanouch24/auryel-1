@@ -14,6 +14,13 @@
     Strict-Transport-Security = "max-age=31536000; includeSubDomains"
     Content-Security-Policy = "default-src 'self' https: data: 'unsafe-inline' 'unsafe-eval'; frame-ancestors 'none'"
 
+# ── Proxy API backend Railway ───────────────────────────────────────────────
+[[redirects]]
+  from = "/stripe/*"
+  to = "https://web-production-93330.up.railway.app/stripe/:splat"
+  status = 200
+  force = true
+
 # ── Redirects 301 : nettoyage index.html ────────────────────────────────────
 [[redirects]]
   from = "/index.html"
@@ -21,6 +28,16 @@
   status = 301
 
 # ── Clean URLs : pages principales (200 rewrite) ────────────────────────────
+[[redirects]]
+  from = "/resiliation"
+  to = "/resiliation.html"
+  status = 200
+
+[[redirects]]
+  from = "/success"
+  to = "/success.html"
+  status = 200
+
 [[redirects]]
   from = "/tarifs"
   to = "/tarifs.html"

@@ -200,12 +200,23 @@ body{
     var btnM = document.getElementById('btn-mensuel');
     var errEl = document.getElementById('py-error');
 
-    btnM.classList.add('loading');
-    btnM.disabled = true;
     errEl.style.display = 'none';
 
-    var body = { plan: plan };
-    if (phone) body.phone = phone;
+    if (!phone) {
+      errEl.textContent = 'Ton numéro WhatsApp est manquant. Reviens dans la conversation Auryel et utilise le lien de paiement reçu par WhatsApp.';
+      errEl.style.display = 'block';
+      return;
+    }
+
+    btnM.classList.add('loading');
+    btnM.disabled = true;
+
+    var body = {
+      plan: plan,
+      successUrl: 'https://auryelvoyance.com/success.html',
+      cancelUrl: 'https://auryelvoyance.com/payer'
+    };
+    body.phone = phone;
 
     fetch('/stripe/create-checkout', {
       method: 'POST',
