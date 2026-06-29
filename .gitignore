@@ -10,3 +10,9 @@ tmp/
 venv/
 __pycache__/
 backup_*.sql
+
+# Backups / exports sensibles
+*.sql
+backup_*.sql
+*.dump
+*.bak
