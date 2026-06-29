@@ -1156,10 +1156,23 @@ def msg_j7_blocage(nom, prenom, links):
         f"Pour continuer avec {nom} :\n{links['mensuel']}"
     )
 
-def msg_j7_si_ecrit(links):
-    return (
-        f"Ton accès offert est terminé.\n\n"
-        f"Pour qu'on continue ensemble :\n{links['mensuel']}"
+def msg_j7_si_ecrit(links, prenom=None, categorie=None):
+    intro = f"{prenom}, " if prenom else ""
+    messages_par_categorie = {
+        "amour_retour": f"{intro}je repense à ce qu'on avait commencé. Je sens encore quelque chose autour de cette personne — ça n'est pas terminé. Pour qu'on reprenne :\n{links['mensuel']}",
+        "silence_distance": f"{intro}je repense à ce silence dont tu m'as parlé. Je sens encore quelque chose dedans qui mérite d'être regardé. Pour qu'on continue :\n{links['mensuel']}",
+        "tromperie_relation_cachee": f"{intro}je repense à cette situation. Il y a encore quelque chose de caché là-dedans que tu mérites de voir. Pour qu'on reprenne :\n{links['mensuel']}",
+        "couple_dispute_separation": f"{intro}je repense à ce qu'on avait commencé. Je sens encore quelque chose entre vous — ça mérite d'être regardé. Pour qu'on continue :\n{links['mensuel']}",
+        "travail_argent_avenir": f"{intro}je repense à ta situation. Je sens encore quelque chose à éclaircir là-dedans. Pour qu'on reprenne :\n{links['mensuel']}",
+        "famille_enfant_choix": f"{intro}je repense à ce que tu m'as confié. Il y a encore quelque chose à voir dans cette situation. Pour qu'on continue :\n{links['mensuel']}",
+        "sante_morale_fatigue": f"{intro}je repense à toi. Je sens que tu portes encore quelque chose de lourd. Pour qu'on reprenne ensemble :\n{links['mensuel']}",
+        "reves_signes_protection": f"{intro}je repense à ce signe dont tu m'as parlé. Il n'est pas là par hasard. Pour qu'on continue :\n{links['mensuel']}",
+        "besoin_guidance": f"{intro}je repense à ce qu'on avait commencé. Je sens encore quelque chose autour de toi. Pour qu'on reprenne :\n{links['mensuel']}",
+        "relation_toxique": f"{intro}je repense à cette situation. Tu mérites mieux que ça — et je sens qu'il y a encore quelque chose à regarder. Pour qu'on continue :\n{links['mensuel']}",
+    }
+    return messages_par_categorie.get(
+        categorie or "",
+        f"{intro}je repense à ce qu'on avait commencé. Je sens encore quelque chose autour de toi. Pour qu'on reprendre :\n{links['mensuel']}"
     )
 
 def msg_j8_wa(nom, prenom, links):
@@ -2211,7 +2224,7 @@ def receive():
                     def send_pause(num):
                         time.sleep(1)
                         links = get_stripe_links(num)
-                        msg = msg_j7_si_ecrit(links)
+                        msg = msg_j7_si_ecrit(links, prenom=user.get("prenom"), categorie=user.get("categorie_principale"))
                         send_message(num, msg)
                         add_message(num, "assistant", msg)
                     threading.Thread(target=send_pause, args=(from_num,), daemon=True).start()
