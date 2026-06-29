@@ -1138,31 +1138,28 @@ def get_stripe_links(phone):
 # MESSAGES
 # ============================================================
 def msg_fin_conv(nom):
-    return "Vas-y... je serai là quand tu reviens 🌙"
+    return "Vas-y... je serai là quand tu reviens."
 
 def msg_j6(nom, prenom, links):
     intro = prenom if prenom else "Bonjour"
     return (
-        f"{intro}, ta guidance Auryel se termine demain 🌙\n\n"
-        f"Si tu veux continuer à échanger avec {nom}, tu peux choisir une formule ici :\n\n"
-        f"Mensuel — 9,90€/mois :\n{links['mensuel']}"
+        f"{intro}, demain c'est le dernier jour.\n\n"
+        f"Je suis encore là si tu veux qu'on regarde quelque chose avant la fin.\n\n"
+        f"Pour continuer avec {nom} :\n{links['mensuel']}"
     )
 
 def msg_j7_blocage(nom, prenom, links):
-    intro = f"{prenom}, ton" if prenom else "Ton"
+    intro = prenom if prenom else "Bonjour"
     return (
-        f"{intro} essai gratuit est terminé 🌙\n\n"
-        f"Je ne peux plus répondre tant que ton accès n'est pas activé.\n\n"
-        f"Tu peux continuer ici :\n\n"
-        f"Mensuel — 9,90€/mois :\n{links['mensuel']}"
+        f"{intro}, ton accès offert est terminé.\n\n"
+        f"Je ne peux plus répondre pour l'instant.\n\n"
+        f"Pour continuer avec {nom} :\n{links['mensuel']}"
     )
 
 def msg_j7_si_ecrit(links):
     return (
-        f"Ton essai gratuit est terminé 🌙\n\n"
-        f"Je ne peux plus répondre pour l'instant.\n\n"
-        f"Tu peux activer ton accès ici :\n\n"
-        f"Mensuel — 9,90€/mois :\n{links['mensuel']}"
+        f"Ton accès offert est terminé.\n\n"
+        f"Pour qu'on continue ensemble :\n{links['mensuel']}"
     )
 
 def msg_j8_wa(nom, prenom, links):
@@ -1173,24 +1170,21 @@ def msg_j8_wa(nom, prenom, links):
 def msg_retour_paiement(nom, prenom):
     p = f" {prenom}" if prenom else ""
     return (
-        f"Bienvenue{p} 🌙\n\n"
-        f"Ton accès est activé. Je suis là quand tu es prêt(e).\n\n"
-        f"Dis-moi — comment tu vas en ce moment ?"
+        f"Te voilà{p}. Je suis là.\n\n"
+        f"Dis-moi comment tu vas en ce moment."
     )
 
 def msg_relance_abonne(nom, prenom):
     p = f" {prenom}" if prenom else ""
     return (
-        f"Bonjour{p}, je prends simplement de tes nouvelles 🌙\n\n"
-        f"Tu veux qu'on reprenne là où on s'était arrêté ?"
+        f"Bonjour{p}, je repense à toi.\n\n"
+        f"Tu veux qu'on reprenne ?"
     )
 
 def msg_pas_les_moyens():
     return (
-        "Je comprends tout à fait.\n\n"
-        "Si l'accès payant n'est pas possible pour toi maintenant, c'est OK.\n\n"
-        "L'offre reste disponible quand tu veux — à partir de 9,90€/mois.\n\n"
-        "N'hésite pas à revenir."
+        "C'est OK. Je reste là si tu changes d'avis.\n\n"
+        "À partir de 9,90 euros par mois."
     )
 
 # ============================================================
@@ -2055,22 +2049,19 @@ def get_rituel(user):
 # ============================================================
 def msg_bienvenue_pub(nom_affiche):
     return (
-        f"Bonjour, bienvenue sur Auryel 🌙\n\n"
-        f"Je suis {nom_affiche}.\n\n"
+        f"Bonjour, moi c'est {nom_affiche}.\n\n"
         f"Comment tu t'appelles ?"
     )
 
 def msg_bienvenue(nom_affiche):
     return (
-        f"Bonjour, bienvenue sur Auryel 🌙\n\n"
-        f"Je suis {nom_affiche}.\n\n"
+        f"Bonjour, moi c'est {nom_affiche}.\n\n"
         f"Comment tu t'appelles ?"
     )
 
 def msg_bienvenue_site(nom_affiche):
     return (
-        f"Bonjour, bienvenue sur Auryel 🌙\n\n"
-        f"Je suis {nom_affiche}.\n\n"
+        f"Bonjour, moi c'est {nom_affiche}.\n\n"
         f"Comment tu t'appelles ?"
     )
 
