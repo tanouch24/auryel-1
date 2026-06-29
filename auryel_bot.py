@@ -7,6 +7,15 @@ from flask_limiter.util import get_remote_address
 from werkzeug.middleware.proxy_fix import ProxyFix
 from groq import Groq
 from apscheduler.schedulers.background import BackgroundScheduler
+import json as _json
+_RELANCES_PATH = os.path.join(os.path.dirname(__file__), "auryel_relances_h4_h22.json")
+try:
+    with open(_RELANCES_PATH, encoding="utf-8") as _f:
+        RELANCES_H4_H22 = _json.load(_f)
+    print(f"[relances] {len(RELANCES_H4_H22)} messages charges")
+except Exception as _e:
+    print(f"[relances] JSON non charge : {_e}")
+    RELANCES_H4_H22 = []
 
 app = Flask(__name__)
 app.secret_key = os.environ.get("SECRET_KEY")
@@ -255,6 +264,7 @@ def init_db():
         c.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS last_h22_relance_at TEXT DEFAULT ''")
         c.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS messages_today_count INTEGER DEFAULT 0")
         c.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS messages_today_date TEXT DEFAULT ''")
+        c.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS relances_ids_envoyes TEXT DEFAULT ''")
         conn.commit()
     except Exception as e:
         conn.rollback()
@@ -302,7 +312,8 @@ def get_user(phone):
             last_morning_message_at,last_template_message_at,templates_sans_reponse,
             morning_messages_enabled,free_entry_expires_at,source_channel,
             last_h4_relance_at,last_h22_relance_at,
-            messages_today_count,messages_today_date
+            messages_today_count,messages_today_date,
+            categorie_principale,relances_ids_envoyes
             FROM users WHERE phone=%s""", (phone,))
         row = c.fetchone()
         if row:
@@ -342,6 +353,8 @@ def get_user(phone):
                 "last_h22_relance_at":row[47] or "",
                 "messages_today_count":row[48] or 0,
                 "messages_today_date":row[49] or "",
+                "categorie_principale":row[50] or "",
+                "relances_ids_envoyes":row[51] or "",
             }
         return None
     except Exception as e:
@@ -3446,6 +3459,25 @@ def admin_logout():
 
 
 
+def choisir_message_relance(user, moment):
+    categorie = user.get("categorie_principale") or "besoin_guidance"
+    date_pc = user.get("date_premier_contact", "")
+    try:
+        jour = (datetime.now() - datetime.fromisoformat(date_pc)).days + 1
+    except Exception:
+        jour = 1
+    jour = min(max(jour, 1), 30)
+    deja = set((user.get("relances_ids_envoyes") or "").split(","))
+    candidats = [m for m in RELANCES_H4_H22 if m["situation"] == categorie and m["moment"] == moment and m["jour"] == jour and m["id"] not in deja]
+    if not candidats:
+        candidats = [m for m in RELANCES_H4_H22 if m["situation"] == categorie and m["moment"] == moment and m["id"] not in deja]
+    if not candidats:
+        candidats = [m for m in RELANCES_H4_H22 if m["moment"] == moment and m["id"] not in deja]
+    if not candidats:
+        return None
+    return random.choice(candidats)
+
+
 def cron_relances_intraday():
     """Vérifie toutes les heures si H+4 ou H+22 doit être envoyé."""
     now = datetime.now()
@@ -3497,14 +3529,20 @@ def cron_relances_intraday():
                     except Exception:
                         pass
                 if not h4_already:
-                    msg = f"Je repense à ce que tu m'as confié tout à l'heure.\nTu te sens plus apaisé{'e' if user.get('genre','f')=='f' else ''}, ou ça tourne encore dans ta tête ?"
+                    relance = choisir_message_relance(user, "h4")
+                    if not relance:
+                        print(f"[h4] aucun message dispo pour {_phone_hash(phone)}")
+                        continue
+                    msg = relance["message"]
                     try:
                         r = send_message(phone, msg)
                         if r and r.status_code in (200, 201):
                             add_message(phone, "assistant", msg)
-                            update_user_silent(phone, last_h4_relance_at=now.isoformat())
+                            deja = user.get("relances_ids_envoyes") or ""
+                            nouveaux = (deja + "," + relance["id"]).strip(",")
+                            update_user_silent(phone, last_h4_relance_at=now.isoformat(), relances_ids_envoyes=nouveaux)
                             log_event("h4_relance_sent", phone_hash=_phone_hash(phone))
-                            print(f"[h4] envoyé → {phone}")
+                            print(f"[h4] envoye -> {phone}")
                     except Exception as e:
                         print(f"[h4] erreur envoi {phone} : {e}")
                     continue
@@ -3519,14 +3557,20 @@ def cron_relances_intraday():
                     except Exception:
                         pass
                 if not h22_already:
-                    msg = f"Je repense à notre échange.\nJe sens qu'il reste quelque chose à éclaircir avant de laisser cette journée se fermer.\nTu veux qu'on reprenne là où on s'est arrêté ?"
+                    relance = choisir_message_relance(user, "h22")
+                    if not relance:
+                        print(f"[h22] aucun message dispo pour {_phone_hash(phone)}")
+                        continue
+                    msg = relance["message"]
                     try:
                         r = send_message(phone, msg)
                         if r and r.status_code in (200, 201):
                             add_message(phone, "assistant", msg)
-                            update_user_silent(phone, last_h22_relance_at=now.isoformat())
+                            deja = user.get("relances_ids_envoyes") or ""
+                            nouveaux = (deja + "," + relance["id"]).strip(",")
+                            update_user_silent(phone, last_h22_relance_at=now.isoformat(), relances_ids_envoyes=nouveaux)
                             log_event("h22_relance_sent", phone_hash=_phone_hash(phone))
-                            print(f"[h22] envoyé → {phone}")
+                            print(f"[h22] envoye -> {phone}")
                     except Exception as e:
                         print(f"[h22] erreur envoi {phone} : {e}")
 
