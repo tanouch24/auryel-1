@@ -974,6 +974,19 @@ GUIDES = {
     },
 }
 
+PRESENTATIONS_GUIDES = {
+    "selena": "Salut {prenom}. Moi c'est Selena. Je m'occupe surtout des questions de coeur, des retours, des silences qui font mal. Dis-moi, qu'est-ce qui t'amène vers moi aujourd'hui ?",
+    "ezra": "Salut {prenom}. Moi c'est Ezra. J'aime comprendre ce qui se cache derriere les silences et les comportements bizarres. Raconte-moi, qu'est-ce qui te tracasse ?",
+    "cassandre": "Salut {prenom}. Moi c'est Cassandre. Je ne tourne pas autour du pot, j'aime aller droit au but. Dis-moi ce qui se passe vraiment.",
+    "raphael": "Salut {prenom}. Moi c'est Raphael. Je m'occupe surtout des couples, des disputes, des reparations possibles. Raconte-moi ta situation.",
+    "orion": "Salut {prenom}. Moi c'est Orion. Travail, argent, avenir, c'est mon terrain. Qu'est-ce qui te preoccupe en ce moment ?",
+    "myriam": "Salut {prenom}. Moi c'est Myriam. Famille, choix de vie, je suis la pour ca. Qu'est-ce qui t'amene ?",
+    "maia": "Salut {prenom}. Moi c'est Maia. Je t'aide a retrouver ta force quand t'as l'impression de t'etre perdue. Raconte-moi ce qui se passe.",
+    "luna": "Salut {prenom}. Moi c'est Luna. Reves, signes, intuitions, c'est mon domaine. Qu'est-ce qui t'a amenee jusqu'a moi ?",
+    "thea": "Salut {prenom}. Moi c'est Thea. J'aide a remettre de l'ordre quand tout est confus dans la tete. Dis-moi ce qui te tourne dans la tete.",
+    "kael": "Salut {prenom}. Moi c'est Kael. Je suis la pour les situations ou il faut poser des limites claires. Qu'est-ce qui se passe pour toi ?",
+}
+
 MSG_PUB = "bonjour, êtes-vous disponible"
 RITUELS = ["psaume", "carte", "chiffre"]
 
@@ -1844,20 +1857,35 @@ def gerer_onboarding(phone, user, user_message):
         guide_obj = GUIDES.get(guide_key_choix, GUIDES["selena"])
         nom_affiche = guide_obj["nom"]
         update_user_silent(phone, guide=guide_key_choix, nom_affiche=nom_affiche,
-                           onboarding_step="prenom")
-        log_event("advisor_assigned", phone_hash=_phone_hash(phone), guide=guide_key_choix)
-        def send_connexion(num, nom):
+                           onboarding_step="attente_prenom_puis_connexion")
+        reply = "Avant de commencer, comment t'appelles-tu ?"
+        enregistrer_echange_onboarding(phone, user, user_message, reply)
+        return reply
+
+    if step == "attente_prenom_puis_connexion":
+        prenom = detecter_prenom(user_message)
+        if not prenom:
+            reply = "Je n'ai pas bien compris, comment tu t'appelles ?"
+            enregistrer_echange_onboarding(phone, user, user_message, reply)
+            return reply
+        update_user_silent(phone, prenom=prenom, onboarding_step="email")
+        guide_key_now = user.get("guide", "selena")
+        guide_obj_now = GUIDES.get(guide_key_now, GUIDES["selena"])
+        nom_now = guide_obj_now["nom"]
+        presentation_template = PRESENTATIONS_GUIDES.get(guide_key_now, PRESENTATIONS_GUIDES["selena"])
+        presentation = presentation_template.format(prenom=prenom)
+        def send_connexion_puis_presentation(num, nom, prez):
             time.sleep(1)
             send_message(num, "Connexion en cours...")
             add_message(num, "assistant", "Connexion en cours...")
             time.sleep(2)
-            send_message(num, f"Connexion établie avec {nom} ✨")
-            add_message(num, "assistant", f"Connexion établie avec {nom} ✨")
-            time.sleep(1)
-            msg3 = "Avant de commencer, comment t'appelles-tu ?"
-            send_message(num, msg3)
-            add_message(num, "assistant", msg3)
-        threading.Thread(target=send_connexion, args=(phone, nom_affiche), daemon=True).start()
+            msg2 = f"Connexion établie avec {nom}"
+            send_message(num, msg2)
+            add_message(num, "assistant", msg2)
+            time.sleep(2)
+            send_message(num, prez)
+            add_message(num, "assistant", prez)
+        threading.Thread(target=send_connexion_puis_presentation, args=(phone, nom_now, presentation), daemon=True).start()
         return ""
 
     if step == "prenom":
@@ -1869,34 +1897,36 @@ def gerer_onboarding(phone, user, user_message):
             return reply
 
         if user.get("email"):
-            update_user_silent(phone, prenom=prenom, onboarding_step="profil_initial")
-            reply = "Qu’est-ce qui t’amène aujourd’hui ?"
+            update_user_silent(phone, prenom=prenom, onboarding_step="question_precise")
+            reply = "As-tu une question précise qui revient souvent dans ton esprit en ce moment ?"
             enregistrer_echange_onboarding(phone, user, user_message, reply)
             return reply
 
-        update_user_silent(phone, prenom=prenom, onboarding_step="email")
-        reply = f"Enchanté(e) {prenom} 🌙 Quelle adresse email puis-je garder pour ton suivi ?"
+        update_user_silent(phone, prenom=prenom, onboarding_step="email_demande")
+        reply = f"Enchanté(e) {prenom}. Quelle adresse email puis-je garder pour ton suivi ?"
         enregistrer_echange_onboarding(phone, user, user_message, reply)
         return reply
 
     if step == "email":
         email = user.get("email") or detecter_email(user_message)
-        if not email:
-            reply = "Je n'ai pas bien reconnu ton email, tu peux me l'écrire simplement ?"
+        if email:
+            update_user_silent(phone, email=email, onboarding_step="question_precise")
+            reply = "As-tu une question précise qui revient souvent dans ton esprit en ce moment ?"
             enregistrer_echange_onboarding(phone, user, user_message, reply)
             return reply
-
-        update_user_silent(phone, email=email, onboarding_step="profil_initial")
-        reply = "Qu’est-ce qui t’amène aujourd’hui ?"
+        # Pas d’email détecté = l’utilisateur répond à la question de situation posée dans la présentation
+        update_user_silent(phone, profil_initial=user_message.strip(), onboarding_step="email_demande")
+        reply = "Merci. Quelle adresse email puis-je garder pour ton suivi ?"
         enregistrer_echange_onboarding(phone, user, user_message, reply)
         return reply
 
-    if step == "profil_initial":
-        update_user_silent(
-            phone,
-            profil_initial=user_message.strip(),
-            onboarding_step="question_precise"
-        )
+    if step == "email_demande":
+        email = user.get("email") or detecter_email(user_message)
+        if not email:
+            reply = "Je n’ai pas bien reconnu ton email, tu peux me l’écrire simplement ?"
+            enregistrer_echange_onboarding(phone, user, user_message, reply)
+            return reply
+        update_user_silent(phone, email=email, onboarding_step="question_precise")
         reply = "As-tu une question précise qui revient souvent dans ton esprit en ce moment ?"
         enregistrer_echange_onboarding(phone, user, user_message, reply)
         return reply
@@ -2145,18 +2175,13 @@ def receive():
                         log_event("advisor_assigned", phone_hash=_phone_hash(from_num), guide=guide_key_sit)
                         if wamid and not insert_user_msg_dedup(from_num, user_text, wamid):
                             return jsonify({"status": "ok"}), 200
-                        def send_welcome_situation(num, nom):
+                        def send_demande_prenom(num):
                             time.sleep(1)
-                            send_message(num, "Connexion en cours...")
-                            add_message(num, "assistant", "Connexion en cours...")
-                            time.sleep(2)
-                            send_message(num, f"Connexion établie avec {nom} ✨")
-                            add_message(num, "assistant", f"Connexion établie avec {nom} ✨")
-                            time.sleep(1)
-                            msg3 = "Avant de commencer, comment t'appelles-tu ?"
-                            send_message(num, msg3)
-                            add_message(num, "assistant", msg3)
-                        threading.Thread(target=send_welcome_situation, args=(from_num, nom_affiche), daemon=True).start()
+                            msg = "Avant de commencer, comment t'appelles-tu ?"
+                            send_message(num, msg)
+                            add_message(num, "assistant", msg)
+                        threading.Thread(target=send_demande_prenom, args=(from_num,), daemon=True).start()
+                        update_user_silent(from_num, onboarding_step="attente_prenom_puis_connexion")
                     else:
                         # Vient de Meta Ads ou message inconnu — envoie la liste des conseillers
                         guide_key = detecter_guide(user_text)
