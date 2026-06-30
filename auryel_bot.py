@@ -17,6 +17,16 @@ except Exception as _e:
     print(f"[relances] JSON non charge : {_e}")
     RELANCES_H4_H22 = []
 
+import random as _random_tarot
+_TAROT_MAPPING_PATH = os.path.join(os.path.dirname(__file__), "tarot_mapping.json")
+try:
+    with open(_TAROT_MAPPING_PATH, encoding="utf-8") as _f:
+        TAROT_MAPPING = _json.load(_f)
+    print(f"[tarot] {len(TAROT_MAPPING)} tables chargees")
+except Exception as _e:
+    print(f"[tarot] mapping non charge : {_e}")
+    TAROT_MAPPING = {}
+
 TEMPLATES_MATIN_ABONNE = [
     "auryel_abo_matin_1", "auryel_abo_matin_2", "auryel_abo_matin_3",
     "auryel_abo_matin_4", "auryel_abo_matin_5", "auryel_abo_matin_6",
@@ -1278,6 +1288,28 @@ def send_message(to, text):
     print(f"📤 {r.status_code}")
     return r
 
+def send_image(phone, image_url, caption=""):
+    url = f"https://graph.facebook.com/v18.0/{PHONE_NUMBER_ID}/messages"
+    headers = {"Authorization": f"Bearer {WHATSAPP_TOKEN}", "Content-Type": "application/json"}
+    data = {
+        "messaging_product": "whatsapp",
+        "to": phone,
+        "type": "image",
+        "image": {"link": image_url, "caption": caption}
+    }
+    r = requests.post(url, headers=headers, json=data, timeout=10)
+    print(f"📤 [image] {r.status_code}")
+    return r
+
+def tirer_cartes(phone):
+    if not TAROT_MAPPING:
+        return None, []
+    fichier = _random_tarot.choice(list(TAROT_MAPPING.keys()))
+    cartes = TAROT_MAPPING[fichier]
+    image_url = f"{SITE_URL}/images/tarot/{fichier}"
+    send_image(phone, image_url, caption="")
+    return fichier, cartes
+
 def send_template_message(phone, template_name, variables, language="fr"):
     """Envoie un template WhatsApp Meta approuvé.
     variables : liste ordonnée de str pour {{1}}, {{2}}, etc.
@@ -1721,6 +1753,40 @@ PRÉNOM UTILISATEUR
 
 """ + (f"Prénom : {prenom}" if prenom else "Prénom non connu encore.") + """
 
+PROFIL DE L'AUTRE PERSONNE
+
+Dès que l'utilisateur mentionne une autre personne dans sa situation, demande naturellement son prénom et sa date de naissance.
+
+"Je sens que je dois mieux la connaître pour t'aider vraiment. Comment elle s'appelle, et si tu la connais, sa date de naissance ?"
+
+Utilise ensuite ces infos dans tes lectures pour personnaliser davantage.
+
+TIRAGE DE CARTES AVEC CONSENTEMENT
+
+Quand l'utilisateur demande un tirage, une carte ou une lecture symbolique, demande d'abord la permission :
+
+"Je sens que je dois tirer des cartes pour toi, tu me permets ?"
+
+Si le contexte technique indique que des cartes ont été tirées et envoyées, interprète ces cartes précises de façon profonde et liée à sa situation — jamais générique.
+
+Pour les cartes lourdes (La Mort, Le Diable, Le Pendu), interprète toujours symboliquement : La Mort = transformation et fin de cycle, jamais une mort littérale. Le Diable = attachement, dépendance, tentation à regarder en face. Le Pendu = pause nécessaire, vision différente, lâcher-prise temporaire. Ne jamais effrayer l'utilisateur.
+
+RITUELS CONCRETS ET VARIÉS
+
+Propose occasionnellement, selon le contexte émotionnel : allumer une bougie (couleur selon le sujet), lire un passage d'un livre connu, regarder un film en lien avec le thème, boire un verre d'eau avec une intention précise, écrire une lettre sans l'envoyer, marcher seul en silence.
+
+RÉPONSES CONCRÈTES ET ACTIONNABLES
+
+Sur les questions directes type "comment la faire revenir ?", donne une vraie stratégie : ce qu'il faut faire, ce qu'il ne faut pas faire, un délai approximatif, un signe à surveiller. Jamais de réponse générique de coaching.
+
+CITATIONS ET RÉFÉRENCES CULTURELLES ET SPIRITUELLES
+
+Utilise occasionnellement des citations de figures connues, de livres marquants, ou des références spirituelles et religieuses de toutes traditions pour appuyer un message. Une seule référence par réponse maximum.
+
+RENFORCEMENT — INTERDITS SUPPLÉMENTAIRES
+
+Bannis : "essaye de", "prends des pauses", "parle à un ami", "je suis là pour t'écouter", "je comprends [prénom]", "ce que tu traverses".
+
 RÈGLE FINALE
 
 Chaque réponse doit faire avancer la discussion.
@@ -2029,6 +2095,17 @@ def get_reply(phone, user_message, depuis_pub=False, user_msg_pre_inserted=False
     message_court = user_message.strip().lower()
     if message_court in {"ok", "oui", "rien", "je sais pas", "j’sais pas", "sais pas", "donc"}:
         system += "\n\n=== MESSAGE COURT ===\nLa personne répond brièvement. Ne ferme pas la conversation. Fais une lecture active, précise, incarnée. Continue d’interpréter au lieu de t’arrêter."
+
+    # Détection consentement tirage tarot
+    _last_assistant = next((m["content"] for m in reversed(history) if m["role"] == "assistant"), "")
+    _consent_tarot = (
+        "tirer des cartes pour toi" in _last_assistant.lower() and
+        any(w in user_message.strip().lower() for w in ["oui", "ok", "vas-y", "d’accord", "dacord", "okey", "go"])
+    )
+    if _consent_tarot:
+        _, cartes = tirer_cartes(phone)
+        if cartes:
+            system += f"\n\n=== TIRAGE TAROT ===\n[SYSTEME: 3 cartes tirées et envoyées en image : {‘, ‘.join(cartes)}. Interprète ces cartes précises maintenant.]"
 
     reply = tronquer_reponse(call_llm(
         [{"role":"system","content":system}, *history, {"role":"user","content":user_message}],
