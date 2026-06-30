@@ -3,7 +3,7 @@
 
 [build]
   publish = "."
-  ignore = "exit 0"
+  command = ""
 
 [[headers]]
   for = "/*"
