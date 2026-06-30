@@ -1093,11 +1093,10 @@ def detecter_prenom(message):
     if len(mots) <= 3:
         for mot in mots:
             mot_propre = mot.strip(".,!?")
-            if (mot_propre[0].isupper() and
-                mot_propre.isalpha() and
+            if (mot_propre.isalpha() and
                 len(mot_propre) >= 2 and
                 mot_propre.lower() not in MOTS_EXCLUS_PRENOM):
-                return mot_propre
+                return mot_propre.capitalize()
     return None
 
 def detecter_pas_les_moyens(message):
