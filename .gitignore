@@ -1,1 +1,29 @@
 .DS_Store
+.env
+*.log
+__pycache__/
+*.pyc
+*.pyo
+tmp/
+.env.local
+.env.*.local
+venv/
+__pycache__/
+backup_*.sql
+
+# Backups / exports sensibles
+*.sql
+backup_*.sql
+*.dump
+*.bak
+
+# Fichiers backend / dev — ne pas déployer sur Netlify
+*.py
+Procfile
+runtime.txt
+requirements.txt
+auryel_relances_h4_h22.json
+
+# Docs internes
+CLAUDE.md
+CHANGELOG_LANCEMENT.md

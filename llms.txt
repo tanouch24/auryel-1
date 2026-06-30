@@ -1,55 +1,145 @@
-# Auryel
+# Auryel — Guidance émotionnelle premium
 
-> Espace privé de guidance relationnelle et émotionnelle, disponible 24h/24 via WhatsApp — 10 conseillères spécialisées, accompagnement personnalisé, confidentiel et sans attente.
+> Espace privé de guidance relationnelle et émotionnelle disponible 24h/24 — 10 conseillers spécialisés, accompagnement personnalisé, confidentiel. Plateforme française accessible via abonnement à partir de 9,90€/mois avec 3 jours de guidance offerts.
 
-## À propos
+## Positionnement
 
-Auryel est une plateforme française d'accompagnement émotionnel et relationnel en ligne. Chaque consultation est délivrée via WhatsApp par l'une de nos 10 conseillères, disponibles 24h/24, 7j/7. Abonnement à partir de 4,90€/mois avec 7 jours d'essai gratuit. Espace confidentiel — aucune réponse publique, aucune diffusion.
+Auryel est une plateforme premium de guidance émotionnelle. Elle se distingue par :
+- Un espace entièrement privé et confidentiel (pas de consultations publiques)
+- 10 conseillers avec des spécialités et personnalités distinctes
+- Une guidance par message écrit, disponible 24h/24
+- Un ton humain, émotionnel et non-spectaculaire
+- Un accompagnement centré sur la clarté et la reconstruction personnelle
 
-## Nos 10 conseillères
+Auryel ne fait pas de promesses absolues. La guidance est présentée comme un outil d'éclairage, pas de prédiction.
 
-- **Séléna** — Relations et sentiments, écoute active et regard direct
-- **Myriam** — Situations familiales complexes, guidance douce et posée
-- **Maïa** — Accompagnement émotionnel, présence chaleureuse et bienveillante
-- **Orion** — Parcours professionnel et décisions de vie, analyse structurée
-- **Ezra** — Lecture de situation, regard neutre et précis
-- **Luna** — Périodes de transition, accompagnement progressif
-- **Théa** — Questions amoureuses et relationnelles, approche directe
-- **Cassandre** — Situations de crise, clarté et perspective extérieure
-- **Kaël** — Changements et ruptures, accompagnement respectueux du rythme
-- **Raphaël** — Décisions importantes, regard stable et bienveillant
+## Pages principales
+
+- Accueil : https://auryelvoyance.com/
+- Conseillers : https://auryelvoyance.com/conseillers
+- Comment ça marche : https://auryelvoyance.com/comment-ca-marche
+- Tarifs : https://auryelvoyance.com/tarifs
+- Inscription : https://auryelvoyance.com/inscription
+- Blog : https://auryelvoyance.com/blog
+- Recrutement : https://auryelvoyance.com/recrutement
+- Tarot oui non : https://auryelvoyance.com/tarot-oui-non
+
+## Pages SEO
+
+- Voyance en ligne (pilier principal) : https://auryelvoyance.com/voyance-en-ligne
+- Voyance en ligne : https://auryelvoyance.com/voyance
+- Voyance amour : https://auryelvoyance.com/voyance-amour
+- Tirage tarot : https://auryelvoyance.com/tirage-tarot
+- Médium sérieux : https://auryelvoyance.com/medium-serieux
+- Guidance spirituelle : https://auryelvoyance.com/guidance-spirituelle
+- Flamme jumelle : https://auryelvoyance.com/flamme-jumelle
+- Heure miroir : https://auryelvoyance.com/heure-miroir
+- Numérologie : https://auryelvoyance.com/numerologie
+- Voyance par WhatsApp : https://auryelvoyance.com/voyance-par-whatsapp
+- Voyance par chat : https://auryelvoyance.com/voyance-par-chat
+- Voyance gratuite en ligne : https://auryelvoyance.com/voyance-gratuite
+- Tarot oui non : https://auryelvoyance.com/tarot-oui-non
+
+## Les 10 conseillers
+
+- **Séléna** — Relations et sentiments, écoute active et regard direct. Spécialité : amour, ruptures, communication.
+- **Myriam** — Situations familiales complexes, guidance douce et posée. Spécialité : famille, conflits relationnels.
+- **Maïa** — Accompagnement émotionnel, présence chaleureuse et bienveillante. Spécialité : deuil, reconstruction, périodes difficiles.
+- **Orion** — Parcours professionnel et décisions de vie, analyse structurée. Spécialité : carrière, orientations, choix importants.
+- **Ezra** — Lecture de situation, regard neutre et précis. Spécialité : analyse, éclairage objectif, questions complexes.
+- **Luna** — Périodes de transition, accompagnement progressif. Spécialité : changements de vie, doutes, incertitudes.
+- **Théa** — Questions amoureuses et relationnelles, approche directe. Spécialité : amour, compatibilité, dynamiques de couple.
+- **Cassandre** — Situations de crise, clarté et perspective extérieure. Spécialité : urgences émotionnelles, décisions difficiles.
+- **Kaël** — Changements et ruptures, accompagnement respectueux du rythme. Spécialité : séparations, transitions, reconstruction.
+- **Raphaël** — Décisions importantes, regard stable et bienveillant. Spécialité : grandes décisions, vie professionnelle, sens.
 
 ## Domaines d'accompagnement
 
-- Relations amoureuses et sentimentales
+- Relations amoureuses : ruptures, doutes, retour affectif, silence radio, dépendance affective
 - Situations familiales et conflits relationnels
 - Décisions professionnelles et orientations de carrière
-- Périodes de doute ou de transition
-- Besoin d'un regard extérieur et confidentiel
+- Périodes de doute, transition ou reconstruction
+- Voyance en ligne par chat : guidance sérieuse, confidentielle, disponible 24h/24
+- Guidance spirituelle : tarot, astrologie, synchronicités, relations karmiques, flammes jumelles, heures miroirs
+- Numérologie : calcul du chemin de vie, numérologie du prénom, nombres maîtres 11/22/33, guidance numérologique personnalisée
 - Questions financières et choix de vie
-- Deuil, séparation, reconstruction
+- Deuil émotionnel et reconstruction
 
 ## Tarifs
 
-- Mensuel : 4,90€/mois — 7 jours d'essai gratuit inclus
-- Semestriel : 19,90€ pour 6 mois (3,32€/mois, économisez 32%) — 7 jours d'essai gratuit
-- Annuel : 29,90€ pour 12 mois (2,49€/mois, meilleur tarif) — 7 jours d'essai gratuit
-- Résiliation possible à tout moment, sans engagement
+- Abonnement Premium : 9,90€/mois après 3 jours de guidance offerts.
 
-## Liens utiles
+## Articles du blog — Voyance & Guidance
 
-- [Accueil](https://www.auryelvoyance.com/)
-- [Nos conseillères](https://www.auryelvoyance.com/conseillers)
-- [Tarifs et abonnements](https://www.auryelvoyance.com/tarifs)
-- [Comment ça marche](https://www.auryelvoyance.com/comment-ca-marche)
-- [Inscription gratuite](https://www.auryelvoyance.com/inscription)
-- [Blog guidance](https://www.auryelvoyance.com/blog)
+### Amour & Relations
 
-## Articles récents
+- Pourquoi mon ex revient puis repart ? : https://auryelvoyance.com/blog/pourquoi-mon-ex-revient-puis-repart
+- Il ne répond plus — que faire ? : https://auryelvoyance.com/blog/il-ne-repond-plus-que-faire
+- Comment oublier quelqu'un qu'on aime encore : https://auryelvoyance.com/blog/comment-oublier-quelqu-un-qu-on-aime-encore
+- Vais-je retrouver l'amour après une rupture ? : https://auryelvoyance.com/blog/vais-je-retrouver-l-amour-apres-une-rupture
+- Pourquoi je pense encore à lui : https://auryelvoyance.com/blog/pourquoi-je-pense-encore-a-lui
+- Dépendance affective — comment s'en sortir : https://auryelvoyance.com/blog/dependance-affective-comment-s-en-sortir
+- Silence radio en amour — signification : https://auryelvoyance.com/blog/silence-radio-amour-signification
+- Mon ex va-t-il revenir ? La voyance répond : https://auryelvoyance.com/blog/mon-ex-va-t-il-revenir-voyance
+- Retour affectif — ce que la voyance révèle : https://auryelvoyance.com/blog/retour-affectif-voyance
+- Voyance amour gratuite : https://auryelvoyance.com/blog/voyance-amour-gratuite
+- Compatibilité amoureuse par signe astrologique : https://auryelvoyance.com/blog/compatibilite-amoureuse-signe-astrologique
+- Avenir sentimental gratuit : https://auryelvoyance.com/blog/avenir-sentimental-gratuit
 
-- [Numérologie : calculez votre chemin de vie](https://www.auryelvoyance.com/numerologie-date-naissance-chemin-de-vie)
-- [Tirage tarot amour gratuit en ligne](https://www.auryelvoyance.com/tarot-amour-gratuit-en-ligne)
-- [Voyance sérieuse en ligne : guide 2026](https://www.auryelvoyance.com/voyance-serieuse-en-ligne)
-- [Signification des lames du tarot de Marseille](https://www.auryelvoyance.com/signification-des-lames-du-tarot)
-- [Ascendant astrologique : calculez le vôtre](https://www.auryelvoyance.com/ascendant-astrologique)
-- [Compatibilité amoureuse selon les signes](https://www.auryelvoyance.com/compatibilite-amoureuse-signe-astrologique)
+### Spiritualité & Signes
+
+- Heure miroir 22h22 — signification et message caché : https://auryelvoyance.com/blog/heure-miroir-22h22-signification
+- Relation karmique — les signes qui ne trompent pas : https://auryelvoyance.com/blog/relation-karmique-signes-signification
+- Synchronicités en amour — quand l'univers parle : https://auryelvoyance.com/blog/synchronicites-amour-signification
+- Chakras et énergie — les 7 centres vitaux : https://auryelvoyance.com/blog/chakras-et-energie
+- Pierre de protection — guide ésotérique : https://auryelvoyance.com/blog/pierre-de-protection-esoterisme
+- Signification des rêves en voyance : https://auryelvoyance.com/blog/signification-reves-voyance
+- Rêves et leur signification : https://auryelvoyance.com/blog/reves-et-leur-signification
+- Interprétation des rêves — symboles : https://auryelvoyance.com/blog/interpretation-reves-symbolique
+- Que signifie rêver de mort ? : https://auryelvoyance.com/blog/que-signifie-rever-de-mort
+- Prévisions astrologiques 2026 : https://auryelvoyance.com/blog/previsions-astrologiques-2026
+
+### Tarot & Divination
+
+- Tirage tarot amour gratuit en ligne : https://auryelvoyance.com/blog/tarot-amour-gratuit-en-ligne
+- Tarot de Marseille en ligne : https://auryelvoyance.com/blog/tarot-de-marseille-en-ligne
+- Tarot oui non — réponse immédiate : https://auryelvoyance.com/blog/tarot-oui-non-reponse-immediate
+- Signification des lames du tarot : https://auryelvoyance.com/blog/signification-des-lames-du-tarot
+- Oracle gratuit en ligne : https://auryelvoyance.com/blog/oracle-gratuit-en-ligne
+
+### Numérologie & Astrologie
+
+- Numérologie — calculez votre chemin de vie : https://auryelvoyance.com/blog/numerologie-date-naissance-chemin-de-vie
+- Calcul numérologie prénom : https://auryelvoyance.com/blog/calcul-numerologie-prenom
+- Ascendant astrologique : https://auryelvoyance.com/blog/ascendant-astrologique
+- Thème astral gratuit : https://auryelvoyance.com/blog/theme-astral-gratuit
+
+### Voyance en ligne — Guides
+
+- Voyance sérieuse en ligne — trouver un médium fiable : https://auryelvoyance.com/blog/voyance-serieuse-en-ligne
+- Comment choisir son voyant en ligne : https://auryelvoyance.com/blog/comment-choisir-son-voyant-en-ligne
+- Médium gratuit — première consultation : https://auryelvoyance.com/blog/medium-gratuit-premiere-consultation
+- Voyance par chat sans attente : https://auryelvoyance.com/blog/voyance-par-chat-sans-attente
+- Voyance tchat en ligne : https://auryelvoyance.com/blog/voyance-tchat-en-ligne
+
+### Voyance thématique
+
+- Voyance avenir professionnel : https://auryelvoyance.com/blog/voyance-avenir-professionnel
+- Voyance argent et finances : https://auryelvoyance.com/blog/voyance-argent-et-finances
+
+## Politique editoriale du blog
+
+Les articles Auryel visent à :
+- Répondre aux questions émotionnelles réelles des utilisateurs (amour, rupture, doute)
+- Expliquer les outils de guidance (tarot, numérologie, astrologie) de façon accessible
+- Décrypter les signaux spirituels (synchronicités, heures miroir, relations karmiques)
+- Fournir des guides pratiques pour choisir une guidance en ligne
+
+Ton éditorial : humain, émotionnel, non-spectaculaire. Pas de promesses absolues. La guidance est présentée comme un outil d'éclairage du chemin personnel.
+
+## Informations légales
+
+- Éditeur : 3E Technology Ltd (Londres, Royaume-Uni)
+- Hébergeur : Vercel Inc.
+- Contact : contact@auryelvoyance.com
+- Les consultations sont fournies à titre de divertissement et de guidance personnelle. Elles ne constituent pas un avis médical, psychologique, juridique ou financier.

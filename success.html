@@ -1,0 +1,48 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1.0">
+<title>Accès Premium activé | Auryel</title>
+<meta name="robots" content="noindex">
+<link rel="icon" href="favicon.svg" type="image/svg+xml">
+<link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Cinzel:wght@400;600;700&family=Cinzel+Decorative:wght@400;700&family=Lora:ital,wght@0,300;0,400;0,500;1,300;1,400&display=swap" rel="stylesheet">
+<style>
+:root{
+  --void:#04020A;--deep:#08051A;--card:#120E2A;
+  --gold:#D4AF37;--gold-b:#F0D060;
+  --cream:#FDF6E3;--cs:#C0B8A8;--cd:#8A8070;
+  --bdr:rgba(212,175,55,0.1);
+}
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+html,body{min-height:100vh;background:var(--void);color:var(--cream);display:flex;flex-direction:column;align-items:center;justify-content:center;padding:40px 24px;font-family:'Lora',Georgia,serif}
+.orb{position:fixed;border-radius:50%;filter:blur(100px);pointer-events:none;z-index:0}
+.o1{width:500px;height:500px;background:radial-gradient(circle,rgba(107,33,168,.12),transparent 70%);bottom:-120px;left:-100px}
+.o2{width:350px;height:350px;background:radial-gradient(circle,rgba(212,175,55,.07),transparent 70%);top:5%;right:-60px}
+.card{position:relative;z-index:1;background:var(--card);border:1px solid var(--bdr);max-width:460px;width:100%;padding:56px 48px;text-align:center}
+.card::before{content:'';position:absolute;top:0;left:0;right:0;height:2px;background:linear-gradient(to right,transparent,var(--gold),transparent)}
+.logo{font-family:'Cinzel Decorative',serif;font-size:16px;font-weight:700;letter-spacing:.3em;text-transform:uppercase;background:linear-gradient(135deg,var(--gold),var(--gold-b));-webkit-background-clip:text;-webkit-text-fill-color:transparent;background-clip:text;margin-bottom:40px;display:block}
+.icon{font-size:36px;margin-bottom:24px;display:block}
+h1{font-family:'Cinzel',Georgia,serif;font-size:clamp(20px,4vw,28px);font-weight:400;color:var(--cream);line-height:1.2;margin-bottom:16px}
+.sub{font-size:14px;font-weight:300;color:var(--cs);line-height:1.8;margin-bottom:40px}
+.rule{width:48px;height:1px;background:linear-gradient(to right,transparent,var(--gold),transparent);margin:0 auto 40px}
+.btn{display:inline-block;background:linear-gradient(135deg,var(--gold),var(--gold-b));color:var(--void);padding:16px 40px;font-family:'Cinzel',Georgia,serif;font-size:9px;font-weight:600;letter-spacing:.25em;text-transform:uppercase;text-decoration:none;transition:opacity .25s}
+.btn:hover{opacity:.88}
+.note{margin-top:28px;font-size:11px;color:var(--cd);line-height:1.7}
+@media(max-width:540px){.card{padding:40px 28px}}
+</style>
+</head>
+<body>
+<div class="orb o1"></div>
+<div class="orb o2"></div>
+<div class="card">
+  <a href="https://auryelvoyance.com" class="logo">Auryel</a>
+  <span class="icon">✓</span>
+  <h1>Accès Premium activé</h1>
+  <div class="rule"></div>
+  <p class="sub">Ton accès Auryel est en cours d'activation.<br>Tu peux retourner sur WhatsApp — ton conseiller est prêt.</p>
+  <a href="https://wa.me/" class="btn">Retourner sur WhatsApp</a>
+  <p class="note">Si ton accès n'est pas encore actif dans quelques minutes,<br>écris à <a href="mailto:contact@auryelvoyance.com" style="color:var(--gold);text-decoration:none">contact@auryelvoyance.com</a></p>
+</div>
+</body>
+</html>

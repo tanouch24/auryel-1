@@ -1,0 +1,246 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1.0">
+<title>Continuer avec Auryel</title>
+<meta name="robots" content="noindex">
+<link rel="canonical" href="https://auryelvoyance.com/payer">
+<link rel="icon" href="favicon.svg" type="image/svg+xml">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Cinzel:wght@400;600;700&family=Cinzel+Decorative:wght@400;700&family=Lora:ital,wght@0,300;0,400;0,500;1,300;1,400&display=swap" rel="stylesheet">
+<script src="/cookie-consent.js"></script>
+<style>
+:root{
+  --void:#04020A;--deep:#08051A;--surface:#0E0A20;--card:#120E2A;--card-h:#1A1535;
+  --gold:#D4AF37;--gold-b:#F0D060;--gold-m:#8B6914;
+  --cream:#FDF6E3;--cs:#C0B8A8;--cd:#8A8070;
+  --bdr:rgba(212,175,55,0.1);--bdrm:rgba(212,175,55,0.2);
+}
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+html,body{min-height:100vh;background:var(--void);color:var(--cream)}
+body{
+  font-family:'Lora',Georgia,serif;
+  display:flex;flex-direction:column;align-items:center;
+  justify-content:flex-start;padding:0 20px 72px;
+}
+
+/* ── LOGO ── */
+.py-logo{
+  margin-top:52px;margin-bottom:56px;
+  font-family:'Cinzel Decorative',serif;
+  font-size:20px;font-weight:700;
+  letter-spacing:.3em;text-transform:uppercase;
+  text-align:center;text-decoration:none;
+  background:linear-gradient(135deg,var(--gold),var(--gold-b));
+  -webkit-background-clip:text;-webkit-text-fill-color:transparent;background-clip:text;
+}
+
+/* ── TITLES ── */
+.py-title{
+  font-family:'Cinzel',Georgia,serif;
+  font-size:clamp(22px,5vw,38px);font-weight:400;
+  color:var(--cream);text-align:center;
+  line-height:1.2;margin-bottom:28px;max-width:540px;
+}
+.py-rule{
+  width:56px;height:1px;
+  background:linear-gradient(to right,transparent,var(--gold),transparent);
+  margin:0 auto 22px;
+}
+.py-sub{
+  font-family:'Lora',Georgia,serif;
+  font-size:14px;font-weight:300;color:var(--cs);
+  text-align:center;margin-bottom:48px;letter-spacing:.04em;
+}
+
+/* ── CARDS ── */
+.py-grid{
+  display:grid;grid-template-columns:1fr;
+  gap:3px;width:100%;max-width:380px;margin-bottom:28px;
+}
+
+.pc{
+  background:var(--card);padding:40px 28px 32px;
+  position:relative;display:flex;flex-direction:column;
+  border-bottom:2px solid transparent;transition:all .35s;
+}
+.pc:hover{background:var(--card-h);border-bottom-color:var(--gold)}
+.pc.feat{
+  background:linear-gradient(160deg,#120E2A,#1A1535);
+  border:1px solid rgba(212,175,55,.25);
+}
+
+.pc-badge{
+  position:absolute;top:0;left:50%;transform:translateX(-50%);
+  background:linear-gradient(135deg,var(--gold),var(--gold-b));
+  color:var(--void);font-family:'Cinzel',Georgia,serif;
+  font-size:8px;letter-spacing:.25em;text-transform:uppercase;
+  padding:7px 18px;font-weight:700;white-space:nowrap;
+}
+
+.pc-period{
+  font-family:'Cinzel',Georgia,serif;
+  font-size:10px;letter-spacing:.35em;text-transform:uppercase;
+  color:var(--gold);margin-bottom:20px;
+}
+.pc.feat .pc-period{margin-top:20px}
+
+.pc-amount{display:flex;align-items:flex-start;margin-bottom:4px}
+.pc-curr{font-family:'Cinzel',Georgia,serif;font-size:18px;color:var(--gold-b);margin-top:8px;margin-right:2px}
+.pc-num{font-family:'Cinzel',Georgia,serif;font-size:54px;color:var(--cream);line-height:1}
+.pc-dec{font-family:'Cinzel',Georgia,serif;font-size:24px;color:var(--cream);align-self:flex-end;margin-bottom:4px}
+
+.pc-lbl{font-family:'Lora',Georgia,serif;font-size:11px;color:var(--cd);margin-bottom:6px}
+.pc-eq{font-family:'Lora',Georgia,serif;font-style:italic;font-size:13px;color:var(--gold);margin-bottom:8px}
+.pc-note{font-family:'Lora',Georgia,serif;font-size:12px;color:var(--cd);line-height:1.65;flex:1;margin-bottom:28px}
+
+/* ── CTA BUTTON ── */
+.pc-cta{
+  width:100%;padding:15px;min-height:48px;border:none;cursor:pointer;
+  background:linear-gradient(135deg,var(--gold),var(--gold-b));
+  color:var(--void);
+  font-family:'Cinzel',Georgia,serif;
+  font-size:9px;font-weight:600;letter-spacing:.22em;text-transform:uppercase;
+  transition:opacity .25s,transform .15s;
+  display:flex;align-items:center;justify-content:center;gap:8px;
+  margin-top:auto;
+}
+.pc-cta:hover:not(:disabled){opacity:.88;transform:translateY(-1px)}
+.pc-cta:disabled{opacity:.5;cursor:not-allowed;transform:none}
+
+/* ── SPINNER ── */
+.spin{
+  display:none;width:13px;height:13px;border-radius:50%;
+  border:2px solid rgba(4,2,10,.25);border-top-color:var(--void);
+  animation:_spin .6s linear infinite;flex-shrink:0;
+}
+@keyframes _spin{to{transform:rotate(360deg)}}
+.pc-cta.loading .spin{display:block}
+
+/* ── ERROR ── */
+.py-error{
+  display:none;
+  background:rgba(239,68,68,.1);border:1px solid rgba(239,68,68,.3);
+  color:#F87171;font-family:'Lora',Georgia,serif;
+  font-size:13px;line-height:1.65;padding:12px 20px;
+  text-align:center;max-width:640px;width:100%;margin-bottom:20px;
+}
+
+/* ── NOTE & BACK ── */
+.py-note{
+  font-family:'Lora',Georgia,serif;
+  font-size:12px;color:var(--cd);
+  text-align:center;line-height:1.85;max-width:540px;
+}
+.py-back{
+  margin-top:32px;
+  font-family:'Cinzel',Georgia,serif;
+  font-size:10px;letter-spacing:.2em;
+  color:var(--cd);text-decoration:none;
+  transition:color .25s;
+}
+.py-back:hover{color:var(--gold)}
+
+/* ── ORB décor ── */
+.orb{position:fixed;border-radius:50%;filter:blur(100px);pointer-events:none;z-index:-1}
+.o1{width:500px;height:500px;background:radial-gradient(circle,rgba(107,33,168,.1),transparent 70%);bottom:-120px;left:-100px}
+.o2{width:350px;height:350px;background:radial-gradient(circle,rgba(212,175,55,.06),transparent 70%);top:5%;right:-60px}
+</style>
+</head>
+<body>
+
+<div class="orb o1"></div>
+<div class="orb o2"></div>
+
+<a href="https://auryelvoyance.com" class="py-logo">Auryel</a>
+
+<h1 class="py-title" id="py-title">Continue avec Auryel</h1>
+<div class="py-rule"></div>
+<p class="py-sub">Accès illimité · Résiliable à tout moment</p>
+
+<div class="py-grid">
+
+  <div class="pc">
+    <div class="pc-period">Premium</div>
+    <div class="pc-amount">
+      <span class="pc-curr">&euro;</span>
+      <span class="pc-num">9</span>
+      <span class="pc-dec">,90</span>
+    </div>
+    <div class="pc-lbl">par mois · résiliable à tout moment</div>
+    <div class="pc-note">Accès complet à 10 conseillers · 24h/24</div>
+    <button class="pc-cta" id="btn-mensuel" onclick="checkout('mensuel')">
+      <span class="spin"></span>
+      <span class="btn-label">Activer mon accès Premium</span>
+    </button>
+  </div>
+
+
+</div>
+
+<div class="py-error" id="py-error"></div>
+
+<p class="py-note">Paiement sécurisé par Stripe &middot; Résiliation possible à tout moment</p>
+
+<a href="https://auryelvoyance.com" class="py-back">&larr; Retour au site</a>
+
+<script>
+(function () {
+  var params = new URLSearchParams(window.location.search);
+  var conseiller = params.get('conseiller');
+  var phone = params.get('phone');
+
+  if (conseiller) {
+    document.getElementById('py-title').textContent = conseiller + ' est encore là pour toi';
+  }
+
+  window.checkout = function (plan) {
+    var btnM = document.getElementById('btn-mensuel');
+    var errEl = document.getElementById('py-error');
+
+    errEl.style.display = 'none';
+
+    if (!phone) {
+      errEl.textContent = 'Ton numéro WhatsApp est manquant. Reviens dans la conversation Auryel et utilise le lien de paiement reçu par WhatsApp.';
+      errEl.style.display = 'block';
+      return;
+    }
+
+    btnM.classList.add('loading');
+    btnM.disabled = true;
+
+    var body = {
+      plan: plan,
+      successUrl: 'https://auryelvoyance.com/success.html',
+      cancelUrl: 'https://auryelvoyance.com/payer'
+    };
+    body.phone = phone;
+
+    fetch('/stripe/create-checkout', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body)
+    })
+    .then(function (res) {
+      if (!res.ok) return res.json().then(function (d) { throw new Error(d.error || 'Erreur serveur'); });
+      return res.json();
+    })
+    .then(function (data) {
+      if (!data.url) throw new Error('Lien Stripe manquant');
+      if (typeof fbq !== 'undefined') fbq('track', 'InitiateCheckout');
+      window.location.href = data.url;
+    })
+    .catch(function () {
+      errEl.textContent = 'Une erreur est survenue. Merci de réessayer ou de contacter contact@auryelvoyance.com.';
+      errEl.style.display = 'block';
+      btnM.classList.remove('loading');
+      btnM.disabled = false;
+    });
+  };
+})();
+</script>
+
+</body>
+</html>

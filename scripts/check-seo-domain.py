@@ -17,7 +17,7 @@ Usage : python3 scripts/check-seo-domain.py
 import os, re, sys
 
 BASEDIR  = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-NEW_DOM  = 'https://www.auryelvoyance.com'
+NEW_DOM  = 'https://auryelvoyance.com'
 NETLIFY  = os.path.join(BASEDIR, 'netlify.toml')
 SITEMAP  = os.path.join(BASEDIR, 'sitemap.xml')
 
