@@ -3790,7 +3790,7 @@ footer{background:var(--deep);border-top:1px solid var(--bdr);padding:36px 64px;
 <title>{title}</title>
 <meta name="description" content="{meta}">
 <meta name="robots" content="index, follow">
-<link rel="canonical" href="{SITE_BASE}/{slug}.html">
+<link rel="canonical" href="{SITE_BASE}/blog/{slug}.html">
 <meta property="og:title" content="{title}">
 <meta property="og:description" content="{meta}">
 <meta property="og:image" content="https://images.unsplash.com/{img_id}?auto=format&fit=crop&w=1200&h=630&q=80">
@@ -3992,7 +3992,7 @@ def cron_seo_publish():
 
     # 3. Construire le HTML complet
     article_html = generate_article_html(kw_data, article_content)
-    article_url  = f"{SITE_BASE}/{slug}.html"
+    article_url  = f"{SITE_BASE}/blog/{slug}.html"
 
     # Extraire le titre pour l'email
     lines = article_content.strip().split("\n")
@@ -4000,7 +4000,7 @@ def cron_seo_publish():
 
     # 4. Pusher l'article sur GitHub → Netlify redéploie auto
     ok, msg = github_push_file(
-        f"{slug}.html",
+        f"blog/{slug}.html",
         article_html,
         f"✨ SEO auto: {kw} [{date.today().isoformat()}]"
     )
@@ -4017,10 +4017,6 @@ def cron_seo_publish():
         f"🗺️ Sitemap +{slug} [{date.today().isoformat()}]"
     )
     print(f"[SEO] Sitemap : {'✅' if ok_sm else '❌'}")
-
-    # 6. Créer/mettre à jour robots.txt
-    robots = f"User-agent: *\nAllow: /\nSitemap: {SITE_BASE}/sitemap.xml\n"
-    github_push_file("robots.txt", robots, "🤖 robots.txt update")
 
     # 7. Ping IndexNow → Google + Bing
     ping_indexnow(article_url)
