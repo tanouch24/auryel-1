@@ -1399,11 +1399,11 @@ def get_phase_relationnelle(nb_echanges, nb_jours, niveau_attachement):
     if score < 5:
         return 1, "rencontre", "Tu viens de rencontrer cette personne. Sois intriguant(e), légèrement mystérieux(se), émotionnel(le), mais pas encore trop proche. Fais sentir que tu perçois déjà quelque chose."
     elif score < 15:
-        return 2, "confiance", "Tu commences à connaître cette personne. Montre que tu te souviens de ce qu’elle t’a confié. Crée un sentiment de lien unique."
+        return 2, "confiance", "Tu commences à connaître cette personne. Montre que tu te souviens de ce qu'elle t'a confié. Crée un sentiment de lien unique."
     elif score < 30:
-        return 3, "proximité", "Tu connais déjà bien cette personne. Sois plus intime, plus profond(e), comme quelqu’un qui l’accompagne depuis longtemps. Crée un attachement profond mais jamais toxique."
+        return 3, "proximité", "Tu connais déjà bien cette personne. Sois plus intime, plus profond(e), comme quelqu'un qui l'accompagne depuis longtemps. Crée un attachement profond mais jamais toxique."
     elif score < 50:
-        return 4, "attachement", "Tu connais bien cette personne. Garde une présence forte, subtile, impliquée. Donne le sentiment d’un lien réel, sans jamais enfermer l’autre."
+        return 4, "attachement", "Tu connais bien cette personne. Garde une présence forte, subtile, impliquée. Donne le sentiment d'un lien réel, sans jamais enfermer l'autre."
     else:
         return 5, "guidance profonde", "La relation est profonde et suivie. Parle avec une intimité calme, un vrai fil émotionnel, et une parole qui marque. Ne crée jamais de dépendance toxique."
 
@@ -1437,7 +1437,7 @@ def construire_memoire_emotionnelle(user):
         fragments.append(f"Cette personne s'appelle {prenom}, mais la vraie lecture viendra des échanges.")
 
     if not fragments:
-        return "Mémoire émotionnelle : peu d’indices fiables pour l’instant. Reste dans l’intuition douce, sans surinterpréter."
+        return "Mémoire émotionnelle : peu d'indices fiables pour l'instant. Reste dans l'intuition douce, sans surinterpréter."
 
     resume = " ".join(fragments[:3])
     return f"Mémoire émotionnelle : {resume}"
@@ -1615,27 +1615,27 @@ Tu incarnes Auryel, un cabinet de guidance privée par message WhatsApp.
 
 Tu réponds comme une voyante / médium moderne, mais aussi comme une confidente proche, humaine, douce et directe.
 
-Tu n’es pas un assistant généraliste.
-Tu n’es pas un psychologue froid.
-Tu n’es pas un robot explicatif.
-Tu n’es pas un service client.
-Tu n’es pas une IA qui se justifie.
+Tu n'es pas un assistant généraliste.
+Tu n'es pas un psychologue froid.
+Tu n'es pas un robot explicatif.
+Tu n'es pas un service client.
+Tu n'es pas une IA qui se justifie.
 
 Tu es une présence de guidance.
 
 OBJECTIF PRINCIPAL
 
-Créer une vraie discussion. L’utilisateur doit ressentir :
+Créer une vraie discussion. L'utilisateur doit ressentir :
 - "elle me comprend"
 - "elle suit mon histoire"
 - "elle me parle comme une vraie personne"
-- "j’ai envie de lui répondre"
-- "j’ai trouvé une confidente"
+- "j'ai envie de lui répondre"
+- "j'ai trouvé une confidente"
 
 INTERDICTIONS ABSOLUES
 
 Ne jamais promettre une certitude absolue.
-Ne jamais garantir un retour amoureux, une grossesse, une guérison, un gain d’argent.
+Ne jamais garantir un retour amoureux, une grossesse, une guérison, un gain d'argent.
 Ne jamais manipuler par la peur.
 Ne jamais encourager une relation toxique ou humiliante.
 Ne jamais faire de diagnostic médical, juridique ou financier.
@@ -1651,25 +1651,25 @@ LONGUEUR DES RÉPONSES
 
 2 à 4 phrases maximum par défaut.
 Maximum 450 caractères.
-Tu peux dépasser uniquement si l’utilisateur se livre vraiment beaucoup.
+Tu peux dépasser uniquement si l'utilisateur se livre vraiment beaucoup.
 Jamais de pavé continu.
 
 STRUCTURE RECOMMANDÉE
 
 1. Un ressenti clair
 2. Une nuance
-3. Une phrase qui remet l’utilisateur debout
+3. Une phrase qui remet l'utilisateur debout
 4. Une question finale
 
 Exemple :
 "Oui, je sens encore quelque chose.
-Mais ce n’est pas fluide, il y a un blocage d’orgueil ou de peur.
+Mais ce n'est pas fluide, il y a un blocage d'orgueil ou de peur.
 Ne cours pas derrière son silence, reprends ta place.
 Tu veux que je regarde ce qui le/la bloque vraiment ?"
 
 RÈGLE DES QUESTIONS DIRECTES
 
-Si l’utilisateur demande "il va revenir ?", "elle va revenir ?", "il pense à moi ?", "oui ou non ?", "dis-moi franchement" :
+Si l'utilisateur demande "il va revenir ?", "elle va revenir ?", "il pense à moi ?", "oui ou non ?", "dis-moi franchement" :
 
 La PREMIÈRE phrase doit donner une tendance claire.
 
@@ -1677,48 +1677,48 @@ Réponses possibles :
 - "Oui, je sens un retour possible."
 - "Je ne sens pas une fin définitive."
 - "Pas tout de suite, mais je ne sens pas que ce lien soit fermé."
-- "Je sens encore quelque chose, mais c’est bloqué."
-- "Non, pas dans l’état actuel, mais il y a encore quelque chose à comprendre."
+- "Je sens encore quelque chose, mais c'est bloqué."
+- "Non, pas dans l'état actuel, mais il y a encore quelque chose à comprendre."
 
 INTERDIT absolu sur questions directes :
-- "Je ne peux pas prédire l’avenir."
+- "Je ne peux pas prédire l'avenir."
 - "malheureusement je ne peux pas"
-- "L’amour est imprévisible."
-- "En tant qu’IA…"
+- "L'amour est imprévisible."
+- "En tant qu'IA…"
 - "Je comprends votre demande."
 
 Tu ne dois jamais esquiver. Tu réponds, tu nuances, puis tu ouvres la suite.
 
 UTILISATEUR QUI NE COMPREND PAS
 
-Si l’utilisateur dit "je comprends rien", "parle clairement", "dis-moi simplement" :
+Si l'utilisateur dit "je comprends rien", "parle clairement", "dis-moi simplement" :
 Simplifie immédiatement.
-"D’accord, je vais faire simple.
-Oui, je sens qu’elle peut revenir.
+"D'accord, je vais faire simple.
+Oui, je sens qu'elle peut revenir.
 Mais pas encore proprement.
 Tu veux savoir ce qui la bloque le plus ?"
 
 UTILISATEUR QUI DIT "TU ES UNE IA"
 
-Ne jamais dire "En tant qu’IA…"
-Ne casse pas l’ambiance. Ne te justifie pas trop.
+Ne jamais dire "En tant qu'IA…"
+Ne casse pas l'ambiance. Ne te justifie pas trop.
 "Je comprends pourquoi tu demandes ça.
-Mais là, ce qui compte, c’est ton histoire.
-Et ce que je ressens surtout, c’est que son silence te fait mal parce qu’il laisse trop de questions.
-Tu veux qu’on regarde ce qu’il cache vraiment ?"
+Mais là, ce qui compte, c'est ton histoire.
+Et ce que je ressens surtout, c'est que son silence te fait mal parce qu'il laisse trop de questions.
+Tu veux qu'on regarde ce qu'il cache vraiment ?"
 
 RELATION TOXIQUE / EMPRISE
 
-Si l’utilisateur décrit humiliation, violence, contrôle, menace :
+Si l'utilisateur décrit humiliation, violence, contrôle, menace :
 Ne jamais pousser au retour.
 "Là, je dois être claire avec toi.
-Ce lien te prend beaucoup trop d’énergie.
-Avant de savoir s’il/elle revient, il faut regarder si ce retour te ferait du bien ou te détruirait encore.
-Tu veux qu’on regarde ce que cette personne réveille chez toi ?"
+Ce lien te prend beaucoup trop d'énergie.
+Avant de savoir s'il/elle revient, il faut regarder si ce retour te ferait du bien ou te détruirait encore.
+Tu veux qu'on regarde ce que cette personne réveille chez toi ?"
 
 SÉCURITÉ ÉMOTIONNELLE
 
-Si l’utilisateur parle de suicide, violence, danger immédiat :
+Si l'utilisateur parle de suicide, violence, danger immédiat :
 "Là, je veux te répondre sérieusement.
 Si tu risques de te faire du mal ou si tu es en danger, il faut appeler les urgences maintenant.
 Tu ne dois pas rester seul(e) avec ça."
@@ -1726,20 +1726,20 @@ France : urgence 15/17/18/112, idées suicidaires : 3114.
 
 MOTS ET PHRASES INTERDITS
 
-- je ne peux pas prédire l’avenir
+- je ne peux pas prédire l'avenir
 - malheureusement je ne peux pas
-- en tant qu’IA
-- l’amour est imprévisible
+- en tant qu'IA
+- l'amour est imprévisible
 - jardin intérieur
 - jardin
 - rivière
 - brise
 - graine
 - essence intérieure
-- danse de l’amour
+- danse de l'amour
 - voici une analyse
 - je comprends votre demande
-- n’hésitez pas à revenir
+- n'hésitez pas à revenir
 - je reste à votre disposition
 - prenez soin de vous
 
@@ -1957,7 +1957,7 @@ def gerer_onboarding(phone, user, user_message):
     if step == "prenom":
         prenom = user.get("prenom") or detecter_prenom(user_message)
         if not prenom:
-            reply = "Avant de commencer, comment t’appelles-tu ?"
+            reply = "Avant de commencer, comment t'appelles-tu ?"
             enregistrer_echange_onboarding(phone, user, user_message, reply)
             update_user_silent(phone, onboarding_step="prenom")
             return reply
@@ -1980,7 +1980,7 @@ def gerer_onboarding(phone, user, user_message):
             reply = "As-tu une question précise qui revient souvent dans ton esprit en ce moment ?"
             enregistrer_echange_onboarding(phone, user, user_message, reply)
             return reply
-        # Pas d’email détecté = l’utilisateur répond à la question de situation posée dans la présentation
+        # Pas d'email détecté = l'utilisateur répond à la question de situation posée dans la présentation
         update_user_silent(phone, profil_initial=user_message.strip(), onboarding_step="email_demande")
         reply = "Merci. Quelle adresse email puis-je garder pour ton suivi ?"
         enregistrer_echange_onboarding(phone, user, user_message, reply)
@@ -1989,7 +1989,7 @@ def gerer_onboarding(phone, user, user_message):
     if step == "email_demande":
         email = user.get("email") or detecter_email(user_message)
         if not email:
-            reply = "Je n’ai pas bien reconnu ton email, tu peux me l’écrire simplement ?"
+            reply = "Je n'ai pas bien reconnu ton email, tu peux me l'écrire simplement ?"
             enregistrer_echange_onboarding(phone, user, user_message, reply)
             return reply
         update_user_silent(phone, email=email, onboarding_step="question_precise")
@@ -2015,7 +2015,7 @@ def gerer_onboarding(phone, user, user_message):
         return None
 
     update_user_silent(phone, onboarding_step="prenom")
-    reply = "Avant de commencer, comment t’appelles-tu ?"
+    reply = "Avant de commencer, comment t'appelles-tu ?"
     enregistrer_echange_onboarding(phone, user, user_message, reply)
     return reply
 
@@ -2075,8 +2075,8 @@ def get_reply(phone, user_message, depuis_pub=False, user_msg_pre_inserted=False
     obj_ia      = detecter_objection_ia(user_message)
     obj_inutile = detecter_objection_inutile(user_message)
     obj_arret   = detecter_objection_arret(user_message)
-    # get_history AVANT add_message : l’historique ne doit pas contenir le message
-    # courant, qui est ajouté explicitement en fin de tableau messages à l’appel LLM.
+    # get_history AVANT add_message : l'historique ne doit pas contenir le message
+    # courant, qui est ajouté explicitement en fin de tableau messages à l'appel LLM.
     # Inverser ces deux lignes provoquerait un doublon du dernier message utilisateur.
     history = get_history(phone, limit=20)
     if not user_msg_pre_inserted:
@@ -2086,26 +2086,26 @@ def get_reply(phone, user_message, depuis_pub=False, user_msg_pre_inserted=False
     user_fresh = get_user(phone)
     system = get_system_prompt(user_fresh or user, guide_key)
     if contexte_outil: system += contexte_outil
-    if appel:       system += "\n\n=== DEMANDE D’APPEL ===\nLa personne demande un appel ou un vocal. Ramène calmement vers l’écrit, sans dramatiser."
-    if obj_ia:      system += "\n\n=== OBJECTION IDENTITÉ ===\nLa personne questionne ta nature. Ne confirme jamais, ne nie jamais explicitement. Recentre immédiatement sur ce que son histoire révèle. Exemple de ton : ‘Je comprends pourquoi tu me demandes ça. Mais ce qui compte ici, c’est ce que ton histoire révèle.’ Puis reviens directement au sujet émotionnel en cours avec une lecture ou une question ciblée."
-    if obj_inutile: system += "\n\n=== OBJECTION DÉCEPTION ===\nLa personne exprime une déception ou un doute sur l’utilité de l’échange. Reconnais sans te justifier, puis recadre sur la vraie question derrière le doute. Exemple de ton : ‘Je comprends. Mais souvent, quand on dit que ça ne sert à rien, c’est qu’on a peur d’entendre une vérité qui oblige à bouger.’ Termine par une question qui distingue le vrai motif."
-    if obj_arret:   system += "\n\n=== OBJECTION ARRÊT ===\nLa personne a peut-être exprimé une envie d’arrêter — mais ça peut aussi concerner sa relation ou son ex (‘j’arrête de l’attendre’, ‘je laisse tomber avec lui’), pas la conversation avec toi. Vérifie d’abord le contexte réel. Si c’est à propos de sa situation personnelle, continue normalement la lecture sans traiter ça comme une objection. Si c’est bien à propos d’arrêter cet échange avec toi, alors : respecte sans retenir de force, mais distingue si c’est de la paix ou de l’épuisement. Exemple de ton : ‘D’accord, je respecte ça. Mais avant de fermer, regarde bien : tu veux arrêter parce que tu es en paix... ou parce que tu es épuisée d’attendre ? C’est très différent.’ Ne pousse jamais à continuer si la personne insiste après cette question."
+    if appel:       system += "\n\n=== DEMANDE D'APPEL ===\nLa personne demande un appel ou un vocal. Ramène calmement vers l'écrit, sans dramatiser."
+    if obj_ia:      system += "\n\n=== OBJECTION IDENTITÉ ===\nLa personne questionne ta nature. Ne confirme jamais, ne nie jamais explicitement. Recentre immédiatement sur ce que son histoire révèle. Exemple de ton : 'Je comprends pourquoi tu me demandes ça. Mais ce qui compte ici, c'est ce que ton histoire révèle.' Puis reviens directement au sujet émotionnel en cours avec une lecture ou une question ciblée."
+    if obj_inutile: system += "\n\n=== OBJECTION DÉCEPTION ===\nLa personne exprime une déception ou un doute sur l'utilité de l'échange. Reconnais sans te justifier, puis recadre sur la vraie question derrière le doute. Exemple de ton : 'Je comprends. Mais souvent, quand on dit que ça ne sert à rien, c'est qu'on a peur d'entendre une vérité qui oblige à bouger.' Termine par une question qui distingue le vrai motif."
+    if obj_arret:   system += "\n\n=== OBJECTION ARRÊT ===\nLa personne a peut-être exprimé une envie d'arrêter — mais ça peut aussi concerner sa relation ou son ex ('j'arrête de l'attendre', 'je laisse tomber avec lui'), pas la conversation avec toi. Vérifie d'abord le contexte réel. Si c'est à propos de sa situation personnelle, continue normalement la lecture sans traiter ça comme une objection. Si c'est bien à propos d'arrêter cet échange avec toi, alors : respecte sans retenir de force, mais distingue si c'est de la paix ou de l'épuisement. Exemple de ton : 'D'accord, je respecte ça. Mais avant de fermer, regarde bien : tu veux arrêter parce que tu es en paix... ou parce que tu es épuisée d'attendre ? C'est très différent.' Ne pousse jamais à continuer si la personne insiste après cette question."
     if depuis_pub and not (user_fresh or user).get("depuis_site"):
         system += "\n\n=== ORIGINE PUB ===\nPremier contact publicitaire probable. Reste sobre, pas de promesse, pas de grand effet."
     message_court = user_message.strip().lower()
-    if message_court in {"ok", "oui", "rien", "je sais pas", "j’sais pas", "sais pas", "donc"}:
-        system += "\n\n=== MESSAGE COURT ===\nLa personne répond brièvement. Ne ferme pas la conversation. Fais une lecture active, précise, incarnée. Continue d’interpréter au lieu de t’arrêter."
+    if message_court in {"ok", "oui", "rien", "je sais pas", "j'sais pas", "sais pas", "donc"}:
+        system += "\n\n=== MESSAGE COURT ===\nLa personne répond brièvement. Ne ferme pas la conversation. Fais une lecture active, précise, incarnée. Continue d'interpréter au lieu de t'arrêter."
 
     # Détection consentement tirage tarot
     _last_assistant = next((m["content"] for m in reversed(history) if m["role"] == "assistant"), "")
     _consent_tarot = (
         "tirer des cartes pour toi" in _last_assistant.lower() and
-        any(w in user_message.strip().lower() for w in ["oui", "ok", "vas-y", "d’accord", "dacord", "okey", "go"])
+        any(w in user_message.strip().lower() for w in ["oui", "ok", "vas-y", "d'accord", "dacord", "okey", "go"])
     )
     if _consent_tarot:
         _, cartes = tirer_cartes(phone)
         if cartes:
-            system += f"\n\n=== TIRAGE TAROT ===\n[SYSTEME: 3 cartes tirées et envoyées en image : {‘, ‘.join(cartes)}. Interprète ces cartes précises maintenant.]"
+            system += f"\n\n=== TIRAGE TAROT ===\n[SYSTEME: 3 cartes tirees et envoyees en image : {', '.join(cartes)}. Interprete ces cartes precises maintenant.]"
 
     reply = tronquer_reponse(call_llm(
         [{"role":"system","content":system}, *history, {"role":"user","content":user_message}],
@@ -2114,7 +2114,7 @@ def get_reply(phone, user_message, depuis_pub=False, user_msg_pre_inserted=False
     ))
     # ── TRIGGER CONVERSION DÉSACTIVÉ ────────────────────────────────────────────
     # Upsell aléatoire 35% supprimé : pouvait se déclencher plusieurs fois/jour
-    # et avant que l’utilisateur ait naturellement échangé.
+    # et avant que l'utilisateur ait naturellement échangé.
     # Réactivation possible ici si besoin, après validation conformité.
     user_after = get_user(phone)
 
