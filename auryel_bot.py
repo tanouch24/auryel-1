@@ -3633,6 +3633,13 @@ def choisir_message_relance(user, moment):
 def cron_relances_intraday():
     """Vérifie toutes les heures si H+4 ou H+22 doit être envoyé."""
     now = datetime.now()
+
+    from zoneinfo import ZoneInfo
+    now_paris = datetime.now(ZoneInfo("Europe/Paris"))
+    if now_paris.hour < 8 or now_paris.hour >= 22:
+        print(f"[h4/h22] hors plage horaire ({now_paris.hour}h) — skip")
+        return
+
     try:
         conn = get_conn()
         c = conn.cursor()
