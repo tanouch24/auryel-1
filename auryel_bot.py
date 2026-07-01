@@ -1905,26 +1905,6 @@ def enregistrer_echange_onboarding(phone, user, user_message, reply):
     update_user_silent(phone, nb_echanges=user.get("nb_echanges", 0) + 1)
 
 
-def construire_lecture_psaume_onboarding(numero, psaume, user):
-    profil = (user.get("profil_initial") or "").strip()
-    question = (user.get("onboarding_question") or "").strip()
-    extrait = psaume.split(".")[0].strip()
-
-    contexte = question or profil
-    if contexte:
-        phrase_contexte = "Avec ce que tu viens de déposer, je sens surtout quelque chose qui cherche enfin une direction."
-    else:
-        phrase_contexte = "Il arrive au bon moment : avant les réponses, il remet ton désir au centre."
-
-    return (
-        f"Le psaume {numero} ouvre sur cette phrase : « {extrait}. »\n\n"
-        f"Il parle d'un manque profond, d'une soif intérieure, "
-        f"de quelque chose que l'on cherche sans réussir à le poser.\n\n"
-        f"{phrase_contexte}\n\n"
-        f"On va reprendre à partir de là, doucement."
-    )
-
-
 def gerer_onboarding(phone, user, user_message):
     """Retourne une réponse d'onboarding ou None si la consultation IA peut continuer."""
     if user.get("onboarding_done"):
@@ -2022,12 +2002,6 @@ def gerer_onboarding(phone, user, user_message):
             onboarding_done=True,
             onboarding_step=""
         )
-        log_event("onboarding_done", phone_hash=_phone_hash(phone),
-                  guide=user.get("guide", ""), ts=datetime.utcnow().isoformat())
-        return None
-
-    if step == "psaume" or step.startswith("psaume_"):
-        update_user_silent(phone, onboarding_done=True, onboarding_step="")
         log_event("onboarding_done", phone_hash=_phone_hash(phone),
                   guide=user.get("guide", ""), ts=datetime.utcnow().isoformat())
         return None
