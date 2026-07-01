@@ -1415,7 +1415,7 @@ def construire_memoire_emotionnelle(user):
     douleur = user.get("douleur_principale", "")
     peur = user.get("peur_dominante", "")
     intention = user.get("derniere_intention", "")
-    profil_initial = user.get("profil_initial", "")
+    profil_initial = user.get("profil_initial") or user.get("onboarding_question") or ""
 
     fragments = []
 
@@ -1467,7 +1467,7 @@ def extraire_sujet_reprise(user):
     if douleur:
         return douleur
 
-    profil = (user.get("profil_initial") or "").strip()
+    profil = (user.get("profil_initial") or user.get("onboarding_question") or "").strip()
     if profil:
         return "ce que la personne avait confié"
 
@@ -1921,18 +1921,31 @@ def gerer_onboarding(phone, user, user_message):
         guide_obj = GUIDES.get(guide_key_choix, GUIDES["selena"])
         nom_affiche = guide_obj["nom"]
         update_user_silent(phone, guide=guide_key_choix, nom_affiche=nom_affiche,
-                           onboarding_step="attente_prenom_puis_connexion")
+                           onboarding_step="prenom")
         reply = "Avant de commencer, comment t'appelles-tu ?"
         enregistrer_echange_onboarding(phone, user, user_message, reply)
         return reply
 
-    if step == "attente_prenom_puis_connexion":
-        prenom = detecter_prenom(user_message)
+    if step == "prenom":
+        prenom = user.get("prenom") or detecter_prenom(user_message)
         if not prenom:
             reply = "Je n'ai pas bien compris, comment tu t'appelles ?"
             enregistrer_echange_onboarding(phone, user, user_message, reply)
             return reply
+
         update_user_silent(phone, prenom=prenom, onboarding_step="email")
+        reply = f"Enchanté(e) {prenom}. Quelle adresse email puis-je garder pour ton suivi ?"
+        enregistrer_echange_onboarding(phone, user, user_message, reply)
+        return reply
+
+    if step == "email":
+        email = user.get("email") or detecter_email(user_message)
+        if not email:
+            reply = "Je n'ai pas bien reconnu ton email, tu peux me l'écrire simplement ?"
+            enregistrer_echange_onboarding(phone, user, user_message, reply)
+            return reply
+        update_user_silent(phone, email=email, onboarding_step="attente_reponse_presentation")
+        prenom = user.get("prenom", "")
         guide_key_now = user.get("guide", "selena")
         guide_obj_now = GUIDES.get(guide_key_now, GUIDES["selena"])
         nom_now = guide_obj_now["nom"]
@@ -1952,50 +1965,7 @@ def gerer_onboarding(phone, user, user_message):
         threading.Thread(target=send_connexion_puis_presentation, args=(phone, nom_now, presentation), daemon=True).start()
         return ""
 
-    if step == "prenom":
-        prenom = user.get("prenom") or detecter_prenom(user_message)
-        if not prenom:
-            reply = "Avant de commencer, comment t'appelles-tu ?"
-            enregistrer_echange_onboarding(phone, user, user_message, reply)
-            update_user_silent(phone, onboarding_step="prenom")
-            return reply
-
-        if user.get("email"):
-            update_user_silent(phone, prenom=prenom, onboarding_step="question_precise")
-            reply = "As-tu une question précise qui revient souvent dans ton esprit en ce moment ?"
-            enregistrer_echange_onboarding(phone, user, user_message, reply)
-            return reply
-
-        update_user_silent(phone, prenom=prenom, onboarding_step="email_demande")
-        reply = f"Enchanté(e) {prenom}. Quelle adresse email puis-je garder pour ton suivi ?"
-        enregistrer_echange_onboarding(phone, user, user_message, reply)
-        return reply
-
-    if step == "email":
-        email = user.get("email") or detecter_email(user_message)
-        if email:
-            update_user_silent(phone, email=email, onboarding_step="question_precise")
-            reply = "As-tu une question précise qui revient souvent dans ton esprit en ce moment ?"
-            enregistrer_echange_onboarding(phone, user, user_message, reply)
-            return reply
-        # Pas d'email détecté = l'utilisateur répond à la question de situation posée dans la présentation
-        update_user_silent(phone, profil_initial=user_message.strip(), onboarding_step="email_demande")
-        reply = "Merci. Quelle adresse email puis-je garder pour ton suivi ?"
-        enregistrer_echange_onboarding(phone, user, user_message, reply)
-        return reply
-
-    if step == "email_demande":
-        email = user.get("email") or detecter_email(user_message)
-        if not email:
-            reply = "Je n'ai pas bien reconnu ton email, tu peux me l'écrire simplement ?"
-            enregistrer_echange_onboarding(phone, user, user_message, reply)
-            return reply
-        update_user_silent(phone, email=email, onboarding_step="question_precise")
-        reply = "As-tu une question précise qui revient souvent dans ton esprit en ce moment ?"
-        enregistrer_echange_onboarding(phone, user, user_message, reply)
-        return reply
-
-    if step == "question_precise":
+    if step == "attente_reponse_presentation":
         update_user_silent(
             phone,
             onboarding_question=user_message.strip(),
@@ -2250,7 +2220,7 @@ def receive():
                             send_message(num, msg)
                             add_message(num, "assistant", msg)
                         threading.Thread(target=send_demande_prenom, args=(from_num,), daemon=True).start()
-                        update_user_silent(from_num, onboarding_step="attente_prenom_puis_connexion")
+                        update_user_silent(from_num, onboarding_step="prenom")
                     else:
                         # Vient de Meta Ads ou message inconnu — envoie la liste des conseillers
                         guide_key = detecter_guide(user_text)
