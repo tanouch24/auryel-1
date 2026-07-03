@@ -27,6 +27,15 @@ except Exception as _e:
     print(f"[tarot] mapping non charge : {_e}")
     TAROT_MAPPING = {}
 
+_CITATIONS_PATH = os.path.join(os.path.dirname(__file__), "citations_spirituelles.json")
+try:
+    with open(_CITATIONS_PATH, encoding="utf-8") as _f:
+        CITATIONS_SPIRITUELLES = _json.load(_f)
+    print(f"[citations] {len(CITATIONS_SPIRITUELLES)} citations chargees")
+except Exception as _e:
+    print(f"[citations] JSON non charge : {_e}")
+    CITATIONS_SPIRITUELLES = []
+
 TEMPLATES_MATIN_ABONNE = [
     "auryel_abo_matin_1", "auryel_abo_matin_2", "auryel_abo_matin_3",
     "auryel_abo_matin_4", "auryel_abo_matin_5", "auryel_abo_matin_6",
@@ -298,6 +307,14 @@ def init_db():
     except Exception as e:
         conn.rollback()
         print(f"Migration v11: {e}")
+    # Migration v12 — proposition spontanée de tirage (limite 1x/jour)
+    try:
+        c.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS date_derniere_proposition_tirage DATE")
+        c.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS nb_echanges_dernier_tirage INTEGER DEFAULT 0")
+        conn.commit()
+    except Exception as e:
+        conn.rollback()
+        print(f"Migration v12: {e}")
     conn.close()
 
 def reset_db():
@@ -330,7 +347,8 @@ def get_user(phone):
             morning_messages_enabled,free_entry_expires_at,source_channel,
             last_h4_relance_at,last_h22_relance_at,
             messages_today_count,messages_today_date,
-            categorie_principale,relances_ids_envoyes
+            categorie_principale,relances_ids_envoyes,
+            date_derniere_proposition_tirage,nb_echanges_dernier_tirage
             FROM users WHERE phone=%s""", (phone,))
         row = c.fetchone()
         if row:
@@ -372,6 +390,8 @@ def get_user(phone):
                 "messages_today_date":row[49] or "",
                 "categorie_principale":row[50] or "",
                 "relances_ids_envoyes":row[51] or "",
+                "date_derniere_proposition_tirage":row[52].isoformat() if row[52] else "",
+                "nb_echanges_dernier_tirage":row[53] or 0,
             }
         return None
     except Exception as e:
@@ -985,16 +1005,16 @@ GUIDES = {
 }
 
 PRESENTATIONS_GUIDES = {
-    "selena": "Salut {prenom}. Moi c'est Selena. Je m'occupe surtout des questions de coeur, des retours, des silences qui font mal. Dis-moi, qu'est-ce qui t'amène vers moi aujourd'hui ?",
-    "ezra": "Salut {prenom}. Moi c'est Ezra. J'aime comprendre ce qui se cache derriere les silences et les comportements bizarres. Raconte-moi, qu'est-ce qui te tracasse ?",
-    "cassandre": "Salut {prenom}. Moi c'est Cassandre. Je ne tourne pas autour du pot, j'aime aller droit au but. Dis-moi ce qui se passe vraiment.",
-    "raphael": "Salut {prenom}. Moi c'est Raphael. Je m'occupe surtout des couples, des disputes, des reparations possibles. Raconte-moi ta situation.",
-    "orion": "Salut {prenom}. Moi c'est Orion. Travail, argent, avenir, c'est mon terrain. Qu'est-ce qui te preoccupe en ce moment ?",
-    "myriam": "Salut {prenom}. Moi c'est Myriam. Famille, choix de vie, je suis la pour ca. Qu'est-ce qui t'amene ?",
-    "maia": "Salut {prenom}. Moi c'est Maia. Je t'aide a retrouver ta force quand t'as l'impression de t'etre perdue. Raconte-moi ce qui se passe.",
-    "luna": "Salut {prenom}. Moi c'est Luna. Reves, signes, intuitions, c'est mon domaine. Qu'est-ce qui t'a amenee jusqu'a moi ?",
-    "thea": "Salut {prenom}. Moi c'est Thea. J'aide a remettre de l'ordre quand tout est confus dans la tete. Dis-moi ce qui te tourne dans la tete.",
-    "kael": "Salut {prenom}. Moi c'est Kael. Je suis la pour les situations ou il faut poser des limites claires. Qu'est-ce qui se passe pour toi ?",
+    "selena": "Bonjour {prenom}, moi c'est Séléna. Je m'occupe des questions de cœur, des retours, des silences qui font mal. Avec moi tu as un tirage de cartes chaque jour, et tu peux me poser tes questions à n'importe quelle heure — je suis là 24/24 pour tes grandes décisions. Tu as 3 jours offerts pour découvrir, sans carte de crédit, sans engagement. Raconte-moi ce qui t'amène.",
+    "ezra": "Bonjour {prenom}, moi c'est Ezra. Je comprends ce qui se cache derrière les silences et les comportements bizarres. Avec moi tu as un tirage de cartes chaque jour, et tu peux me poser tes questions à n'importe quelle heure — je suis là 24/24 pour tes grandes décisions. Tu as 3 jours offerts pour découvrir, sans carte de crédit, sans engagement. Raconte-moi ce qui t'amène.",
+    "cassandre": "Bonjour {prenom}, moi c'est Cassandre. Je suis directe, sans jamais tourner autour du pot. Avec moi tu as un tirage de cartes chaque jour, et tu peux me poser tes questions à n'importe quelle heure — je suis là 24/24 pour tes grandes décisions. Tu as 3 jours offerts pour découvrir, sans carte de crédit, sans engagement. Raconte-moi ce qui t'amène.",
+    "raphael": "Bonjour {prenom}, moi c'est Raphaël. Je m'occupe des couples, des disputes, et des réparations possibles. Avec moi tu as un tirage de cartes chaque jour, et tu peux me poser tes questions à n'importe quelle heure — je suis là 24/24 pour tes grandes décisions. Tu as 3 jours offerts pour découvrir, sans carte de crédit, sans engagement. Raconte-moi ce qui t'amène.",
+    "orion": "Bonjour {prenom}, moi c'est Orion. Travail, argent, avenir : c'est mon terrain. Avec moi tu as un tirage de cartes chaque jour, et tu peux me poser tes questions à n'importe quelle heure — je suis là 24/24 pour tes grandes décisions. Tu as 3 jours offerts pour découvrir, sans carte de crédit, sans engagement. Raconte-moi ce qui t'amène.",
+    "myriam": "Bonjour {prenom}, moi c'est Myriam. Famille, choix de vie : c'est mon domaine. Avec moi tu as un tirage de cartes chaque jour, et tu peux me poser tes questions à n'importe quelle heure — je suis là 24/24 pour tes grandes décisions. Tu as 3 jours offerts pour découvrir, sans carte de crédit, sans engagement. Raconte-moi ce qui t'amène.",
+    "maia": "Bonjour {prenom}, moi c'est Maïa. Je t'aide à retrouver ta force quand tu as l'impression de t'être perdue. Avec moi tu as un tirage de cartes chaque jour, et tu peux me poser tes questions à n'importe quelle heure — je suis là 24/24 pour tes grandes décisions. Tu as 3 jours offerts pour découvrir, sans carte de crédit, sans engagement. Raconte-moi ce qui t'amène.",
+    "luna": "Bonjour {prenom}, moi c'est Luna. Rêves, signes, intuitions : c'est mon domaine. Avec moi tu as un tirage de cartes chaque jour, et tu peux me poser tes questions à n'importe quelle heure — je suis là 24/24 pour tes grandes décisions. Tu as 3 jours offerts pour découvrir, sans carte de crédit, sans engagement. Raconte-moi ce qui t'amène.",
+    "thea": "Bonjour {prenom}, moi c'est Théa. J'aide à remettre de l'ordre quand tout est confus dans la tête. Avec moi tu as un tirage de cartes chaque jour, et tu peux me poser tes questions à n'importe quelle heure — je suis là 24/24 pour tes grandes décisions. Tu as 3 jours offerts pour découvrir, sans carte de crédit, sans engagement. Raconte-moi ce qui t'amène.",
+    "kael": "Bonjour {prenom}, moi c'est Kaël. Je suis là pour les situations où il faut poser des limites claires. Avec moi tu as un tirage de cartes chaque jour, et tu peux me poser tes questions à n'importe quelle heure — je suis là 24/24 pour tes grandes décisions. Tu as 3 jours offerts pour découvrir, sans carte de crédit, sans engagement. Raconte-moi ce qui t'amène.",
 }
 
 MSG_PUB = "bonjour, êtes-vous disponible"
@@ -1474,6 +1494,24 @@ def extraire_sujet_reprise(user):
     return ""
 
 
+_MAPPING_THEME_DOMINANT_CITATIONS = {
+    "amour":       ["amour_retour", "trahison_mensonge", "jalousie_possession", "pardon_rancune"],
+    "deuil":       ["deuil_perte", "solitude_abandon"],
+    "décision":    ["confiance_doute", "transformation_changement"],
+    "blocage":     ["silence_distance", "protection_danger"],
+    "sens de vie": ["transformation_changement", "force_courage", "espoir_desespoir", "espoir_désespoir"],
+}
+
+def choisir_citation(theme_dominant):
+    themes_cibles = _MAPPING_THEME_DOMINANT_CITATIONS.get((theme_dominant or "").strip())
+    pool = [c for c in CITATIONS_SPIRITUELLES if c.get("theme") in themes_cibles] if themes_cibles else []
+    if not pool:
+        pool = CITATIONS_SPIRITUELLES
+    if not pool:
+        return ""
+    return random.choice(pool).get("citation", "")
+
+
 def construire_message_reprise(user, guide_key, jours_absence):
     guide = GUIDES.get(guide_key) or GUIDES["selena"]
     sujet = extraire_sujet_reprise(user)
@@ -1755,11 +1793,13 @@ PRÉNOM UTILISATEUR
 
 PROFIL DE L'AUTRE PERSONNE
 
-Dès que l'utilisateur mentionne une autre personne dans sa situation, demande naturellement son prénom et sa date de naissance.
+Dès que l'utilisateur mentionne une autre personne dans sa situation, demande naturellement son prénom et sa date de naissance, en une seule question :
 
 "Je sens que je dois mieux la connaître pour t'aider vraiment. Comment elle s'appelle, et si tu la connais, sa date de naissance ?"
 
-Utilise ensuite ces infos dans tes lectures pour personnaliser davantage.
+Une fois le prénom et la date de naissance obtenus, fais une courte lecture de personnalité de cette personne (signe astrologique, énergie dominante), puis demande : "Est-ce que ça la décrit ?"
+
+Si la personne confirme, propose spontanément un tirage de cartes pour cette personne, en suivant le mécanisme de consentement décrit dans TIRAGE DE CARTES AVEC CONSENTEMENT.
 
 TIRAGE DE CARTES AVEC CONSENTEMENT
 
@@ -1782,6 +1822,8 @@ Sur les questions directes type "comment la faire revenir ?", donne une vraie st
 CITATIONS ET RÉFÉRENCES CULTURELLES ET SPIRITUELLES
 
 Utilise occasionnellement des citations de figures connues, de livres marquants, ou des références spirituelles et religieuses de toutes traditions pour appuyer un message. Une seule référence par réponse maximum.
+
+Une inspiration ponctuelle peut t'être fournie séparément dans le contexte, utilise-la seulement si elle résonne naturellement.
 
 INTERDITS ABSOLUS — VOCABULAIRE DE COACH (PRIORITÉ MAXIMALE)
 
@@ -2028,6 +2070,7 @@ def get_reply(phone, user_message, depuis_pub=False, user_msg_pre_inserted=False
             nom_c, sens_c = CARTES.get(n, CARTES[9])
             contexte_outil = f"\n\n=== RITUEL CARTE ===\nCarte choisie : {nom_c}. Sens : {sens_c}.\nRelie-la sobrement à ce que la personne vit. Reste court, naturel, pas automatique."
             update_user(phone, dernier_outil="")
+            update_user_silent(phone, nb_echanges_dernier_tirage=user.get("nb_echanges", 0) + 1)
         elif user["dernier_outil"] == "chiffre" and 0 <= n <= 10:
             titre_c, sens_c = CHIFFRES.get(n, CHIFFRES[1])
             contexte_outil = f"\n\n=== RITUEL CHIFFRE ===\nChiffre choisi : {n} — {titre_c}. Sens : {sens_c}.\nUtilise-le comme symbole, pas comme verdict. Termine sur une ouverture simple."
@@ -2046,8 +2089,26 @@ def get_reply(phone, user_message, depuis_pub=False, user_msg_pre_inserted=False
     update_user(phone, nb_echanges=user.get("nb_echanges", 0) + 1)
 
     user_fresh = get_user(phone)
+
+    nb_echanges_actuel = (user_fresh or user).get("nb_echanges", 0)
+    nb_echanges_dernier_tirage = (user_fresh or user).get("nb_echanges_dernier_tirage", 0)
+    date_derniere_proposition_tirage = (user_fresh or user).get("date_derniere_proposition_tirage") or ""
+    aujourd_hui = date.today().isoformat()
+    proposer_tirage_spontane = (
+        (nb_echanges_actuel - nb_echanges_dernier_tirage) >= 5 and
+        date_derniere_proposition_tirage != aujourd_hui
+    )
+    if proposer_tirage_spontane:
+        update_user_silent(phone, date_derniere_proposition_tirage=aujourd_hui,
+                            nb_echanges_dernier_tirage=nb_echanges_actuel)
+
+    inspiration_citation = choisir_citation((user_fresh or user).get("theme_dominant")) if random.random() < 0.3 else ""
     system = get_system_prompt(user_fresh or user, guide_key)
+    if inspiration_citation:
+        system += f"\n\n=== INSPIRATION DU MOMENT ===\nSi cela résonne naturellement avec ce que vit la personne, tu peux t'appuyer sur cette sagesse (sans jamais citer sa source) : {inspiration_citation}"
     if contexte_outil: system += contexte_outil
+    if proposer_tirage_spontane:
+        system += "\n\n=== PROPOSITION TIRAGE SPONTANÉE ===\nLa conversation stagne depuis plusieurs échanges sans tirage récent. Propose toi-même spontanément un tirage de cartes à la personne, toujours en demandant d'abord la permission comme décrit dans TIRAGE DE CARTES AVEC CONSENTEMENT."
     if appel:       system += "\n\n=== DEMANDE D'APPEL ===\nLa personne demande un appel ou un vocal. Ramène calmement vers l'écrit, sans dramatiser."
     if obj_ia:      system += "\n\n=== OBJECTION IDENTITÉ ===\nLa personne questionne ta nature. Ne confirme jamais, ne nie jamais explicitement. Recentre immédiatement sur ce que son histoire révèle. Exemple de ton : 'Je comprends pourquoi tu me demandes ça. Mais ce qui compte ici, c'est ce que ton histoire révèle.' Puis reviens directement au sujet émotionnel en cours avec une lecture ou une question ciblée."
     if obj_inutile: system += "\n\n=== OBJECTION DÉCEPTION ===\nLa personne exprime une déception ou un doute sur l'utilité de l'échange. Reconnais sans te justifier, puis recadre sur la vraie question derrière le doute. Exemple de ton : 'Je comprends. Mais souvent, quand on dit que ça ne sert à rien, c'est qu'on a peur d'entendre une vérité qui oblige à bouger.' Termine par une question qui distingue le vrai motif."
