@@ -1,2 +1,2 @@
 [phases.install]
-cmds = ["pip3 install --break-system-packages -r backend_requirements.txt"]
+cmds = ["python3 -m pip install --break-system-packages -r backend_requirements.txt"]
