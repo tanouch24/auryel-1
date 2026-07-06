@@ -18,4 +18,5 @@ backup_*.sql
 
 # Docs internes
 CLAUDE.md
+CLAUDE copie.md
 CHANGELOG_LANCEMENT.md
