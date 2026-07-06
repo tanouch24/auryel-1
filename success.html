@@ -7,6 +7,7 @@
 <link rel="icon" href="favicon.svg" type="image/svg+xml">
 <link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Cinzel:wght@400;600;700&family=Cinzel+Decorative:wght@400;700&family=Lora:ital,wght@0,300;0,400;0,500;1,300;1,400&display=swap" rel="stylesheet">
+<script src="/cookie-consent.js"></script>
 <style>
 :root{
   --void:#04020A;--deep:#08051A;--card:#120E2A;
@@ -47,5 +48,12 @@ h1{font-family:'Cinzel',Georgia,serif;font-size:clamp(20px,4vw,28px);font-weight
 <p style="text-align:center;font-size:11px;color:rgba(253,246,227,.4);padding:16px 24px;">
 <a href="/resiliation" style="color:inherit;text-decoration:underline;">Résilier mon abonnement</a>
 </p>
+<script>
+if (typeof fbq !== 'undefined' && !sessionStorage.getItem('auryel_purchase_tracked')) {
+  // TODO TUN-5 : value dynamique quand l'annuel sera achetable (successUrl ne porte pas le plan pour l'instant)
+  fbq('track', 'Purchase', {value: 9.90, currency: 'EUR'});
+  sessionStorage.setItem('auryel_purchase_tracked', '1');
+}
+</script>
 </body>
 </html>
