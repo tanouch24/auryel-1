@@ -181,3 +181,142 @@ dedup_ok = ok_first and ok_second and ok_third
 print(f"\n{'✅' if dedup_ok else '❌'} Déduplication WAMID : {'PASS' if dedup_ok else 'FAIL'}")
 if not dedup_ok:
     raise SystemExit(1)
+
+# ── Tests QW-1 : garde-fou détresse dans les 3 crons de relance ───────────────
+print("\n" + "=" * 60)
+print("TEST QW-1 — niveau_detresse >= 70 bloque toute relance")
+print("=" * 60)
+
+from datetime import timedelta
+from auryel_bot import cron_daily, cron_morning, cron_relances_intraday
+
+NOW_QW1 = datetime(2026, 6, 19, 14, 0, 0)
+
+def make_full_user(**kwargs):
+    base = {
+        "phone": "+33611112222", "email": "", "prenom": "Sarah", "guide": "selena",
+        "nom_affiche": "Séléna", "nb_echanges": 8, "dernier_outil": "",
+        "date_premier_contact": (NOW_QW1 - timedelta(days=5)).isoformat(),
+        "date_dernier_contact": (NOW_QW1 - timedelta(hours=5)).isoformat(),
+        "etat": "normal", "abonne": False, "date_abonnement": "",
+        "stripe_customer_id": "", "relance_j6_envoyee": False, "relance_j8_envoyee": False,
+        "dernier_relance_abonne_at": "", "relance_abonne_count": 0,
+        "dernier_rituel_date": "", "dernier_rituel_type": "", "depuis_site": True,
+        "prenoms_importants": "", "theme_dominant": "", "douleur_principale": "",
+        "peur_dominante": "", "niveau_detresse": 100, "niveau_attachement": 0,
+        "dernier_sujet_sensible": "", "derniere_intention": "",
+        "relance_j7_envoyee": False, "onboarding_step": "termine", "onboarding_done": True,
+        "profil_initial": "", "onboarding_question": "", "onboarding_psaume": "",
+        "derniere_relance_conversationnelle_at": "", "derniere_relance_conversationnelle_type": "",
+        "relance_hebdo_envoyee": False, "derniere_relance_hebdo_at": "",
+        "stop_relances": False, "derniere_verif_stripe_at": "",
+        "last_morning_message_at": "", "last_template_message_at": "",
+        "templates_sans_reponse": 0, "morning_messages_enabled": True,
+        "free_entry_expires_at": "", "source_channel": "seo",
+        "last_h4_relance_at": "", "last_h22_relance_at": "",
+        "messages_today_count": 0, "messages_today_date": "",
+        "categorie_principale": "besoin_guidance", "relances_ids_envoyes": "",
+        "date_derniere_proposition_tirage": "", "nb_echanges_dernier_tirage": 0,
+    }
+    base.update(kwargs)
+    return base
+
+def _fake_conn(phone):
+    conn = MagicMock()
+    cur = MagicMock()
+    cur.fetchall.return_value = [(phone,)]
+    conn.cursor.return_value = cur
+    return conn
+
+qw1_results = []
+
+def _check(label, condition):
+    qw1_results.append(condition)
+    print(f"{'✅' if condition else '❌'} {label}")
+
+# QW-1.1 — cron_daily, branche ABONNÉ, detresse=100 → aucune relance abonné envoyée
+with patch("auryel_bot.get_conn", return_value=_fake_conn("+33611112222")), \
+     patch("auryel_bot.get_user", return_value=make_full_user(abonne=True)), \
+     patch("auryel_bot.get_nb_jours", return_value=5), \
+     patch("auryel_bot.get_jours_absence", return_value=5), \
+     patch("auryel_bot.send_message") as m_send, \
+     patch("auryel_bot.send_template_message") as m_tpl, \
+     patch("auryel_bot.log_event") as m_log, \
+     patch("auryel_bot._cron_purge_anciens", return_value="skipped_test"), \
+     patch("auryel_bot.DAILY_SECRET", "test"):
+    with flask_app.test_client() as wc:
+        r = wc.post("/cron/daily", json={"secret": "test"})
+    _check("QW-1.1 daily/abonné : réponse 200", r.status_code == 200)
+    _check("QW-1.1 daily/abonné : send_message jamais appelé (compteur=0)", not m_send.called)
+    _check("QW-1.1 daily/abonné : log_event('skip_relance_detresse', branche=abonne) émis",
+           any(c.args[:1] == ("skip_relance_detresse",) and c.kwargs.get("branche") == "abonne"
+               for c in m_log.call_args_list))
+
+# QW-1.2 — cron_daily, branche NON-ABONNÉ, detresse=100 → aucune relance J+2/3/4 envoyée
+with patch("auryel_bot.get_conn", return_value=_fake_conn("+33611112222")), \
+     patch("auryel_bot.get_user", return_value=make_full_user(abonne=False)), \
+     patch("auryel_bot.get_nb_jours", return_value=5), \
+     patch("auryel_bot.get_stripe_links", return_value={}) as m_links, \
+     patch("auryel_bot.send_message") as m_send, \
+     patch("auryel_bot.send_template_message") as m_tpl, \
+     patch("auryel_bot.log_event") as m_log, \
+     patch("auryel_bot._cron_purge_anciens", return_value="skipped_test"), \
+     patch("auryel_bot.DAILY_SECRET", "test"):
+    with flask_app.test_client() as wc:
+        r = wc.post("/cron/daily", json={"secret": "test"})
+    _check("QW-1.2 daily/non-abonné : réponse 200", r.status_code == 200)
+    _check("QW-1.2 daily/non-abonné : send_message jamais appelé (compteur=0)", not m_send.called)
+    _check("QW-1.2 daily/non-abonné : send_template_message jamais appelé", not m_tpl.called)
+    _check("QW-1.2 daily/non-abonné : get_stripe_links jamais atteint (continue avant)", not m_links.called)
+    _check("QW-1.2 daily/non-abonné : log_event('skip_relance_detresse', branche=non_abonne) émis",
+           any(c.args[:1] == ("skip_relance_detresse",) and c.kwargs.get("branche") == "non_abonne"
+               for c in m_log.call_args_list))
+
+# QW-1.3 — cron_morning, detresse=100 → aucun template/message matin envoyé
+with patch("auryel_bot.get_conn", return_value=_fake_conn("+33611112222")), \
+     patch("auryel_bot.get_user", return_value=make_full_user()), \
+     patch("auryel_bot.choose_morning_send_mode") as m_mode, \
+     patch("auryel_bot.send_message") as m_send, \
+     patch("auryel_bot.send_template_message") as m_tpl, \
+     patch("auryel_bot.log_event") as m_log, \
+     patch("auryel_bot.DAILY_SECRET", "test"):
+    with flask_app.test_client() as wc:
+        r = wc.post("/cron/morning", json={"secret": "test"})
+    _check("QW-1.3 morning : réponse 200", r.status_code == 200)
+    _check("QW-1.3 morning : choose_morning_send_mode jamais appelé (skip avant décision)", not m_mode.called)
+    _check("QW-1.3 morning : send_message jamais appelé (compteur=0)", not m_send.called)
+    _check("QW-1.3 morning : send_template_message jamais appelé (compteur=0)", not m_tpl.called)
+    _check("QW-1.3 morning : log_event('skip_relance_detresse', cron=morning) émis",
+           any(c.args[:1] == ("skip_relance_detresse",) and c.kwargs.get("cron") == "morning"
+               for c in m_log.call_args_list))
+
+# QW-1.4 — cron_relances_intraday, detresse=100, dans la fenêtre H+4 → aucune relance envoyée
+# Le cron fait un early-return hors 8h-22h Paris : on fige l'horloge à 14h pour que le
+# test soit déterministe quelle que soit l'heure réelle d'exécution.
+import datetime as _dt_module
+
+class _FrozenDateTime(_dt_module.datetime):
+    @classmethod
+    def now(cls, tz=None):
+        if tz is not None:
+            return _dt_module.datetime(2026, 6, 19, 14, 0, 0, tzinfo=tz)
+        return _dt_module.datetime(2026, 6, 19, 14, 0, 0)
+
+with patch("auryel_bot.get_conn", return_value=_fake_conn("+33611112222")), \
+     patch("auryel_bot.get_user", return_value=make_full_user(
+         date_dernier_contact=(NOW_QW1 - timedelta(hours=5)).isoformat())), \
+     patch("auryel_bot.choisir_message_relance") as m_choisir, \
+     patch("auryel_bot.send_message") as m_send, \
+     patch("auryel_bot.log_event") as m_log, \
+     patch("auryel_bot.datetime", _FrozenDateTime):
+    cron_relances_intraday()
+    _check("QW-1.4 intraday : choisir_message_relance jamais appelé (skip avant décision)", not m_choisir.called)
+    _check("QW-1.4 intraday : send_message jamais appelé (compteur=0)", not m_send.called)
+    _check("QW-1.4 intraday : log_event('skip_relance_detresse', cron=intraday) émis",
+           any(c.args[:1] == ("skip_relance_detresse",) and c.kwargs.get("cron") == "intraday"
+               for c in m_log.call_args_list))
+
+qw1_ok = all(qw1_results)
+print(f"\n{'✅' if qw1_ok else '❌'} QW-1 (4 tests) : {'PASS' if qw1_ok else 'FAIL'}")
+if not qw1_ok:
+    raise SystemExit(1)

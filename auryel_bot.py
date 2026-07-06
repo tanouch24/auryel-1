@@ -2931,6 +2931,12 @@ def cron_daily():
                         elif verif is True:
                             update_user_silent(phone, derniere_verif_stripe_at=datetime.now().isoformat())
                         # verif is None → erreur API Stripe → on conserve abonne=True par précaution
+
+                if user.get("niveau_detresse", 0) >= 70:
+                    log_event("skip_relance_detresse", phone_hash=_phone_hash(phone),
+                              cron="daily", branche="abonne")
+                    continue
+
                 # ── Relances abonnés ──────────────────────────────────────────────
                 absence = get_jours_absence(phone)
                 count   = user.get("relance_abonne_count", 0)
@@ -2972,7 +2978,12 @@ def cron_daily():
                         dernier_relance_abonne_at='',
                         relance_abonne_count=0)
                 continue
-    
+
+            if user.get("niveau_detresse", 0) >= 70:
+                log_event("skip_relance_detresse", phone_hash=_phone_hash(phone),
+                          cron="daily", branche="non_abonne")
+                continue
+
             if user.get("onboarding_done", False):
                 if doit_reinitialiser_relance_hebdo(user):
                     update_user_silent(phone, relance_hebdo_envoyee=False)
@@ -3113,7 +3124,11 @@ def cron_morning():
                           reason="stop_relances", guide_key=user.get("guide", ""))
                 cnt["skipped_stop"] += 1
                 continue
-    
+
+            if user.get("niveau_detresse", 0) >= 70:
+                log_event("skip_relance_detresse", phone_hash=_phone_hash(phone), cron="morning")
+                continue
+
             mode      = choose_morning_send_mode(user, now)
             guide_key = user.get("guide", "selena")
             guide     = GUIDES.get(guide_key, GUIDES["selena"])
@@ -3661,6 +3676,9 @@ def cron_relances_intraday():
             if not user:
                 continue
             if user.get("stop_relances"):
+                continue
+            if user.get("niveau_detresse", 0) >= 70:
+                log_event("skip_relance_detresse", phone_hash=_phone_hash(phone), cron="intraday")
                 continue
             if not user.get("onboarding_done"):
                 continue
