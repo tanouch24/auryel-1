@@ -3763,7 +3763,8 @@ DAILY_LIMIT = 150
 
 def check_and_increment_daily_limit(phone, user):
     """Vérifie le plafond 150 messages/jour. Retourne True si limite atteinte."""
-    today = datetime.now(timezone(timedelta(hours=2))).date().isoformat()
+    from zoneinfo import ZoneInfo
+    today = datetime.now(ZoneInfo("Europe/Paris")).date().isoformat()
     count = user.get("messages_today_count") or 0
     last_date = user.get("messages_today_date") or ""
 
