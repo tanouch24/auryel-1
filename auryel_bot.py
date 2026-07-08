@@ -1682,16 +1682,82 @@ def marquer_relance_conversationnelle(phone, type_relance):
 
 
 # ============================================================
+# DÉCROISSANCE / SIGNAUX DÉTRESSE (IA-1 commit 3 — anti-cliquet)
+# ============================================================
+def _parse_dt_paris(valeur):
+    """Parse une date stockée (str isoformat naïve, Europe/Paris implicite, ou déjà
+    datetime) en datetime AWARE Europe/Paris. Retourne None si vide/invalide."""
+    if not valeur:
+        return None
+    from zoneinfo import ZoneInfo
+    dt = valeur if isinstance(valeur, datetime) else None
+    if dt is None:
+        try:
+            dt = datetime.fromisoformat(valeur)
+        except (TypeError, ValueError):
+            return None
+    if dt.tzinfo is None:
+        return dt.replace(tzinfo=ZoneInfo("Europe/Paris"))
+    return dt.astimezone(ZoneInfo("Europe/Paris"))
+
+
+def _niveau_detresse_effectif(user, maintenant=None):
+    """Vue calculée en LECTURE SEULE (n'écrit rien en DB) : niveau_detresse décru
+    de ~15 points par jour écoulé au prorata depuis detresse_maj_at, plancher 0.
+    Si detresse_maj_at est NULL (jamais écrit / user pré-migration) : score brut
+    tel quel, inchangé (pas de décroissance sans référence temporelle fiable).
+    DOIT être utilisée partout où le niveau sert à décider (prompt + crons),
+    sinon le score ne redescend jamais pour les gens silencieux qu'on veut relancer."""
+    score = user.get("niveau_detresse", 0) or 0
+    maj_dt = _parse_dt_paris(user.get("detresse_maj_at"))
+    if maj_dt is None:
+        return score
+    from zoneinfo import ZoneInfo
+    now = maintenant if maintenant is not None else datetime.now(ZoneInfo("Europe/Paris"))
+    if now.tzinfo is None:
+        now = now.replace(tzinfo=ZoneInfo("Europe/Paris"))
+    jours_ecoules = max(0.0, (now - maj_dt).total_seconds() / 86400)
+    return max(0, round(score - jours_ecoules * 15))
+
+
+def _signal_aigu_recent(user, maintenant=None, fenetre_heures=24):
+    """Vrai si dernier_signal_aigu_at est renseigné et vieux de moins de `fenetre_heures`."""
+    sig_dt = _parse_dt_paris(user.get("dernier_signal_aigu_at"))
+    if sig_dt is None:
+        return False
+    from zoneinfo import ZoneInfo
+    now = maintenant if maintenant is not None else datetime.now(ZoneInfo("Europe/Paris"))
+    if now.tzinfo is None:
+        now = now.replace(tzinfo=ZoneInfo("Europe/Paris"))
+    return (now - sig_dt).total_seconds() < fenetre_heures * 3600
+
+
+def _detresse_bloque_marketing(user, maintenant=None):
+    """Décide si le marketing proactif (relances/templates) doit être coupé pour ce user.
+    Deux causes indépendantes, retournées pour traçabilité (log_event) :
+    - "signal_aigu_recent" : signal aigu de moins de 7 jours → coupure ferme, quoi qu'il
+      arrive au score (protège même si le score de fond est bas ou vient d'être remis à 0).
+    - "score" : niveau_detresse effectif (décru) encore >= 70.
+    Le score décroît avec le temps → le marketing peut rouvrir après une accalmie ;
+    un signal aigu récent, lui, coupe 7 jours pleins quoi qu'il arrive."""
+    if _signal_aigu_recent(user, maintenant=maintenant, fenetre_heures=24 * 7):
+        return True, "signal_aigu_recent"
+    if _niveau_detresse_effectif(user, maintenant=maintenant) >= 70:
+        return True, "score"
+    return False, None
+
+
+# ============================================================
 # SYSTEM PROMPT
 # ============================================================
 def get_system_prompt(user, guide_key):
     guide = GUIDES.get(guide_key, GUIDES["selena"])
     prenom = user.get("prenom", "")
 
-    detresse = user.get("niveau_detresse", 0)
-    sujet_sensible = user.get("dernier_sujet_sensible", "")
-    SUJETS_CRITIQUES = ["suicide", "mourir", "automutilation", "me tuer", "en finir"]
-    if detresse >= 90 or sujet_sensible in SUJETS_CRITIQUES:
+    # Le 3114 ne se déclenche QUE sur un signal aigu récent (< 24h) du message courant.
+    # Jamais sur le score de fond seul, jamais sur dernier_sujet_sensible figé à vie
+    # (l'ancien latch — remplacé par dernier_signal_aigu_at, qui expire).
+    if _signal_aigu_recent(user, fenetre_heures=24):
         return """Sors immédiatement du rôle de guide. Réponds avec clarté, sans mysticisme, sans dramatisme.
 Dis : "Là, on sort de la guidance. Appelle le 3114 maintenant, ou parle tout de suite à une personne de confiance."
 Si danger immédiat (violence, agression) : conseille d'appeler le 15 ou le 17.
@@ -1905,6 +1971,16 @@ Chaque réponse doit faire avancer la discussion.
 Toujours : ressenti + nuance + motivation + question.
 Jamais froide. Jamais vague. Jamais longue pour rien.
 Si une réponse ressemble à ChatGPT, réécris-la."""
+
+    # Registre adouci : fond émotionnel élevé (score effectif, décru) mais AUCUN signal
+    # aigu récent → pas de 3114, juste un ton plus posé. Seuil aligné sur celui du
+    # marketing (70) : au-dessus, à la fois pas de relance proactive ET ton adouci.
+    if _niveau_detresse_effectif(user) >= 70:
+        PROMPT_MAITRE += """
+
+REGISTRE ADOUCI (fond émotionnel élevé, sans signal de danger immédiat)
+
+Cette personne traverse une période difficile depuis plusieurs échanges, mais aucun signal de détresse aiguë récent n'a été détecté maintenant. Continue ton rôle de guide normalement, mais adoucis le ton : plus posé, plus présent, moins de suspense, moins mystérieux. Ne minimise jamais ce qu'elle vit. N'improvise aucun diagnostic médical ou psychologique. Tu restes dans la guidance — ce n'est pas une situation de crise, pas de 3114 à évoquer ici."""
 
     return PROMPT_MAITRE
 
@@ -2986,9 +3062,10 @@ def cron_daily():
                             update_user_silent(phone, derniere_verif_stripe_at=datetime.now().isoformat())
                         # verif is None → erreur API Stripe → on conserve abonne=True par précaution
 
-                if user.get("niveau_detresse", 0) >= 70:
+                _bloque, _raison = _detresse_bloque_marketing(user)
+                if _bloque:
                     log_event("skip_relance_detresse", phone_hash=_phone_hash(phone),
-                              cron="daily", branche="abonne")
+                              cron="daily", branche="abonne", raison=_raison)
                     continue
 
                 # ── Relances abonnés ──────────────────────────────────────────────
@@ -3033,9 +3110,10 @@ def cron_daily():
                         relance_abonne_count=0)
                 continue
 
-            if user.get("niveau_detresse", 0) >= 70:
+            _bloque, _raison = _detresse_bloque_marketing(user)
+            if _bloque:
                 log_event("skip_relance_detresse", phone_hash=_phone_hash(phone),
-                          cron="daily", branche="non_abonne")
+                          cron="daily", branche="non_abonne", raison=_raison)
                 continue
 
             if user.get("onboarding_done", False):
@@ -3179,8 +3257,9 @@ def cron_morning():
                 cnt["skipped_stop"] += 1
                 continue
 
-            if user.get("niveau_detresse", 0) >= 70:
-                log_event("skip_relance_detresse", phone_hash=_phone_hash(phone), cron="morning")
+            _bloque, _raison = _detresse_bloque_marketing(user)
+            if _bloque:
+                log_event("skip_relance_detresse", phone_hash=_phone_hash(phone), cron="morning", raison=_raison)
                 continue
 
             mode      = choose_morning_send_mode(user, now)
@@ -3731,8 +3810,9 @@ def cron_relances_intraday():
                 continue
             if user.get("stop_relances"):
                 continue
-            if user.get("niveau_detresse", 0) >= 70:
-                log_event("skip_relance_detresse", phone_hash=_phone_hash(phone), cron="intraday")
+            _bloque, _raison = _detresse_bloque_marketing(user)
+            if _bloque:
+                log_event("skip_relance_detresse", phone_hash=_phone_hash(phone), cron="intraday", raison=_raison)
                 continue
             if not user.get("onboarding_done"):
                 continue

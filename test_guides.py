@@ -52,6 +52,9 @@ USER_CRISE = {
     **USER_BASE,
     "niveau_detresse": 100,
     "dernier_sujet_sensible": "suicide",
+    # Commit 3 : le 3114 dépend de dernier_signal_aigu_at récent (< 24h), plus du score
+    # ni du latch dernier_sujet_sensible. Simule un signal aigu émis à l'instant.
+    "dernier_signal_aigu_at": datetime.now().isoformat(),
 }
 
 print("=" * 60)
@@ -363,4 +366,70 @@ _ia1("« je me sens seule » → signal_aigu=False (pas d'aigu)", u.get("signal_
 ia1_ok = all(ia1_results)
 print(f"\n{'✅' if ia1_ok else '❌'} IA-1 ({len(ia1_results)} assertions) : {'PASS' if ia1_ok else 'FAIL'}")
 if not ia1_ok:
+    raise SystemExit(1)
+
+# ── Tests IA-1 (commit 3) : décroissance + fenêtre aigu + garde-fous marketing ──
+print("\n" + "=" * 60)
+print("TEST IA-1 (commit 3) — décroissance 15pts/j, fenêtre 3114 24h, marketing 7j")
+print("=" * 60)
+
+from datetime import timedelta as _td
+from auryel_bot import (_niveau_detresse_effectif, _signal_aigu_recent,
+                         _detresse_bloque_marketing)
+
+ia1c_results = []
+
+def _ia1c(label, condition):
+    ia1c_results.append(condition)
+    print(f"{'✅' if condition else '❌'} {label}")
+
+def _il_y_a(jours=0, heures=0):
+    return (datetime.now() - _td(days=jours, hours=heures)).isoformat()
+
+# Marqueur du mode crise : PROMPT_MAITRE mentionne déjà "3114" en permanence dans sa
+# section sécurité générale (L~1881, hors scope IA-1) — un simple "3114" in/not in
+# prompt ne distingue donc PAS le mode crise. Le vrai marqueur est le début du texte
+# de bascule (retour court, hors PROMPT_MAITRE) : "Sors immédiatement du rôle de guide".
+def _mode_crise_actif(prompt):
+    return "Sors immédiatement du rôle de guide" in prompt
+
+# Cas 1 — score 100 il y a 8 jours : décru sous 0 → plancher 0, marketing rouvert, pas de 3114
+u1 = {**USER_BASE, "niveau_detresse": 100, "detresse_maj_at": _il_y_a(jours=8),
+      "dernier_signal_aigu_at": None, "dernier_sujet_sensible": ""}
+_ia1c("score 100 il y a 8j → effectif == 0 (plancher)", _niveau_detresse_effectif(u1) == 0)
+bloque1, raison1 = _detresse_bloque_marketing(u1)
+_ia1c("score 100 il y a 8j → marketing rouvert (pas bloqué)", bloque1 is False)
+p1 = get_system_prompt(u1, "selena")
+_ia1c("score 100 il y a 8j → pas de mode crise", not _mode_crise_actif(p1))
+
+# Cas 2a — signal aigu il y a 2h : mode crise actif
+u2a = {**USER_BASE, "dernier_signal_aigu_at": _il_y_a(heures=2), "dernier_sujet_sensible": ""}
+p2a = get_system_prompt(u2a, "selena")
+_ia1c("signal aigu il y a 2h → mode crise actif", _mode_crise_actif(p2a))
+
+# Cas 2b — signal aigu il y a 3 jours : PAS de mode crise (> 24h) mais marketing coupé (< 7j)
+u2b = {**USER_BASE, "niveau_detresse": 0, "detresse_maj_at": None,
+       "dernier_signal_aigu_at": _il_y_a(jours=3), "dernier_sujet_sensible": ""}
+p2b = get_system_prompt(u2b, "selena")
+_ia1c("signal aigu il y a 3j → PAS de mode crise (fenêtre 24h dépassée)", not _mode_crise_actif(p2b))
+bloque2b, raison2b = _detresse_bloque_marketing(u2b)
+_ia1c("signal aigu il y a 3j → marketing coupé (fenêtre 7j)", bloque2b is True)
+_ia1c("signal aigu il y a 3j → raison='signal_aigu_recent'", raison2b == "signal_aigu_recent")
+
+# Cas 3 — score de fond 95 SANS signal aigu : pas de mode crise, registre doux seulement
+u3 = {**USER_BASE, "niveau_detresse": 95, "detresse_maj_at": None,
+      "dernier_signal_aigu_at": None, "dernier_sujet_sensible": ""}
+p3 = get_system_prompt(u3, "selena")
+_ia1c("score 95 sans aigu → PAS de mode crise", not _mode_crise_actif(p3))
+_ia1c("score 95 sans aigu → registre adouci présent", "REGISTRE ADOUCI" in p3)
+bloque3, raison3 = _detresse_bloque_marketing(u3)
+_ia1c("score 95 sans aigu → marketing coupé (raison='score')", bloque3 is True and raison3 == "score")
+
+# Cas 4 — sécurité : USER_CRISE (signal aigu à l'instant) déclenche toujours le mode crise
+p_crise = get_system_prompt(USER_CRISE, "selena")
+_ia1c("USER_CRISE (signal aigu à l'instant) → mode crise actif", _mode_crise_actif(p_crise))
+
+ia1c_ok = all(ia1c_results)
+print(f"\n{'✅' if ia1c_ok else '❌'} IA-1 commit 3 ({len(ia1c_results)} assertions) : {'PASS' if ia1c_ok else 'FAIL'}")
+if not ia1c_ok:
     raise SystemExit(1)
