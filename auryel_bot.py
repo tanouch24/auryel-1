@@ -1378,8 +1378,17 @@ def send_template_message(phone, template_name, variables, language="fr"):
 # ============================================================
 # CONTEXTE ÉMOTIONNEL
 # ============================================================
+def _terme_present(terme, texte):
+    """Vrai si `terme` (mot simple OU expression multi-mots) apparaît dans `texte`
+    à frontières de mot. `texte` doit être en minuscules, apostrophes normalisées.
+    \\b élimine les faux positifs de sous-chaîne (normal, seulement, enfin, malgré…).
+    Les faux positifs sémantiques (à mourir de rire, ce boulot va me tuer) sont évités
+    en amont : les termes eux-mêmes portent l'intention (veux mourir, veux me tuer…)."""
+    return re.search(r"\b" + re.escape(terme) + r"\b", texte) is not None
+
+
 def detecter_contexte_emotionnel(message, user):
-    message_lower = message.lower()
+    message_lower = message.lower().replace("’", "'")
 
     themes = {
         "amour":       ["amour", "relation", "couple", "ex", "rupture", "jaloux", "revenir", "quitter", "trahison", "manque"],
@@ -1394,9 +1403,46 @@ def detecter_contexte_emotionnel(message, user):
                 user["theme_dominant"] = theme
                 break
 
-    mots_detresse = ["aide", "souffre", "mal", "pleurer", "désespoir", "abandon", "seul", "mourir", "fin", "plus envie"]
-    score = sum(3 for mot in mots_detresse if mot in message_lower)
-    user["niveau_detresse"] = min(100, user.get("niveau_detresse", 0) + score)
+    # FOND — humeur cumulée (+3/terme). Mots simples et expressions, tous à frontières de mot.
+    # "mal" nu retiré (garde "pas mal", "un mal pour un bien") au profit d'expressions ciblées ;
+    # "fin"/"mourir" nus retirés (ambigus / "à mourir de rire").
+    mots_detresse = [
+        "aide", "souffre",
+        "pleurer", "pleure", "pleuré",
+        "désespoir",
+        "abandon", "abandonné", "abandonnée",
+        "seul", "seule",
+        "vais mal", "va mal", "fait mal", "sens mal", "mal-être",
+        "plus envie",
+    ]
+    # AIGU — signal de sécurité du MESSAGE COURANT. Expressions porteuses d'intention
+    # pour ne PAS déclencher sur « à mourir de rire », « ce boulot va me tuer », « frapper à la porte ».
+    sujets_sensibles = [
+        "suicide", "suicider", "automutilation", "harcèlement",
+        "envie de mourir", "veux mourir",
+        "veux me tuer", "envie de me tuer",
+        "envie d'en finir", "veux en finir",
+        "me frappe", "me frapper", "me bat", "me battre",
+        "plus envie de vivre",
+    ]
+
+    hits_fond = [t for t in mots_detresse if _terme_present(t, message_lower)]
+    hits_aigu = [t for t in sujets_sensibles if _terme_present(t, message_lower)]
+    signal_aigu = bool(hits_aigu)
+
+    score = 3 * (len(hits_fond) + len(hits_aigu))
+    ancien = user.get("niveau_detresse", 0)
+    nouveau = min(100, ancien + score)            # un signal aigu NE fige PLUS à 100 : incrément normal
+    user["niveau_detresse"] = nouveau
+    user["signal_aigu"] = signal_aigu             # transitoire (message courant), consommé au commit 3
+
+    from zoneinfo import ZoneInfo
+    now_paris = datetime.now(ZoneInfo("Europe/Paris")).replace(tzinfo=None).isoformat()
+    if nouveau != ancien:
+        user["detresse_maj_at"] = now_paris       # dernier changement de score → base de la décroissance (commit 3)
+    if signal_aigu:
+        user["dernier_signal_aigu_at"] = now_paris
+        user["dernier_sujet_sensible"] = hits_aigu[0]   # rempli avec word-boundaries → plus de faux latch
 
     user["niveau_attachement"] = min(100, user.get("niveau_attachement", 0) + 2)
 
@@ -1416,13 +1462,6 @@ def detecter_contexte_emotionnel(message, user):
         nouveaux = [m for m in matches if m not in existants and m not in EXCLUSIONS]
         if nouveaux:
             user["prenoms_importants"] = (existants + ", " + ", ".join(nouveaux)).strip(", ")
-
-    sujets_sensibles = ["suicide", "mourir", "automutilation", "me tuer", "en finir", "violence", "frapper", "harcèlement"]
-    for sujet in sujets_sensibles:
-        if sujet in message_lower:
-            user["dernier_sujet_sensible"] = sujet
-            user["niveau_detresse"] = 100
-            break
 
     return user
 
@@ -2411,6 +2450,8 @@ def receive():
                         prenoms_importants=u.get("prenoms_importants", ""),
                         dernier_sujet_sensible=u.get("dernier_sujet_sensible", ""),
                         derniere_intention=u.get("derniere_intention", ""),
+                        detresse_maj_at=u.get("detresse_maj_at"),
+                        dernier_signal_aigu_at=u.get("dernier_signal_aigu_at"),
                     )
 
                     reply = get_reply(num, text, depuis_pub=depuis_pub,

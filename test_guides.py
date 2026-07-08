@@ -320,3 +320,47 @@ qw1_ok = all(qw1_results)
 print(f"\n{'✅' if qw1_ok else '❌'} QW-1 (4 tests) : {'PASS' if qw1_ok else 'FAIL'}")
 if not qw1_ok:
     raise SystemExit(1)
+
+# ── Tests IA-1 (commit 2) : détection aiguë/fond + word-boundaries ─────────────
+print("\n" + "=" * 60)
+print("TEST IA-1 — word-boundaries + séparation signal aigu / niveau de fond")
+print("=" * 60)
+
+from auryel_bot import detecter_contexte_emotionnel
+
+ia1_results = []
+
+def _detect(message, detresse_depart=0):
+    """Passe un message dans detecter_contexte_emotionnel sur un user neuf."""
+    user = {"niveau_detresse": detresse_depart, "niveau_attachement": 0}
+    return detecter_contexte_emotionnel(message, dict(user))
+
+def _ia1(label, condition):
+    ia1_results.append(condition)
+    print(f"{'✅' if condition else '❌'} {label}")
+
+# Faux positifs qui ne doivent PLUS scorer ni armer le signal aigu
+for phrase in ["c'est normal", "seulement 5 min", "enfin je vais mieux",
+               "à mourir de rire", "ce boulot va me tuer", "frapper à la porte"]:
+    u = _detect(phrase)
+    _ia1(f"« {phrase} » → niveau_detresse=0 (pas de score)", u.get("niveau_detresse") == 0)
+    _ia1(f"« {phrase} » → signal_aigu=False", u.get("signal_aigu") is False)
+
+# Vrais signaux aigus → signal_aigu=True + horodatage, SANS figer à 100
+for phrase in ["je veux me suicider", "je veux mourir", "j'ai envie d'en finir"]:
+    u = _detect(phrase, detresse_depart=50)
+    _ia1(f"« {phrase} » → signal_aigu=True", u.get("signal_aigu") is True)
+    _ia1(f"« {phrase} » → dernier_signal_aigu_at horodaté", bool(u.get("dernier_signal_aigu_at")))
+    _ia1(f"« {phrase} » → niveau_detresse NON figé à 100 (anti-cliquet)",
+         u.get("niveau_detresse") == 53)
+
+# Vrai positif de fond (word-boundary) : « je me sens seule » score, timestamp maj posé
+u = _detect("je me sens seule ce soir")
+_ia1("« je me sens seule » → niveau_detresse=3 (fond)", u.get("niveau_detresse") == 3)
+_ia1("« je me sens seule » → detresse_maj_at horodaté", bool(u.get("detresse_maj_at")))
+_ia1("« je me sens seule » → signal_aigu=False (pas d'aigu)", u.get("signal_aigu") is False)
+
+ia1_ok = all(ia1_results)
+print(f"\n{'✅' if ia1_ok else '❌'} IA-1 ({len(ia1_results)} assertions) : {'PASS' if ia1_ok else 'FAIL'}")
+if not ia1_ok:
+    raise SystemExit(1)
