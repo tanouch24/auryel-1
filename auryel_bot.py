@@ -315,6 +315,16 @@ def init_db():
     except Exception as e:
         conn.rollback()
         print(f"Migration v12: {e}")
+    # Migration v13 — horodatage détresse (IA-1 : anti-cliquet)
+    # NULL par défaut, aucune valeur serveur : les users existants restent NULL
+    # (NULL = jamais de signal aigu / score neutre, géré à la lecture au commit 3).
+    try:
+        c.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS dernier_signal_aigu_at TIMESTAMP NULL")
+        c.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS detresse_maj_at TIMESTAMP NULL")
+        conn.commit()
+    except Exception as e:
+        conn.rollback()
+        print(f"Migration v13: {e}")
     conn.close()
 
 def reset_db():
@@ -348,7 +358,8 @@ def get_user(phone):
             last_h4_relance_at,last_h22_relance_at,
             messages_today_count,messages_today_date,
             categorie_principale,relances_ids_envoyes,
-            date_derniere_proposition_tirage,nb_echanges_dernier_tirage
+            date_derniere_proposition_tirage,nb_echanges_dernier_tirage,
+            dernier_signal_aigu_at,detresse_maj_at
             FROM users WHERE phone=%s""", (phone,))
         row = c.fetchone()
         if row:
@@ -392,6 +403,8 @@ def get_user(phone):
                 "relances_ids_envoyes":row[51] or "",
                 "date_derniere_proposition_tirage":row[52].isoformat() if row[52] else "",
                 "nb_echanges_dernier_tirage":row[53] or 0,
+                "dernier_signal_aigu_at":row[54].isoformat() if row[54] else None,
+                "detresse_maj_at":row[55].isoformat() if row[55] else None,
             }
         return None
     except Exception as e:
