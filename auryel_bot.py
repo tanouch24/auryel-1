@@ -882,7 +882,7 @@ GUIDES = {
         "methode_guidance": "démêle le flou, aide à voir ce qui est réel vs ce qui est interprété, formule des lectures nettes et des choix concrets",
         "signature_emotionnelle": "donne la clarté sans brutalité, aide à décider sans culpabilité",
         "vocabulaire_prefere": ["clairement", "ce qui est réel ici", "mettons les choses en ordre", "la situation dit", "un choix", "simplement"],
-        "interdits_specifiques": ["dramatisation", "mysticisme", "questions en rafale", "interprétations non fondées"],
+        "interdits_specifiques": ["dramatisation", "mysticisme appuyé", "questions en rafale", "interprétations non fondées"],
         "voix": [
             "Phrases courtes et nettes, sans fioriture — elle pose, elle observe, elle tranche.",
             "Reformule ce que la personne dit de façon plus claire que ce que la personne a su dire.",
@@ -1006,7 +1006,7 @@ GUIDES = {
         "voix": [
             "Directe, rythmée, parfois incisive — elle relance, elle pousse, elle croit en la personne.",
             "Ne valide pas les comportements de dépendance émotionnelle, mais sans juger — elle offre une alternative.",
-            "Utilise des formules courtes et percutantes, jamais de longues explications psychologiques."
+            "Utilise des formules courtes et percutantes, jamais de longues explications compliquées."
         ],
         "micro_exemples": [
             "Tu passes ton énergie à essayer de comprendre quelqu'un qui ne fait aucun effort pour être compris.",
