@@ -1753,6 +1753,11 @@ def _detresse_bloque_marketing(user, maintenant=None):
 def get_system_prompt(user, guide_key):
     guide = GUIDES.get(guide_key, GUIDES["selena"])
     prenom = user.get("prenom", "")
+    # IA-3 commit 1 : câblage des champs GUIDES écrits mais jamais injectés jusqu'ici.
+    # On branche le contenu existant tel quel — pas de réécriture dans ce commit.
+    voix_lignes = "\n".join(f"- {v}" for v in guide.get("voix", []))
+    vocabulaire_txt = ", ".join(guide.get("vocabulaire_prefere", []))
+    interdits_txt = ", ".join(guide.get("interdits_specifiques", []))
 
     # Le 3114 ne se déclenche QUE sur un signal aigu récent (< 24h) du message courant.
     # Jamais sur le score de fond seul, jamais sur dernier_sujet_sensible figé à vie
@@ -1905,6 +1910,12 @@ PERSONNALITÉ DU CONSEILLER ACTIF
 Conseiller : """ + guide.get("nom", guide_key) + """
 Spécialité : """ + guide.get("specialite", "") + """
 Style : """ + guide.get("style_relationnel", "") + """
+
+Voix de ce conseiller :
+""" + voix_lignes + """
+
+Vocabulaire à privilégier : """ + vocabulaire_txt + """
+Interdits spécifiques à ce conseiller (en plus des interdits globaux ci-dessus) : """ + interdits_txt + """
 
 PRÉNOM UTILISATEUR
 
