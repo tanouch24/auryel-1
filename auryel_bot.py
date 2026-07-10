@@ -1,4 +1,4 @@
-import os, time, requests, threading, psycopg2, stripe, re, random, hmac, hashlib, unicodedata, secrets
+import os, time, requests, threading, psycopg2, stripe, re, random, hmac, hashlib, unicodedata, secrets, html
 from datetime import datetime, date, timezone, timedelta
 from flask import Flask, request, jsonify, session, redirect
 from flask_cors import CORS
@@ -1265,6 +1265,7 @@ def send_email_j6(email, prenom, links):
         import resend
         resend.api_key = RESEND_API_KEY
         p = prenom or "toi"
+        p_html = html.escape(p)  # SEC-1 : sujet = texte brut (inchangé), corps email = HTML échappé
         resend.Emails.send({
             "from": f"Auryel <{FROM_EMAIL}>",
             "to": [email],
@@ -1272,7 +1273,7 @@ def send_email_j6(email, prenom, links):
             "html": f"""<!DOCTYPE html><html><body style="background:#05040A;color:#F0EBE0;font-family:Georgia,serif;margin:0;padding:0">
 <div style="max-width:560px;margin:0 auto;padding:60px 40px">
   <p style="font-size:11px;letter-spacing:4px;color:#C8A96E;text-transform:uppercase;text-align:center">Auryel</p>
-  <p style="font-size:22px;font-style:italic;color:#E2C98A;margin:32px 0">Bonjour {p} 🌙</p>
+  <p style="font-size:22px;font-style:italic;color:#E2C98A;margin:32px 0">Bonjour {p_html} 🌙</p>
   <p style="font-size:15px;line-height:1.85;color:#BDB5A6;margin-bottom:32px">Ton accès gratuit Auryel se termine demain. Si tu veux continuer à échanger, tu peux choisir une formule ci-dessous.</p>
   <div style="border:1px solid rgba(200,169,110,0.2);padding:32px;margin-bottom:32px">
     <a href="{links['mensuel']}" style="display:block;background:linear-gradient(135deg,#C8A96E,#E2C98A);color:#05040A;text-decoration:none;padding:14px 24px;text-align:center;font-weight:bold">✦ Mensuel — 9,90€/mois</a>
@@ -1291,6 +1292,7 @@ def send_email_relance(email, prenom, links):
         import resend
         resend.api_key = RESEND_API_KEY
         p = prenom or "toi"
+        p_html = html.escape(p)  # SEC-1 : sujet = texte brut (inchangé), corps email = HTML échappé
         resend.Emails.send({
             "from": f"Auryel <{FROM_EMAIL}>",
             "to": [email],
@@ -1298,7 +1300,7 @@ def send_email_relance(email, prenom, links):
             "html": f"""<!DOCTYPE html><html><body style="background:#05040A;color:#F0EBE0;font-family:Georgia,serif;margin:0;padding:0">
 <div style="max-width:560px;margin:0 auto;padding:60px 40px">
   <p style="font-size:11px;letter-spacing:4px;color:#C8A96E;text-transform:uppercase;text-align:center">Auryel</p>
-  <p style="font-size:22px;font-style:italic;color:#E2C98A;margin:32px 0">Bonjour {p} 🌙</p>
+  <p style="font-size:22px;font-style:italic;color:#E2C98A;margin:32px 0">Bonjour {p_html} 🌙</p>
   <p style="font-size:15px;line-height:1.85;color:#BDB5A6;margin-bottom:32px">Ton essai gratuit est terminé. Si tu veux continuer à échanger, tu peux choisir une formule ci-dessous.</p>
   <div style="border:1px solid rgba(200,169,110,0.2);padding:32px;margin-bottom:32px">
     <a href="{links['mensuel']}" style="display:block;background:linear-gradient(135deg,#C8A96E,#E2C98A);color:#05040A;text-decoration:none;padding:14px 24px;text-align:center;font-weight:bold">✦ Mensuel — 9,90€/mois</a>
@@ -3421,7 +3423,14 @@ def admin_dashboard():
     for u in users:
         phone,prenom,guide,nom_affiche,nb_echanges,date_premier,date_dernier,etat,abonne,email,depuis_site = u
         nom_display = nom_affiche or GUIDES.get(guide,{}).get("nom", guide)
-        prenom_display = prenom or "Inconnu"
+        # SEC-1 : échappement — prenom/email viennent (in fine) de texte libre utilisateur.
+        prenom_display = html.escape(prenom or "Inconnu")
+        phone_text = html.escape(phone)
+        # Contexte imbriqué (attribut HTML onclick contenant un littéral JS entre quotes
+        # simples) : échapper en JS D'ABORD (le navigateur décode les entités HTML avant
+        # de passer la valeur au moteur JS, donc html.escape seul ne protège pas la chaîne
+        # JS interne), PUIS en HTML pour l'attribut englobant.
+        phone_onclick = html.escape(phone.replace("\\", "\\\\").replace("'", "\\'"))
         dernier = date_dernier[:16].replace("T"," ") if date_dernier else "—"
         feu = "🔥" if nb_echanges >= 10 else "💬" if nb_echanges >= 5 else "👤"
         source = "🌐" if depuis_site else "📱"
@@ -3433,10 +3442,10 @@ def admin_dashboard():
             statut_color = "#f39c12"; statut_label = "⏳ ATTENTE"
         else:
             statut_color = "#3498db"; statut_label = "🤖 ESSAI"
-        email_label = f"<small style='color:#8a7a6a'>{email}</small>" if email else "<small style='color:#4A4060'>—</small>"
-        rows_html += f"""<tr onclick="openConv('{phone}')" style="cursor:pointer">
+        email_label = f"<small style='color:#8a7a6a'>{html.escape(email)}</small>" if email else "<small style='color:#4A4060'>—</small>"
+        rows_html += f"""<tr onclick="openConv('{phone_onclick}')" style="cursor:pointer">
           <td>{feu} {source}</td>
-          <td><strong>{prenom_display}</strong><br><small style="color:#8a7a6a">{phone}</small><br>{email_label}</td>
+          <td><strong>{prenom_display}</strong><br><small style="color:#8a7a6a">{phone_text}</small><br>{email_label}</td>
           <td class='hm' style="color:#C8A96E">{nom_display}</td>
           <td style="text-align:center"><span style="background:rgba(212,168,67,0.2);padding:3px 10px;border-radius:20px;font-size:13px">{nb_echanges}</span></td>
           <td class='hm' style="font-size:12px;color:#8a7a6a">{dernier}</td>
