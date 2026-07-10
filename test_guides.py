@@ -433,3 +433,112 @@ ia1c_ok = all(ia1c_results)
 print(f"\n{'✅' if ia1c_ok else '❌'} IA-1 commit 3 ({len(ia1c_results)} assertions) : {'PASS' if ia1c_ok else 'FAIL'}")
 if not ia1c_ok:
     raise SystemExit(1)
+
+# ── Tests BUG 1 — détecteur demande_paiement + garde-fou détresse ──────────────
+print("\n" + "=" * 60)
+print("TEST BUG 1 — détecteur demande de paiement + garde-fou détresse")
+print("=" * 60)
+
+from auryel_bot import detecter_demande_paiement, get_reply
+
+bug1_results = []
+
+def _bug1(label, condition):
+    bug1_results.append(condition)
+    print(f"{'✅' if condition else '❌'} {label}")
+
+# Phrase réelle de test de Nathanyel — doit matcher
+_bug1("« envoie le lien pour que je paye » → détecté",
+      detecter_demande_paiement("envoie le lien pour que je paye"))
+for phrase in ["Envoie moi le lien de paiement", "je veux payer maintenant",
+               "comment je peux m'abonner", "où je paye", "je peux payer",
+               "j'aimerais passer au payant"]:
+    _bug1(f"« {phrase} » → détecté", detecter_demande_paiement(phrase))
+
+# Faux positifs à éviter (le "envoie le lien" nu, volontairement exclu)
+for phrase in ["envoie le lien du tirage", "envoie-moi le lien vers l'article",
+               "je paye attention à ce que tu dis", "c'est cher mais bon"]:
+    _bug1(f"« {phrase} » → PAS détecté (faux positif évité)",
+          not detecter_demande_paiement(phrase))
+
+# ── Intégration get_reply() : le lien est injecté SAUF en détresse ─────────────
+_BUG1_PHONE = "+33699000099"
+
+def _user_bug1(**overrides):
+    base = {**USER_BASE, "phone": _BUG1_PHONE, "guide": "maia",
+            "niveau_detresse": 0, "detresse_maj_at": None, "dernier_signal_aigu_at": None,
+            "dernier_sujet_sensible": "", "dernier_outil": "", "onboarding_done": True}
+    base.update(overrides)
+    return base
+
+def _run_get_reply_capture_system(user_dict, message):
+    with patch("auryel_bot.get_user", return_value=user_dict), \
+         patch("auryel_bot.check_and_increment_daily_limit", return_value=False), \
+         patch("auryel_bot.gerer_onboarding", return_value=None), \
+         patch("auryel_bot.get_history", return_value=[]), \
+         patch("auryel_bot.add_message"), \
+         patch("auryel_bot.update_user"), \
+         patch("auryel_bot.update_user_silent"), \
+         patch("auryel_bot.choisir_citation", return_value=""), \
+         patch("auryel_bot.log_event"), \
+         patch("auryel_bot.call_llm", return_value="réponse factice") as m_llm:
+        get_reply(_BUG1_PHONE, message)
+        return m_llm.call_args[0][0][0]["content"]  # messages[0] = {"role":"system",...}
+
+# Cas A — pas en détresse → le lien DOIT apparaître
+system_a = _run_get_reply_capture_system(_user_bug1(), "envoie le lien pour que je paye")
+_bug1("pas en détresse → bloc DEMANDE DE PAIEMENT présent", "DEMANDE DE PAIEMENT" in system_a)
+_bug1("pas en détresse → lien réel présent dans le system prompt",
+      f"phone={_BUG1_PHONE}".replace("+", "") in system_a.replace("+", "")
+      or "payer?source=whatsapp&phone=" in system_a)
+
+# Cas B — EN détresse (score effectif >= 70) → le lien NE DOIT PAS apparaître
+system_b = _run_get_reply_capture_system(
+    _user_bug1(niveau_detresse=100, detresse_maj_at=None),
+    "envoie le lien pour que je paye"
+)
+_bug1("EN détresse (score 100) → bloc DEMANDE DE PAIEMENT ABSENT",
+      "DEMANDE DE PAIEMENT" not in system_b)
+
+# Cas C — message neutre, pas en détresse → pas de bloc (pas de demande)
+system_c = _run_get_reply_capture_system(_user_bug1(), "je me sens un peu perdue aujourd'hui")
+_bug1("message neutre → pas de bloc DEMANDE DE PAIEMENT", "DEMANDE DE PAIEMENT" not in system_c)
+
+bug1_ok = all(bug1_results)
+print(f"\n{'✅' if bug1_ok else '❌'} BUG 1 ({len(bug1_results)} assertions) : {'PASS' if bug1_ok else 'FAIL'}")
+if not bug1_ok:
+    raise SystemExit(1)
+
+# ── Tests BUG 3 — plus de trial Stripe dans create-checkout ────────────────────
+print("\n" + "=" * 60)
+print("TEST BUG 3 — create-checkout sans trial_period_days")
+print("=" * 60)
+
+bug3_results = []
+
+def _bug3(label, condition):
+    bug3_results.append(condition)
+    print(f"{'✅' if condition else '❌'} {label}")
+
+with patch("auryel_bot.get_user", return_value={"phone": "+33600000099"}), \
+     patch("auryel_bot.stripe.checkout.Session.create") as m_stripe:
+    m_stripe.return_value = MagicMock(url="https://checkout.stripe.com/fake-session")
+    with flask_app.test_client() as wc:
+        r = wc.post("/stripe/create-checkout", json={
+            "plan": "mensuel",
+            "successUrl": "https://auryelvoyance.com/success.html",
+            "cancelUrl": "https://auryelvoyance.com/payer",
+            "phone": "+33600000099",
+        })
+    _bug3("create-checkout → 200", r.status_code == 200)
+    kwargs = m_stripe.call_args.kwargs
+    _bug3("subscription_data absent (plus de trial)", "subscription_data" not in kwargs)
+    _bug3("metadata sans trial_days", "trial_days" not in kwargs.get("metadata", {}))
+    _msg = kwargs.get("custom_text", {}).get("terms_of_service_acceptance", {}).get("message", "")
+    _bug3("custom_text mentionne le paiement immédiat", "immédiat" in _msg)
+    _bug3("custom_text ne promet plus '3 jours gratuits'", "3 jours gratuits" not in _msg)
+
+bug3_ok = all(bug3_results)
+print(f"\n{'✅' if bug3_ok else '❌'} BUG 3 ({len(bug3_results)} assertions) : {'PASS' if bug3_ok else 'FAIL'}")
+if not bug3_ok:
+    raise SystemExit(1)

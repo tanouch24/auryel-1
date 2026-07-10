@@ -1139,6 +1139,20 @@ def detecter_objection_arret(message):
         "je veux plus continuer", "stop tout ça", "laisse tomber",
     ])
 
+def detecter_demande_paiement(message):
+    """Demande EXPLICITE de payer/s'abonner/avoir le lien. Word-boundaries (comme IA-1) —
+    volontairement PAS de "envoie le lien" nu (trop générique, faux positifs)."""
+    msg = message.lower().replace("’", "'")
+    return any(_terme_present(t, msg) for t in [
+        "lien de paiement", "lien pour payer", "le lien pour payer",
+        "lien pour que je paye", "lien pour que je paie",
+        "je veux payer", "je veux payer maintenant", "je peux payer",
+        "je veux m'abonner",
+        "comment payer", "comment m'abonner", "comment je peux payer", "comment je peux m'abonner",
+        "activer mon abonnement", "passer au payant",
+        "où je paye", "où payer",
+    ])
+
 def detecter_email(message):
     pattern = r'\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Z|a-z]{2,}\b'
     match = re.search(pattern, message)
@@ -2222,6 +2236,7 @@ def get_reply(phone, user_message, depuis_pub=False, user_msg_pre_inserted=False
     obj_ia      = detecter_objection_ia(user_message)
     obj_inutile = detecter_objection_inutile(user_message)
     obj_arret   = detecter_objection_arret(user_message)
+    demande_paiement = detecter_demande_paiement(user_message)
     # get_history AVANT add_message : l'historique ne doit pas contenir le message
     # courant, qui est ajouté explicitement en fin de tableau messages à l'appel LLM.
     # Inverser ces deux lignes provoquerait un doublon du dernier message utilisateur.
@@ -2255,6 +2270,22 @@ def get_reply(phone, user_message, depuis_pub=False, user_msg_pre_inserted=False
     if obj_ia:      system += "\n\n=== OBJECTION IDENTITÉ ===\nLa personne te demande si tu es une IA. Ne prétends jamais être une personne humaine, ne mens pas. Tu n'annonces pas de toi-même que tu es une IA, mais là on te pose la question : réponds vrai, en une phrase, dans ta voix, puis reviens aussitôt à elle. Dis que tu es un accompagnement par intelligence artificielle, encadré par une équipe humaine. Pas de détail technique (ni modèle, ni société, ni fonctionnement), pas d'excuse, pas de dévalorisation. Exemple de ton à adapter à ta voix : 'Je suis un accompagnement par intelligence artificielle, encadré par une équipe humaine — mais ce que je ressens de ta situation, là, reste juste. Qu'est-ce qui te fait me poser la question maintenant ?'"
     if obj_inutile: system += "\n\n=== OBJECTION DÉCEPTION ===\nLa personne exprime une déception ou un doute sur l'utilité de l'échange. Reconnais sans te justifier, puis recadre sur la vraie question derrière le doute. Exemple de ton : 'Je comprends. Mais souvent, quand on dit que ça ne sert à rien, c'est qu'on a peur d'entendre une vérité qui oblige à bouger.' Termine par une question qui distingue le vrai motif."
     if obj_arret:   system += "\n\n=== OBJECTION ARRÊT ===\nLa personne a peut-être exprimé une envie d'arrêter — mais ça peut aussi concerner sa relation ou son ex ('j'arrête de l'attendre', 'je laisse tomber avec lui'), pas la conversation avec toi. Vérifie d'abord le contexte réel. Si c'est à propos de sa situation personnelle, continue normalement la lecture sans traiter ça comme une objection. Si c'est bien à propos d'arrêter cet échange avec toi, alors : respecte sans retenir de force, mais distingue si c'est de la paix ou de l'épuisement. Exemple de ton : 'D'accord, je respecte ça. Mais avant de fermer, regarde bien : tu veux arrêter parce que tu es en paix... ou parce que tu es épuisée d'attendre ? C'est très différent.' Ne pousse jamais à continuer si la personne insiste après cette question."
+    if demande_paiement:
+        # Garde-fou détresse (BUG 1) : même helper que les 4 guards marketing QW-1/IA-1.
+        # Couvre aussi le cas crise par construction (signal aigu <24h ⟹ <7j ⟹ bloqué ici aussi).
+        _bloque_paiement, _ = _detresse_bloque_marketing(user_fresh or user)
+        if not _bloque_paiement:
+            _lien_paiement = get_stripe_links(phone).get("mensuel", "")
+            if _lien_paiement:
+                system += (
+                    "\n\n=== DEMANDE DE PAIEMENT ===\n"
+                    "La personne demande explicitement à payer, s'abonner, ou avoir le lien. "
+                    "Donne-lui CE lien exact, tel quel, dans ta voix, en une phrase claire : "
+                    f"{_lien_paiement}\n"
+                    "Ne complique pas, ne dramatise pas. Donne le lien une seule fois — "
+                    "si elle ne le redemande pas, ne le repropose pas spontanément au message suivant. "
+                    "Reviens ensuite à elle avec une question ou une lecture."
+                )
     if depuis_pub and not (user_fresh or user).get("depuis_site"):
         system += "\n\n=== ORIGINE PUB ===\nPremier contact publicitaire probable. Reste sobre, pas de promesse, pas de grand effet."
     message_court = user_message.strip().lower()
@@ -2693,7 +2724,6 @@ def create_checkout():
             return jsonify({"error": "Plan invalide. Valeurs acceptées : mensuel"}), 400
         success_url = data.get("successUrl")
         cancel_url  = data.get("cancelUrl")
-        trial_days  = int(data.get("trialDays", 3))
         source      = data.get("source", "tt")
         email       = data.get("email")
         phone       = data.get("phone")
@@ -2708,7 +2738,6 @@ def create_checkout():
         session_stripe = stripe.checkout.Session.create(
             mode="subscription",
             line_items=[{"price": price_id, "quantity": 1}],
-            subscription_data={"trial_period_days": trial_days},
             customer_email=email,
             client_reference_id=phone,
             success_url=success_url,
@@ -2718,15 +2747,14 @@ def create_checkout():
                 "terms_of_service_acceptance": {
                     "message": (
                         "En continuant, vous acceptez les [CGV](https://auryelvoyance.com/cgv.html). "
-                        "3 jours gratuits, puis renouvellement automatique. "
-                        "Annulable à tout moment avant la fin de l'essai."
+                        "Paiement immédiat, renouvellement automatique chaque mois. "
+                        "Annulable à tout moment."
                     ),
                 }
             },
             locale="fr",
             metadata={
                 "source": source,
-                "trial_days": str(trial_days),
                 "phone": phone,
             }
         )
