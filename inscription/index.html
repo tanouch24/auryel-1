@@ -227,6 +227,7 @@ document.querySelectorAll('.cc').forEach(card=>{
 document.addEventListener('click',function(e){
   var el=e.target.closest&&e.target.closest('#wa-final,a.wa-btn');
   if(el&&window.gtag)gtag('event','click_whatsapp',{'event_category':'funnel','event_label':'inscription'});
+  if(el&&typeof fbq!=='undefined')fbq('track','Lead');
 });
 </script>
 </body></html>
