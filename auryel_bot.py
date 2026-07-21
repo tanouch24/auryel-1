@@ -334,6 +334,14 @@ def init_db():
     except Exception as e:
         conn.rollback()
         print(f"Migration v14: {e}")
+    # Migration v15 — plafond proactif partagé (2/jour, REL-2)
+    try:
+        c.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS proactifs_today_count INTEGER DEFAULT 0")
+        c.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS proactifs_today_date TEXT DEFAULT ''")
+        conn.commit()
+    except Exception as e:
+        conn.rollback()
+        print(f"Migration v15: {e}")
     conn.close()
 
 def reset_db():
@@ -369,7 +377,8 @@ def get_user(phone):
             categorie_principale,relances_ids_envoyes,
             date_derniere_proposition_tirage,nb_echanges_dernier_tirage,
             dernier_signal_aigu_at,detresse_maj_at,
-            retour_j7_envoyee,retour_j15_envoyee,retour_j30_envoyee
+            retour_j7_envoyee,retour_j15_envoyee,retour_j30_envoyee,
+            proactifs_today_count,proactifs_today_date
             FROM users WHERE phone=%s""", (phone,))
         row = c.fetchone()
         if row:
@@ -418,6 +427,8 @@ def get_user(phone):
                 "retour_j7_envoyee":row[56] or False,
                 "retour_j15_envoyee":row[57] or False,
                 "retour_j30_envoyee":row[58] or False,
+                "proactifs_today_count":row[59] or 0,
+                "proactifs_today_date":row[60] or "",
             }
         return None
     except Exception as e:
@@ -3078,6 +3089,31 @@ def _cron_purge_anciens():
             except: pass
 
 # ============================================================
+# PLAFOND PROACTIF PARTAGÉ (REL-2) — max 2 envois/jour, 3 crons
+# ============================================================
+def _peut_envoyer_proactif(user):
+    """Vérifie le plafond partagé de 2 messages proactifs/jour (REL-2).
+    Partagé entre cron_daily, cron_morning et cron_relances_intraday."""
+    from zoneinfo import ZoneInfo
+    today = datetime.now(ZoneInfo("Europe/Paris")).date().isoformat()
+    count = user.get("proactifs_today_count") or 0
+    last_date = user.get("proactifs_today_date") or ""
+    if last_date != today:
+        count = 0
+    return count < 2
+
+def _incrementer_proactif(phone, user):
+    """À appeler après chaque envoi proactif réussi (cron_daily/morning/intraday uniquement)."""
+    from zoneinfo import ZoneInfo
+    today = datetime.now(ZoneInfo("Europe/Paris")).date().isoformat()
+    count = user.get("proactifs_today_count") or 0
+    last_date = user.get("proactifs_today_date") or ""
+    if last_date != today:
+        update_user_silent(phone, proactifs_today_count=1, proactifs_today_date=today)
+    else:
+        update_user_silent(phone, proactifs_today_count=count + 1)
+
+# ============================================================
 # CRON DAILY
 # ============================================================
 @app.route("/cron/daily", methods=["POST"])
@@ -3117,13 +3153,18 @@ def cron_daily():
                         verif = _verif_stripe_abonne(cid)
                         if verif is False:
                             if _dans_fenetre_24h_meta(user):
-                                links = get_stripe_links(phone)
-                                lien  = links["mensuel"]
-                                intro = f"{prenom}, ton" if prenom else "Ton"
-                                send_message(phone, (
-                                    f"{intro} abonnement Auryel n'est plus actif côté paiement.\n\n"
-                                    f"Pour le réactiver :\n{lien}"
-                                ))
+                                if _peut_envoyer_proactif(user):
+                                    links = get_stripe_links(phone)
+                                    lien  = links["mensuel"]
+                                    intro = f"{prenom}, ton" if prenom else "Ton"
+                                    send_message(phone, (
+                                        f"{intro} abonnement Auryel n'est plus actif côté paiement.\n\n"
+                                        f"Pour le réactiver :\n{lien}"
+                                    ))
+                                    _incrementer_proactif(phone, user)
+                                else:
+                                    log_event("skip_relance_cap_proactif", phone_hash=_phone_hash(phone),
+                                              cron="daily", branche="zombie_stripe")
                             # Hors fenêtre 24h : downgrade silencieux
                             # (l'user verra le message standard de fin d'accès à sa prochaine écriture)
                             update_user_silent(phone, abonne=False, etat="pause")
@@ -3162,7 +3203,10 @@ def cron_daily():
                     not user.get("stop_relances", False)      # pas en opt-out
                 )
     
-                if doit_relancer:
+                if doit_relancer and not _peut_envoyer_proactif(user):
+                    log_event("skip_relance_cap_proactif", phone_hash=_phone_hash(phone),
+                              cron="daily", branche="relance_abonne")
+                elif doit_relancer:
                     send_message(phone, msg_relance_abonne(nom, prenom))
                     add_message(phone, "assistant", msg_relance_abonne(nom, prenom))
                     if user.get("email"):
@@ -3171,6 +3215,7 @@ def cron_daily():
                     update_user_silent(phone,
                         dernier_relance_abonne_at=datetime.now().isoformat(),
                         relance_abonne_count=count + 1)
+                    _incrementer_proactif(phone, user)
                     relances_abonnes += 1
                     log_event("relance_envoyee", phone_hash=_phone_hash(phone),
                               type_relance="relance_abonne", numero=count+1, canal="whatsapp")
@@ -3194,6 +3239,10 @@ def cron_daily():
     
                 absence = get_jours_absence(phone)
                 if absence >= 14 and peut_envoyer_relance_conversationnelle(user, heures=24):
+                    if not _peut_envoyer_proactif(user):
+                        log_event("skip_relance_cap_proactif", phone_hash=_phone_hash(phone),
+                                  cron="daily", branche="longue_absence")
+                        continue
                     msg_relance = construire_message_reprise(user, user.get("guide", "selena"), absence)
                     send_message(phone, msg_relance)
                     add_message(phone, "assistant", msg_relance)
@@ -3201,6 +3250,7 @@ def cron_daily():
                     update_user_silent(phone,
                         relance_hebdo_envoyee=True,
                         derniere_relance_hebdo_at=datetime.now().isoformat())
+                    _incrementer_proactif(phone, user)
                     log_event("relance_envoyee", phone_hash=_phone_hash(phone),
                               type_relance="longue_absence", canal="whatsapp")
                     time.sleep(1)
@@ -3213,36 +3263,46 @@ def cron_daily():
                     and user.get("onboarding_done", False)
                     and user["etat"] != "pause"
                     and not user.get("stop_relances", False)):
-                sent = False
-                if _dans_fenetre_24h_meta(user):
-                    msg6 = msg_j6(nom, prenom, links)
-                    try:
-                        r = send_message(phone, msg6)
-                        sent = r.status_code in (200, 201)
-                    except Exception as e:
-                        print(f"[cron] J+2 send_message erreur : {e}")
-                    if sent:
-                        add_message(phone, "assistant", msg6)
+                if not _peut_envoyer_proactif(user):
+                    log_event("skip_relance_cap_proactif", phone_hash=_phone_hash(phone),
+                              cron="daily", branche="j2")
                 else:
-                    sent = send_template_message(phone, "auryel_relance_j2_new", [prenom or "Bonjour", nom])
+                    sent = False
+                    if _dans_fenetre_24h_meta(user):
+                        msg6 = msg_j6(nom, prenom, links)
+                        try:
+                            r = send_message(phone, msg6)
+                            sent = r.status_code in (200, 201)
+                        except Exception as e:
+                            print(f"[cron] J+2 send_message erreur : {e}")
+                        if sent:
+                            add_message(phone, "assistant", msg6)
+                    else:
+                        sent = send_template_message(phone, "auryel_relance_j2_new", [prenom or "Bonjour", nom])
+                        if sent:
+                            add_message(phone, "assistant", f"[template:auryel_relance_j2_new] {{1}}={prenom or 'Bonjour'} {{2}}={nom}")
                     if sent:
-                        add_message(phone, "assistant", f"[template:auryel_relance_j2_new] {{1}}={prenom or 'Bonjour'} {{2}}={nom}")
-                if sent:
-                    if user.get("email"):
-                        send_email_j6(user["email"], prenom, links)
-                    update_user_silent(phone, relance_j6_envoyee=True, etat="attente_paiement")
-                    log_event("relance_envoyee", phone_hash=_phone_hash(phone),
-                              type_relance="j2", canal="whatsapp")
-                    j6 += 1
-                time.sleep(1)
+                        if user.get("email"):
+                            send_email_j6(user["email"], prenom, links)
+                        update_user_silent(phone, relance_j6_envoyee=True, etat="attente_paiement")
+                        _incrementer_proactif(phone, user)
+                        log_event("relance_envoyee", phone_hash=_phone_hash(phone),
+                                  type_relance="j2", canal="whatsapp")
+                        j6 += 1
+                    time.sleep(1)
     
             elif nb_jours >= 3 and user["etat"] == "attente_paiement" and not user.get("relance_j7_envoyee"):
                 if _stripe_paiement_actif(phone, user.get("stripe_customer_id", "")):
                     print(f"[cron] J+3 différé — paiement Stripe actif détecté → {phone}")
                     update_user_silent(phone, abonne=True, etat="normal")
+                elif not user.get("stop_relances", False) and not _peut_envoyer_proactif(user):
+                    # Plafond atteint : ni envoi ni blocage aujourd'hui, retenté demain (protection J+3)
+                    log_event("skip_relance_cap_proactif", phone_hash=_phone_hash(phone),
+                              cron="daily", branche="j3")
                 else:
                     # Notification WA + email : uniquement si pas en opt-out
                     if not user.get("stop_relances", False):
+                        sent = False
                         # J+3 : message libre si fenêtre 24h ouverte (même logique que J+2), sinon template
                         if _dans_fenetre_24h_meta(user):
                             msg_j3 = msg_j7_blocage(nom, prenom, links)
@@ -3262,6 +3322,8 @@ def cron_daily():
                                 add_message(phone, "assistant", f"[template:auryel_relance_j3_new] {{1}}={prenom or 'Bonjour'} {{2}}={nom}")
                                 log_event("relance_envoyee", phone_hash=_phone_hash(phone),
                                           type_relance="j3", canal="whatsapp_template")
+                        if sent:
+                            _incrementer_proactif(phone, user)
                         if user.get("email"):
                             send_email_relance(user["email"], prenom, links)
                     else:
@@ -3314,6 +3376,7 @@ def cron_morning():
         "skipped_stop": 0, "skipped_budget_limit": 0,
         "skipped_already_sent_today": 0, "skipped_not_subscribed": 0,
         "skipped_trial_window_closed": 0, "skipped_not_eligible": 0,
+        "skipped_cap_proactif": 0,
     }
 
     for phone in phones:
@@ -3358,6 +3421,11 @@ def cron_morning():
     
             # ── Messages libres (fenêtre 24h Meta ou 72h free entry) ────────────
             if mode in ("free_entry_72h", "free_text_24h"):
+                if not _peut_envoyer_proactif(user):
+                    log_event("morning_skip", phone_hash=_phone_hash(phone),
+                              reason="cap_proactif_2j", guide_key=guide_key)
+                    cnt["skipped_cap_proactif"] += 1
+                    continue
                 msg = build_contextual_morning_prompt(user, guide_key)
                 try:
                     r    = send_message(phone, msg)
@@ -3368,6 +3436,7 @@ def cron_morning():
                 if sent:
                     add_message(phone, "assistant", msg)
                     mark_morning_sent(phone, is_template=False)
+                    _incrementer_proactif(phone, user)
                     if mode == "free_entry_72h":
                         cnt["free_entry_sent"] += 1
                     else:
@@ -3407,7 +3476,13 @@ def cron_morning():
                           reason="no_template_resolved", guide_key=guide_key)
                 cnt["skipped_not_eligible"] += 1
                 continue
-    
+
+            if not _peut_envoyer_proactif(user):
+                log_event("morning_skip", phone_hash=_phone_hash(phone),
+                          reason="cap_proactif_2j", guide_key=guide_key)
+                cnt["skipped_cap_proactif"] += 1
+                continue
+
             sent = send_template_message(phone, template_name, [prenom or "Bonjour", nom])
             if sent:
                 add_message(phone, "assistant",
@@ -3419,6 +3494,7 @@ def cron_morning():
                     update_user_silent(phone, retour_j15_envoyee=True)
                 elif template_name == "auryel_retour_j30":
                     update_user_silent(phone, retour_j30_envoyee=True)
+                _incrementer_proactif(phone, user)
                 cnt["paid_templates_sent"] += 1
             log_event("morning_send", phone_hash=_phone_hash(phone),
                       send_mode=mode, template_name=template_name,
@@ -3930,6 +4006,10 @@ def cron_relances_intraday():
                     except Exception:
                         pass
                 if not h4_already:
+                    if not _peut_envoyer_proactif(user):
+                        log_event("skip_relance_cap_proactif", phone_hash=_phone_hash(phone),
+                                  cron="intraday", branche="h4")
+                        continue
                     relance = choisir_message_relance(user, "h4")
                     if not relance:
                         print(f"[h4] aucun message dispo pour {_phone_hash(phone)}")
@@ -3942,6 +4022,7 @@ def cron_relances_intraday():
                             deja = user.get("relances_ids_envoyes") or ""
                             nouveaux = (deja + "," + relance["id"]).strip(",")
                             update_user_silent(phone, last_h4_relance_at=now.isoformat(), relances_ids_envoyes=nouveaux)
+                            _incrementer_proactif(phone, user)
                             log_event("h4_relance_sent", phone_hash=_phone_hash(phone))
                             print(f"[h4] envoye -> {phone}")
                     except Exception as e:
@@ -3958,6 +4039,10 @@ def cron_relances_intraday():
                     except Exception:
                         pass
                 if not h22_already:
+                    if not _peut_envoyer_proactif(user):
+                        log_event("skip_relance_cap_proactif", phone_hash=_phone_hash(phone),
+                                  cron="intraday", branche="h22")
+                        continue
                     relance = choisir_message_relance(user, "h22")
                     if not relance:
                         print(f"[h22] aucun message dispo pour {_phone_hash(phone)}")
@@ -3970,6 +4055,7 @@ def cron_relances_intraday():
                             deja = user.get("relances_ids_envoyes") or ""
                             nouveaux = (deja + "," + relance["id"]).strip(",")
                             update_user_silent(phone, last_h22_relance_at=now.isoformat(), relances_ids_envoyes=nouveaux)
+                            _incrementer_proactif(phone, user)
                             log_event("h22_relance_sent", phone_hash=_phone_hash(phone))
                             print(f"[h22] envoye -> {phone}")
                     except Exception as e:
