@@ -3421,7 +3421,9 @@ def cron_morning():
     
             # ── Messages libres (fenêtre 24h Meta ou 72h free entry) ────────────
             if mode in ("free_entry_72h", "free_text_24h"):
-                if not _peut_envoyer_proactif(user):
+                # Exemption ciblée : maintien de fenêtre 24h d'un abonné actif (pas du marketing)
+                exempt = (mode == "free_text_24h" and user.get("abonne"))
+                if not exempt and not _peut_envoyer_proactif(user):
                     log_event("morning_skip", phone_hash=_phone_hash(phone),
                               reason="cap_proactif_2j", guide_key=guide_key)
                     cnt["skipped_cap_proactif"] += 1
@@ -3436,7 +3438,8 @@ def cron_morning():
                 if sent:
                     add_message(phone, "assistant", msg)
                     mark_morning_sent(phone, is_template=False)
-                    _incrementer_proactif(phone, user)
+                    if not exempt:
+                        _incrementer_proactif(phone, user)
                     if mode == "free_entry_72h":
                         cnt["free_entry_sent"] += 1
                     else:
@@ -3477,7 +3480,9 @@ def cron_morning():
                 cnt["skipped_not_eligible"] += 1
                 continue
 
-            if not _peut_envoyer_proactif(user):
+            # Exemption ciblée : maintien de fenêtre 24h d'un abonné actif (pas du marketing)
+            exempt = (mode == "paid_template_abonne_matin")
+            if not exempt and not _peut_envoyer_proactif(user):
                 log_event("morning_skip", phone_hash=_phone_hash(phone),
                           reason="cap_proactif_2j", guide_key=guide_key)
                 cnt["skipped_cap_proactif"] += 1
@@ -3494,7 +3499,8 @@ def cron_morning():
                     update_user_silent(phone, retour_j15_envoyee=True)
                 elif template_name == "auryel_retour_j30":
                     update_user_silent(phone, retour_j30_envoyee=True)
-                _incrementer_proactif(phone, user)
+                if not exempt:
+                    _incrementer_proactif(phone, user)
                 cnt["paid_templates_sent"] += 1
             log_event("morning_send", phone_hash=_phone_hash(phone),
                       send_mode=mode, template_name=template_name,
