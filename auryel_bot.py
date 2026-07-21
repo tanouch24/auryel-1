@@ -325,6 +325,15 @@ def init_db():
     except Exception as e:
         conn.rollback()
         print(f"Migration v13: {e}")
+    # Migration v14 — flags anti-répétition relances de réactivation (/cron/morning)
+    try:
+        c.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS retour_j7_envoyee BOOLEAN DEFAULT FALSE")
+        c.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS retour_j15_envoyee BOOLEAN DEFAULT FALSE")
+        c.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS retour_j30_envoyee BOOLEAN DEFAULT FALSE")
+        conn.commit()
+    except Exception as e:
+        conn.rollback()
+        print(f"Migration v14: {e}")
     conn.close()
 
 def reset_db():
@@ -359,7 +368,8 @@ def get_user(phone):
             messages_today_count,messages_today_date,
             categorie_principale,relances_ids_envoyes,
             date_derniere_proposition_tirage,nb_echanges_dernier_tirage,
-            dernier_signal_aigu_at,detresse_maj_at
+            dernier_signal_aigu_at,detresse_maj_at,
+            retour_j7_envoyee,retour_j15_envoyee,retour_j30_envoyee
             FROM users WHERE phone=%s""", (phone,))
         row = c.fetchone()
         if row:
@@ -405,6 +415,9 @@ def get_user(phone):
                 "nb_echanges_dernier_tirage":row[53] or 0,
                 "dernier_signal_aigu_at":row[54].isoformat() if row[54] else None,
                 "detresse_maj_at":row[55].isoformat() if row[55] else None,
+                "retour_j7_envoyee":row[56] or False,
+                "retour_j15_envoyee":row[57] or False,
+                "retour_j30_envoyee":row[58] or False,
             }
         return None
     except Exception as e:
@@ -432,6 +445,10 @@ def update_user(phone, **kwargs):
     kwargs["date_dernier_contact"] = datetime.now().isoformat()
     # Toute interaction réelle remet le compteur de templates sans réponse à 0
     kwargs.setdefault("templates_sans_reponse", 0)
+    # Toute interaction réelle réarme les relances de réactivation
+    kwargs.setdefault("retour_j7_envoyee", False)
+    kwargs.setdefault("retour_j15_envoyee", False)
+    kwargs.setdefault("retour_j30_envoyee", False)
     sets = ", ".join(f"{k}=%s" for k in kwargs)
     vals = list(kwargs.values()) + [phone]
     conn = None
@@ -2863,11 +2880,11 @@ def choose_morning_send_mode(user, now):
         jours_depuis_contact = _jours(user.get("date_dernier_contact"))
         if jours_depuis_contact is None:
             return "skip_not_subscribed"
-        if 1 <= jours_depuis_contact < 10:
+        if 1 <= jours_depuis_contact < 10 and not user.get("retour_j7_envoyee"):
             return "paid_template_reactivation"  # auryel_retour_j7
-        elif 10 <= jours_depuis_contact < 20:
+        elif 10 <= jours_depuis_contact < 20 and not user.get("retour_j15_envoyee"):
             return "paid_template_reactivation"  # auryel_retour_j15
-        elif 20 <= jours_depuis_contact < 45:
+        elif 20 <= jours_depuis_contact < 45 and not user.get("retour_j30_envoyee"):
             return "paid_template_reactivation"  # auryel_retour_j30
         elif 45 <= jours_depuis_contact < 75:
             return "paid_template_reactivation"  # auryel_retour_j60
@@ -2882,12 +2899,22 @@ def choose_morning_send_mode(user, now):
         return "paid_template_post_essai_j4"
 
     nb = user.get("nb_echanges") or 0
+    # Correspondance fenêtre→flag identique à la résolution du template (L3365-3373) :
+    # 5-13j → j7/j15 (proxy), 15-18j → j15, 30-33j → j30.
+    j7_ok  = not user.get("retour_j7_envoyee")
+    j15_ok = not user.get("retour_j15_envoyee")
+    j30_ok = not user.get("retour_j30_envoyee")
     if nb >= 10:   # hot — fenêtres élargies (5-9, 10-12, 15-17, 30-32)
-        in_window = jours is not None and (5 <= jours < 10 or 10 <= jours < 13 or 15 <= jours < 18 or 30 <= jours < 33)
+        in_window = jours is not None and (
+            (5 <= jours < 10 and j7_ok) or (10 <= jours < 13 and j15_ok) or
+            (15 <= jours < 18 and j15_ok) or (30 <= jours < 33 and j30_ok))
     elif nb >= 6:  # warm — fenêtres étendues (6-8, 10-12, 15-17, 30-32)
-        in_window = jours is not None and (6 <= jours < 9 or 10 <= jours < 13 or 15 <= jours < 18 or 30 <= jours < 33)
+        in_window = jours is not None and (
+            (6 <= jours < 9 and j7_ok) or (10 <= jours < 13 and j15_ok) or
+            (15 <= jours < 18 and j15_ok) or (30 <= jours < 33 and j30_ok))
     else:          # cold — fenêtres de base (6-8, 15-17, 30-32)
-        in_window = jours is not None and (6 <= jours < 9 or 15 <= jours < 18 or 30 <= jours < 33)
+        in_window = jours is not None and (
+            (6 <= jours < 9 and j7_ok) or (15 <= jours < 18 and j15_ok) or (30 <= jours < 33 and j30_ok))
     if in_window:
         return "paid_template_reactivation"
     return "skip_not_subscribed"
@@ -3383,6 +3410,12 @@ def cron_morning():
                 add_message(phone, "assistant",
                             f"[template:{template_name}] {{1}}={prenom or 'Bonjour'} {{2}}={nom}")
                 mark_morning_sent(phone, is_template=True, current_tsr=tsr)
+                if template_name == "auryel_retour_j7":
+                    update_user_silent(phone, retour_j7_envoyee=True)
+                elif template_name == "auryel_retour_j15":
+                    update_user_silent(phone, retour_j15_envoyee=True)
+                elif template_name == "auryel_retour_j30":
+                    update_user_silent(phone, retour_j30_envoyee=True)
                 cnt["paid_templates_sent"] += 1
             log_event("morning_send", phone_hash=_phone_hash(phone),
                       send_mode=mode, template_name=template_name,
