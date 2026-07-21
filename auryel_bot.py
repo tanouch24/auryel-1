@@ -1794,15 +1794,24 @@ def _detresse_bloque_marketing(user, maintenant=None):
 # ============================================================
 # SYSTEM PROMPT
 # ============================================================
+def _bloc_personnalite(guide):
+    """Calcule les 4 blocs de texte dérivés des champs persona de GUIDES
+    (voix, vocabulaire_prefere, interdits_specifiques, micro_exemples).
+    Partagé entre get_system_prompt() et build_contextual_morning_prompt()
+    pour que la voix du conseiller soit la même sur les deux chemins."""
+    voix_lignes = "\n".join(f"- {v}" for v in guide.get("voix", []))
+    vocabulaire_txt = ", ".join(guide.get("vocabulaire_prefere", []))
+    interdits_txt = ", ".join(guide.get("interdits_specifiques", []))
+    micro_exemples_lignes = "\n".join(f"- {m}" for m in guide.get("micro_exemples", []))
+    return voix_lignes, vocabulaire_txt, interdits_txt, micro_exemples_lignes
+
+
 def get_system_prompt(user, guide_key):
     guide = GUIDES.get(guide_key, GUIDES["selena"])
     prenom = user.get("prenom", "")
     # IA-3 commit 1 : câblage des champs GUIDES écrits mais jamais injectés jusqu'ici.
     # On branche le contenu existant tel quel — pas de réécriture dans ce commit.
-    voix_lignes = "\n".join(f"- {v}" for v in guide.get("voix", []))
-    vocabulaire_txt = ", ".join(guide.get("vocabulaire_prefere", []))
-    interdits_txt = ", ".join(guide.get("interdits_specifiques", []))
-    micro_exemples_lignes = "\n".join(f"- {m}" for m in guide.get("micro_exemples", []))
+    voix_lignes, vocabulaire_txt, interdits_txt, micro_exemples_lignes = _bloc_personnalite(guide)
 
     # Le 3114 ne se déclenche QUE sur un signal aigu récent (< 24h) du message courant.
     # Jamais sur le score de fond seul, jamais sur dernier_sujet_sensible figé à vie
@@ -2962,6 +2971,7 @@ def build_contextual_morning_prompt(user, guide_key):
     guide   = GUIDES.get(guide_key) or GUIDES["selena"]
     prenom  = user.get("prenom") or "toi"
     memoire = construire_memoire_emotionnelle(user)
+    voix_lignes, vocabulaire_txt, interdits_txt, micro_exemples_lignes = _bloc_personnalite(guide)
 
     system_content = (
         f"Tu es {guide.get('nom')}, {guide.get('style_relationnel')}. "
@@ -2973,7 +2983,14 @@ def build_contextual_morning_prompt(user, guide_key):
         "4) Question finale simple qui invite à répondre. "
         "2 à 4 phrases maximum. Jamais de pavé. "
         "Style WhatsApp naturel, pas de liste, pas de bullet points. "
-        f"{memoire}"
+        f"{memoire}\n\n"
+        "VOIX DE CE CONSEILLER — priorité maximale sur le ton, mais la structure "
+        "et la limite de 2 à 4 phrases ci-dessus restent obligatoires, sans exception :\n"
+        f"{voix_lignes}\n\n"
+        f"Vocabulaire à privilégier : {vocabulaire_txt}\n"
+        f"Interdits spécifiques à ce conseiller (en plus des interdits globaux du bot) : {interdits_txt}\n\n"
+        "Exemples concrets de ta façon de parler (le registre à imiter, jamais des phrases à recopier mot pour mot) :\n"
+        f"{micro_exemples_lignes}"
     )
     messages = [
         {"role": "system", "content": system_content},
