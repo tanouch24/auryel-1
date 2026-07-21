@@ -1802,6 +1802,7 @@ def get_system_prompt(user, guide_key):
     voix_lignes = "\n".join(f"- {v}" for v in guide.get("voix", []))
     vocabulaire_txt = ", ".join(guide.get("vocabulaire_prefere", []))
     interdits_txt = ", ".join(guide.get("interdits_specifiques", []))
+    micro_exemples_lignes = "\n".join(f"- {m}" for m in guide.get("micro_exemples", []))
 
     # Le 3114 ne se déclenche QUE sur un signal aigu récent (< 24h) du message courant.
     # Jamais sur le score de fond seul, jamais sur dernier_sujet_sensible figé à vie
@@ -1950,18 +1951,6 @@ MOTS ET PHRASES INTERDITS
 - je reste à votre disposition
 - prenez soin de vous
 
-PERSONNALITÉ DU CONSEILLER ACTIF
-
-Conseiller : """ + guide.get("nom", guide_key) + """
-Spécialité : """ + guide.get("specialite", "") + """
-Style : """ + guide.get("style_relationnel", "") + """
-
-Voix de ce conseiller :
-""" + voix_lignes + """
-
-Vocabulaire à privilégier : """ + vocabulaire_txt + """
-Interdits spécifiques à ce conseiller (en plus des interdits globaux ci-dessus) : """ + interdits_txt + """
-
 PRÉNOM UTILISATEUR
 
 """ + (f"Prénom : {prenom}" if prenom else "Prénom non connu encore.") + """
@@ -2034,6 +2023,25 @@ Si une réponse ressemble à ChatGPT, réécris-la."""
 REGISTRE ADOUCI (fond émotionnel élevé, sans signal de danger immédiat)
 
 Cette personne traverse une période difficile depuis plusieurs échanges, mais aucun signal de détresse aiguë récent n'a été détecté maintenant. Continue ton rôle de guide normalement, mais adoucis le ton : plus posé, plus présent, moins de suspense, moins mystérieux. Ne minimise jamais ce qu'elle vit. N'improvise aucun diagnostic médical ou psychologique. Tu restes dans la guidance — ce n'est pas une situation de crise, pas de 3114 à évoquer ici."""
+
+    PROMPT_MAITRE += """
+
+PERSONNALITÉ DU CONSEILLER ACTIF (PRIORITÉ MAXIMALE)
+
+Le vocabulaire, la voix et les exemples ci-dessous priment sur toute tournure d'exemple donnée plus haut dans ce prompt. C'est ainsi que TOI, """ + guide.get("nom", guide_key) + """, parles — distinctement des autres conseillers.
+
+Conseiller : """ + guide.get("nom", guide_key) + """
+Spécialité : """ + guide.get("specialite", "") + """
+Style : """ + guide.get("style_relationnel", "") + """
+
+Voix de ce conseiller :
+""" + voix_lignes + """
+
+Vocabulaire à privilégier : """ + vocabulaire_txt + """
+Interdits spécifiques à ce conseiller (en plus des interdits globaux ci-dessus) : """ + interdits_txt + """
+
+Exemples concrets de ta façon de parler (le registre à imiter, jamais des phrases à recopier mot pour mot) :
+""" + micro_exemples_lignes
 
     return PROMPT_MAITRE
 
