@@ -1213,8 +1213,8 @@ def _stripe_status_to_user(status):
     return False, 'pause'
 
 def get_stripe_links(phone):
-    """Liens statiques vers /tarifs avec UTM source=whatsapp.
-    Le checkout Stripe est créé quand l'utilisateur clique sur la page tarifs."""
+    """Liens statiques vers /payer avec UTM source=whatsapp.
+    Le checkout Stripe est créé quand l'utilisateur clique sur la page payer."""
     base = f"{SITE_URL}/payer"
     return {
         "mensuel": f"{base}?source=whatsapp&phone={phone}",
@@ -2299,6 +2299,9 @@ def get_reply(phone, user_message, depuis_pub=False, user_msg_pre_inserted=False
                     "La personne demande explicitement à payer, s'abonner, ou avoir le lien. "
                     "Donne-lui CE lien exact, tel quel, dans ta voix, en une phrase claire : "
                     f"{_lien_paiement}\n"
+                    "Colle le lien en URL brute, exactement comme ci-dessus : jamais de markdown, "
+                    "jamais de crochets [ ], jamais de parenthèses autour, jamais de texte cliquable "
+                    "du type [clique ici](lien) — juste l'adresse telle quelle, WhatsApp ne rend pas le markdown. "
                     "Ne complique pas, ne dramatise pas. Donne le lien une seule fois — "
                     "si elle ne le redemande pas, ne le repropose pas spontanément au message suivant. "
                     "Reviens ensuite à elle avec une question ou une lecture."
@@ -3115,7 +3118,7 @@ def cron_daily():
                         if verif is False:
                             if _dans_fenetre_24h_meta(user):
                                 links = get_stripe_links(phone)
-                                lien  = links.get("mensuel") or f"{SITE_URL}/tarifs.html"
+                                lien  = links["mensuel"]
                                 intro = f"{prenom}, ton" if prenom else "Ton"
                                 send_message(phone, (
                                     f"{intro} abonnement Auryel n'est plus actif côté paiement.\n\n"
