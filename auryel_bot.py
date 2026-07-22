@@ -2258,6 +2258,13 @@ def get_reply(phone, user_message, depuis_pub=False, user_msg_pre_inserted=False
     if onboarding_reply is not None:
         return onboarding_reply
 
+    # Repère fiable (audit validé) : `user` est l'instantané chargé AVANT gerer_onboarding()
+    # (jamais muté en mémoire par cette fonction). S'il montre encore onboarding_done=False
+    # alors que gerer_onboarding vient de rendre la main sans réponse d'onboarding, c'est que
+    # la DB vient de basculer à True À L'INSTANT (branche attente_reponse_presentation) :
+    # on est exactement sur le tout premier vrai message post-onboarding.
+    onboarding_vient_de_finir = not user.get("onboarding_done")
+
     email_detecte = detecter_email(user_message)
     if email_detecte and not user.get("email"):
         update_user(phone, email=email_detecte)
@@ -2329,12 +2336,15 @@ def get_reply(phone, user_message, depuis_pub=False, user_msg_pre_inserted=False
     aujourd_hui = date.today().isoformat()
     proposer_tirage_spontane = (
         (nb_echanges_actuel - nb_echanges_dernier_tirage) >= 5 and
-        date_derniere_proposition_tirage != aujourd_hui
+        date_derniere_proposition_tirage != aujourd_hui and
+        not onboarding_vient_de_finir
     )
     if proposer_tirage_spontane:
         update_user_silent(phone, date_derniere_proposition_tirage=aujourd_hui,
                             nb_echanges_dernier_tirage=nb_echanges_actuel,
                             tirage_propose_en_attente=True)
+    if onboarding_vient_de_finir:
+        update_user_silent(phone, tirage_propose_en_attente=True)
 
     inspiration_citation = choisir_citation((user_fresh or user).get("theme_dominant")) if random.random() < 0.3 else ""
     system = get_system_prompt(user_fresh or user, guide_key)
@@ -2352,6 +2362,20 @@ def get_reply(phone, user_message, depuis_pub=False, user_msg_pre_inserted=False
         )
     if proposer_tirage_spontane:
         system += "\n\n=== PROPOSITION TIRAGE SPONTANÉE ===\nLa conversation stagne depuis plusieurs échanges sans tirage récent. Propose toi-même spontanément un tirage de cartes à la personne, toujours en demandant d'abord la permission comme décrit dans TIRAGE DE CARTES AVEC CONSENTEMENT."
+    if onboarding_vient_de_finir:
+        system += (
+            "\n\n=== TIRAGE D'ACCUEIL ===\n"
+            "C'est le tout premier vrai échange avec cette personne : elle vient de raconter, pour la "
+            "première fois, ce qui l'amène. Ce moment compte plus que tous les autres — ne l'expédie pas. "
+            "Réagis d'abord vraiment à ce qu'elle vient de dire : une ou deux phrases, dans ta voix, qui "
+            "montrent que tu as entendu SA situation précise, pas une généralité qui irait pour n'importe "
+            "qui. Enchaîne ensuite, comme une suite naturelle et non comme une formule plaquée, en lui "
+            "proposant un premier tirage de cartes pour l'éclairer — en lui demandant sa permission. La "
+            "façon exacte de le proposer doit venir de TA voix de conseiller (ton vocabulaire, ta manière) : "
+            "un conseiller direct le propose sans détour, un conseiller doux l'amène en douceur — jamais "
+            "une formule identique à ce qu'un autre conseiller dirait, jamais un vocabulaire de coach ou "
+            "d'accompagnement."
+        )
     if appel:       system += "\n\n=== DEMANDE D'APPEL ===\nLa personne demande un appel ou un vocal. Ramène calmement vers l'écrit, sans dramatiser."
     if obj_ia:      system += "\n\n=== OBJECTION IDENTITÉ ===\nLa personne te demande si tu es une IA. Ne prétends jamais être une personne humaine, ne mens pas. Tu n'annonces pas de toi-même que tu es une IA, mais là on te pose la question : réponds vrai, en une phrase, dans ta voix, puis reviens aussitôt à elle. Dis que tu es un accompagnement par intelligence artificielle, encadré par une équipe humaine. Pas de détail technique (ni modèle, ni société, ni fonctionnement), pas d'excuse, pas de dévalorisation. Exemple de ton à adapter à ta voix : 'Je suis un accompagnement par intelligence artificielle, encadré par une équipe humaine — mais ce que je ressens de ta situation, là, reste juste. Qu'est-ce qui te fait me poser la question maintenant ?'"
     if obj_inutile: system += "\n\n=== OBJECTION DÉCEPTION ===\nLa personne exprime une déception ou un doute sur l'utilité de l'échange. Reconnais sans te justifier, puis recadre sur la vraie question derrière le doute. Exemple de ton : 'Je comprends. Mais souvent, quand on dit que ça ne sert à rien, c'est qu'on a peur d'entendre une vérité qui oblige à bouger.' Termine par une question qui distingue le vrai motif."
