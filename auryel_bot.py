@@ -342,6 +342,13 @@ def init_db():
     except Exception as e:
         conn.rollback()
         print(f"Migration v15: {e}")
+    # Migration v16 — consentement tirage 3-cartes (image), robuste au phrasé du conseiller
+    try:
+        c.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS tirage_propose_en_attente BOOLEAN DEFAULT FALSE")
+        conn.commit()
+    except Exception as e:
+        conn.rollback()
+        print(f"Migration v16: {e}")
     conn.close()
 
 def reset_db():
@@ -378,7 +385,8 @@ def get_user(phone):
             date_derniere_proposition_tirage,nb_echanges_dernier_tirage,
             dernier_signal_aigu_at,detresse_maj_at,
             retour_j7_envoyee,retour_j15_envoyee,retour_j30_envoyee,
-            proactifs_today_count,proactifs_today_date
+            proactifs_today_count,proactifs_today_date,
+            tirage_propose_en_attente
             FROM users WHERE phone=%s""", (phone,))
         row = c.fetchone()
         if row:
@@ -429,6 +437,7 @@ def get_user(phone):
                 "retour_j30_envoyee":row[58] or False,
                 "proactifs_today_count":row[59] or 0,
                 "proactifs_today_date":row[60] or "",
+                "tirage_propose_en_attente":row[61] or False,
             }
         return None
     except Exception as e:
@@ -2262,9 +2271,14 @@ def get_reply(phone, user_message, depuis_pub=False, user_msg_pre_inserted=False
         return reply
 
     outil_demande = detecter_outil_demande(user_message)
+    cartes_consent = []
     if outil_demande:
         update_user(phone, dernier_outil=outil_demande)
         user["dernier_outil"] = outil_demande
+        if outil_demande == "carte":
+            # Demande directe : la formulation vaut déjà consentement, tirage immédiat
+            # (pas de flag à armer, pas de tour de latence à attendre).
+            _, cartes_consent = tirer_cartes(phone)
 
     contexte_outil = ""
     nombres = [int(w) for w in user_message.split() if w.isdigit()]
@@ -2283,6 +2297,16 @@ def get_reply(phone, user_message, depuis_pub=False, user_msg_pre_inserted=False
             titre_c, sens_c = CHIFFRES.get(n, CHIFFRES[1])
             contexte_outil = f"\n\n=== RITUEL CHIFFRE ===\nChiffre choisi : {n} — {titre_c}. Sens : {sens_c}.\nUtilise-le comme symbole, pas comme verdict. Termine sur une ouverture simple."
             update_user(phone, dernier_outil="")
+
+    # Consentement à un tirage proposé PAR LE VOYANT (spontané, ou futur rituel d'accueil) :
+    # flag posé au tour précédent, lu ici indépendamment du phrasé exact du conseiller.
+    # Si ce tour a déjà résolu une demande directe (cartes_consent), on ne retire pas deux fois.
+    if user.get("tirage_propose_en_attente"):
+        update_user_silent(phone, tirage_propose_en_attente=False)
+        if not cartes_consent and any(w in user_message.strip().lower() for w in [
+            "oui", "ok", "vas-y", "vasy", "d'accord", "dacord", "d'acc", "dacc", "okey", "go", "allez",
+        ]):
+            _, cartes_consent = tirer_cartes(phone)
 
     appel       = detecter_appel_visio(user_message)
     obj_ia      = detecter_objection_ia(user_message)
@@ -2309,13 +2333,16 @@ def get_reply(phone, user_message, depuis_pub=False, user_msg_pre_inserted=False
     )
     if proposer_tirage_spontane:
         update_user_silent(phone, date_derniere_proposition_tirage=aujourd_hui,
-                            nb_echanges_dernier_tirage=nb_echanges_actuel)
+                            nb_echanges_dernier_tirage=nb_echanges_actuel,
+                            tirage_propose_en_attente=True)
 
     inspiration_citation = choisir_citation((user_fresh or user).get("theme_dominant")) if random.random() < 0.3 else ""
     system = get_system_prompt(user_fresh or user, guide_key)
     if inspiration_citation:
         system += f"\n\n=== INSPIRATION DU MOMENT ===\nSi cela résonne naturellement avec ce que vit la personne, tu peux t'appuyer sur cette sagesse (sans jamais citer sa source) : {inspiration_citation}"
     if contexte_outil: system += contexte_outil
+    if cartes_consent:
+        system += f"\n\n=== TIRAGE TAROT ===\n[SYSTEME: 3 cartes tirees et envoyees en image : {', '.join(cartes_consent)}. Interprete ces cartes precises maintenant.]"
     if proposer_tirage_spontane:
         system += "\n\n=== PROPOSITION TIRAGE SPONTANÉE ===\nLa conversation stagne depuis plusieurs échanges sans tirage récent. Propose toi-même spontanément un tirage de cartes à la personne, toujours en demandant d'abord la permission comme décrit dans TIRAGE DE CARTES AVEC CONSENTEMENT."
     if appel:       system += "\n\n=== DEMANDE D'APPEL ===\nLa personne demande un appel ou un vocal. Ramène calmement vers l'écrit, sans dramatiser."
@@ -2346,17 +2373,6 @@ def get_reply(phone, user_message, depuis_pub=False, user_msg_pre_inserted=False
     message_court = user_message.strip().lower()
     if message_court in {"ok", "oui", "rien", "je sais pas", "j'sais pas", "sais pas", "donc"}:
         system += "\n\n=== MESSAGE COURT ===\nLa personne répond brièvement. Ne ferme pas la conversation. Fais une lecture active, précise, incarnée. Continue d'interpréter au lieu de t'arrêter."
-
-    # Détection consentement tirage tarot
-    _last_assistant = next((m["content"] for m in reversed(history) if m["role"] == "assistant"), "")
-    _consent_tarot = (
-        "tirer des cartes pour toi" in _last_assistant.lower() and
-        any(w in user_message.strip().lower() for w in ["oui", "ok", "vas-y", "d'accord", "dacord", "okey", "go"])
-    )
-    if _consent_tarot:
-        _, cartes = tirer_cartes(phone)
-        if cartes:
-            system += f"\n\n=== TIRAGE TAROT ===\n[SYSTEME: 3 cartes tirees et envoyees en image : {', '.join(cartes)}. Interprete ces cartes precises maintenant.]"
 
     reply = tronquer_reponse(call_llm(
         [{"role":"system","content":system}, *history, {"role":"user","content":user_message}],
