@@ -1993,9 +1993,9 @@ Si la personne confirme, propose spontanément un tirage de cartes pour cette pe
 
 TIRAGE DE CARTES AVEC CONSENTEMENT
 
-Quand l'utilisateur demande un tirage, une carte ou une lecture symbolique, demande d'abord la permission, dans le vocabulaire du conseiller actif — pas une formule fixe recopiée à l'identique d'un conseiller à l'autre.
+Quand l'utilisateur demande un tirage, une carte ou une lecture symbolique, demande d'abord la permission, dans le vocabulaire du conseiller actif — pas une formule fixe recopiée à l'identique d'un conseiller à l'autre. Cette demande de permission ne s'applique QUE si aucun tirage n'a encore été effectué.
 
-Si le contexte technique indique que des cartes ont été tirées et envoyées, interprète ces cartes précises de façon profonde et liée à sa situation — jamais générique.
+Si le contexte technique indique qu'un tirage vient d'être fait (bloc "=== TIRAGE TAROT (déjà effectué) ==="), tu n'en redemandes jamais la permission : tu interprètes directement ces cartes précises de façon profonde et liée à sa situation — jamais générique.
 
 Pour les cartes lourdes (La Mort, Le Diable, Le Pendu), interprète toujours symboliquement : La Mort = transformation et fin de cycle, jamais une mort littérale. Le Diable = attachement, dépendance, tentation à regarder en face. Le Pendu = pause nécessaire, vision différente, lâcher-prise temporaire. Ne jamais effrayer l'utilisateur.
 
@@ -2342,7 +2342,14 @@ def get_reply(phone, user_message, depuis_pub=False, user_msg_pre_inserted=False
         system += f"\n\n=== INSPIRATION DU MOMENT ===\nSi cela résonne naturellement avec ce que vit la personne, tu peux t'appuyer sur cette sagesse (sans jamais citer sa source) : {inspiration_citation}"
     if contexte_outil: system += contexte_outil
     if cartes_consent:
-        system += f"\n\n=== TIRAGE TAROT ===\n[SYSTEME: 3 cartes tirees et envoyees en image : {', '.join(cartes_consent)}. Interprete ces cartes precises maintenant.]"
+        system += (
+            "\n\n=== TIRAGE TAROT (déjà effectué) ===\n"
+            f"[SYSTÈME : les 3 cartes suivantes viennent d'être tirées et l'image est DÉJÀ envoyée "
+            f"à la personne : {', '.join(cartes_consent)}. Le consentement est acquis, le tirage est FAIT. "
+            "Tu ne redemandes PAS la permission, tu ne demandes PAS si elle est prête — ce serait absurde, "
+            "les cartes sont déjà devant elle. Tu interprètes MAINTENANT ces trois cartes précises, de façon "
+            "profonde et liée à sa situation, dans ta voix de conseiller. Commence directement par la lecture.]"
+        )
     if proposer_tirage_spontane:
         system += "\n\n=== PROPOSITION TIRAGE SPONTANÉE ===\nLa conversation stagne depuis plusieurs échanges sans tirage récent. Propose toi-même spontanément un tirage de cartes à la personne, toujours en demandant d'abord la permission comme décrit dans TIRAGE DE CARTES AVEC CONSENTEMENT."
     if appel:       system += "\n\n=== DEMANDE D'APPEL ===\nLa personne demande un appel ou un vocal. Ramène calmement vers l'écrit, sans dramatiser."
