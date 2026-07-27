@@ -19,6 +19,7 @@ os.environ.setdefault("RESEND_API_KEY", "test")
 os.environ.setdefault("META_APP_SECRET", "test")
 os.environ.setdefault("DAILY_SECRET", "test")
 os.environ.setdefault("SEO_SECRET", "test")
+os.environ.setdefault("TAROT_MEDIA_UPLOAD_DISABLED", "1")
 
 from datetime import datetime
 import hmac as hmac_mod
@@ -542,3 +543,116 @@ bug3_ok = all(bug3_results)
 print(f"\n{'✅' if bug3_ok else '❌'} BUG 3 ({len(bug3_results)} assertions) : {'PASS' if bug3_ok else 'FAIL'}")
 if not bug3_ok:
     raise SystemExit(1)
+
+# ============================================================
+# TESTS — envoi tirage par media_id, fallback link, refresh périodique
+# ============================================================
+from unittest.mock import patch, MagicMock as _MM
+import auryel_bot as _ab
+
+print("\n" + "=" * 60)
+print("TEST TIRAGE — send_image() media_id / fallback link")
+print("=" * 60)
+
+# T1 : media_id fourni et accepté par Meta -> payload envoyé avec "id", pas de fallback
+with patch("auryel_bot.requests.post") as mock_post:
+    mock_post.return_value = _MM(status_code=200, json=lambda: {}, text="")
+    _ab.send_image("33600000000", "https://auryelvoyance.com/images/tarot/x.png",
+                    caption="", media_id="MEDIA123")
+    assert mock_post.call_count == 1, f"attendu 1 appel, obtenu {mock_post.call_count}"
+    sent = mock_post.call_args.kwargs["json"]
+    assert sent["image"] == {"id": "MEDIA123", "caption": ""}, sent
+    print("✅ media_id accepté → un seul appel, payload par id")
+
+# T2 : media_id fourni mais refusé par Meta (410/expiré) -> fallback automatique sur link
+with patch("auryel_bot.requests.post") as mock_post:
+    mock_post.side_effect = [
+        _MM(status_code=410, json=lambda: {}, text="media expired"),
+        _MM(status_code=200, json=lambda: {}, text=""),
+    ]
+    _ab.send_image("33600000000", "https://auryelvoyance.com/images/tarot/x.png",
+                    caption="", media_id="MEDIA_EXPIRE")
+    assert mock_post.call_count == 2, f"attendu 2 appels (id puis link), obtenu {mock_post.call_count}"
+    premier = mock_post.call_args_list[0].kwargs["json"]
+    second  = mock_post.call_args_list[1].kwargs["json"]
+    assert premier["image"] == {"id": "MEDIA_EXPIRE", "caption": ""}, premier
+    assert second["image"] == {"link": "https://auryelvoyance.com/images/tarot/x.png", "caption": ""}, second
+    print("✅ media_id refusé (410) → fallback automatique sur link")
+
+# T3 : media_id fourni mais exception réseau -> fallback automatique sur link
+with patch("auryel_bot.requests.post") as mock_post:
+    mock_post.side_effect = [
+        Exception("connection reset"),
+        _MM(status_code=200, json=lambda: {}, text=""),
+    ]
+    _ab.send_image("33600000000", "https://auryelvoyance.com/images/tarot/x.png",
+                    caption="", media_id="MEDIA_KO")
+    assert mock_post.call_count == 2, f"attendu 2 appels, obtenu {mock_post.call_count}"
+    print("✅ exception réseau sur media_id → fallback automatique sur link")
+
+# T4 : pas de media_id (cache pas encore rempli) -> comportement actuel inchangé, un seul appel par link
+with patch("auryel_bot.requests.post") as mock_post:
+    mock_post.return_value = _MM(status_code=200, json=lambda: {}, text="")
+    _ab.send_image("33600000000", "https://auryelvoyance.com/images/tarot/x.png", caption="")
+    assert mock_post.call_count == 1, f"attendu 1 appel, obtenu {mock_post.call_count}"
+    sent = mock_post.call_args.kwargs["json"]
+    assert sent["image"] == {"link": "https://auryelvoyance.com/images/tarot/x.png", "caption": ""}, sent
+    print("✅ sans media_id → comportement actuel inchangé (link direct)")
+
+# T5 : tirer_cartes() lit bien TAROT_MEDIA_IDS et le transmet à send_image()
+with patch("auryel_bot.requests.post") as mock_post, patch.dict(_ab.TAROT_MEDIA_IDS, {}, clear=True):
+    mock_post.return_value = _MM(status_code=200, json=lambda: {}, text="")
+    if _ab.TAROT_MAPPING:
+        un_fichier = next(iter(_ab.TAROT_MAPPING))
+        _ab.TAROT_MEDIA_IDS[un_fichier] = "MEDIA_CACHE"
+        with patch("auryel_bot._random_tarot.choice", return_value=un_fichier):
+            _ab.tirer_cartes("33600000000")
+        sent = mock_post.call_args.kwargs["json"]
+        assert sent["image"]["id"] == "MEDIA_CACHE", sent
+        print("✅ tirer_cartes() transmet bien le media_id en cache à send_image()")
+    else:
+        print("⚠️  TAROT_MAPPING vide en environnement de test, T5 sautée")
+
+print("\n" + "=" * 60)
+print("TEST TIRAGE — rafraîchissement périodique (anti-expiration)")
+print("=" * 60)
+
+# T6 : cache frais (< 20 jours) -> _refresh_tarot_media_si_necessaire() ne relance rien
+with patch("auryel_bot._upload_tarot_media") as mock_upload, \
+     patch("auryel_bot._tarot_media_uploaded_at", _ab.time.time() - 3600):  # 1h
+    _ab._refresh_tarot_media_si_necessaire()
+    _ab.time.sleep(0.05)  # laisse une éventuelle Thread (bug) démarrer avant de vérifier
+    assert mock_upload.call_count == 0, "le refresh n'aurait pas dû se déclencher, cache frais"
+    print("✅ cache frais (1h) → pas de re-upload déclenché")
+
+# T7 : cache périmé (> 20 jours) -> _refresh_tarot_media_si_necessaire() relance un upload en thread
+with patch("auryel_bot._upload_tarot_media") as mock_upload, \
+     patch("auryel_bot._tarot_media_uploaded_at", _ab.time.time() - _ab.TAROT_MEDIA_REFRESH_INTERVAL_S - 1):
+    _ab._refresh_tarot_media_si_necessaire()
+    _ab.time.sleep(0.2)  # laisse le thread démarré s'exécuter
+    assert mock_upload.call_count == 1, f"attendu 1 relance d'upload, obtenu {mock_upload.call_count}"
+    print("✅ cache périmé (>20j) → re-upload déclenché en tâche de fond")
+
+# T8 : jamais uploadé (uploaded_at=0.0) -> traité comme périmé, upload déclenché
+with patch("auryel_bot._upload_tarot_media") as mock_upload, \
+     patch("auryel_bot._tarot_media_uploaded_at", 0.0):
+    _ab._refresh_tarot_media_si_necessaire()
+    _ab.time.sleep(0.2)
+    assert mock_upload.call_count == 1, f"attendu 1 relance d'upload, obtenu {mock_upload.call_count}"
+    print("✅ jamais uploadé (0.0) → traité comme périmé, upload déclenché")
+
+# T9 : deux uploads concurrents -> le verrou empêche le second de tourner en parallèle
+# (TAROT_MEDIA_UPLOAD_DISABLED levé juste pour ce test, seule façon d'exercer le verrou
+# réel de _upload_tarot_media() ; requests.post reste mocké, donc aucun vrai appel réseau)
+with patch("auryel_bot.requests.post") as mock_post, \
+     patch.dict(os.environ, {"TAROT_MEDIA_UPLOAD_DISABLED": ""}):
+    mock_post.return_value = _MM(status_code=200, json=lambda: {}, text="")
+    _ab._tarot_media_upload_lock.acquire()  # simule un upload déjà en cours
+    try:
+        _ab._upload_tarot_media()  # doit sortir immédiatement (lock non-bloquant)
+        assert mock_post.call_count == 0, "un second upload n'aurait pas dû démarrer, lock déjà pris"
+        print("✅ upload déjà en cours → un second déclenchement ne fait rien (verrou non-bloquant)")
+    finally:
+        _ab._tarot_media_upload_lock.release()
+
+print("\n✅ TESTS TIRAGE media_id + refresh : PASS")

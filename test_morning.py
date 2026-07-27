@@ -18,6 +18,7 @@ os.environ.setdefault("RESEND_API_KEY", "test")
 os.environ.setdefault("META_APP_SECRET", "test")
 os.environ.setdefault("DAILY_SECRET", "test")
 os.environ.setdefault("SEO_SECRET", "test")
+os.environ.setdefault("TAROT_MEDIA_UPLOAD_DISABLED", "1")
 
 from datetime import datetime, timedelta
 from auryel_bot import choose_morning_send_mode

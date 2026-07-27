@@ -27,6 +27,65 @@ except Exception as _e:
     print(f"[tarot] mapping non charge : {_e}")
     TAROT_MAPPING = {}
 
+TAROT_MEDIA_IDS = {}
+_tarot_media_uploaded_at = 0.0
+_tarot_media_upload_lock = threading.Lock()
+TAROT_MEDIA_REFRESH_INTERVAL_S = 20 * 24 * 3600  # 20 jours — marge avant les ~30j d'expiration Meta
+
+def _upload_tarot_media():
+    """Upload les PNG de tarot vers Meta pour obtenir des media_id (envoi plus rapide
+    que par link : Meta n'a pas besoin d'aller chercher le fichier chez nous au moment
+    du tirage). Tourne en tâche de fond au boot ET périodiquement (voir
+    _refresh_tarot_media_si_necessaire) — jamais deux uploads en parallèle (verrou
+    non-bloquant). Si un fichier échoue, son media_id reste absent/périmé et
+    tirer_cartes() retombera sur l'envoi par link pour ce fichier — jamais de
+    blocage du tirage.
+    TAROT_MEDIA_UPLOAD_DISABLED (optionnelle, absente en prod) coupe tout appel réseau
+    réel — utilisée uniquement par les tests, pour ne pas taper la vraie API Meta avec
+    des identifiants factices à chaque import du module."""
+    global _tarot_media_uploaded_at
+    if os.environ.get("TAROT_MEDIA_UPLOAD_DISABLED"):
+        return
+    if not _tarot_media_upload_lock.acquire(blocking=False):
+        print("[tarot-media] upload deja en cours, on saute ce declenchement")
+        return
+    try:
+        debut = time.time()
+        images_dir = os.path.join(os.path.dirname(__file__), "images", "tarot")
+        headers = {"Authorization": f"Bearer {WHATSAPP_TOKEN}"}
+        url = f"https://graph.facebook.com/v18.0/{PHONE_NUMBER_ID}/media"
+        for fichier in TAROT_MAPPING:
+            try:
+                path = os.path.join(images_dir, fichier)
+                with open(path, "rb") as f:
+                    files = {"file": (fichier, f, "image/png")}
+                    data = {"messaging_product": "whatsapp"}
+                    r = requests.post(url, headers=headers, data=data, files=files, timeout=30)
+                if r.status_code in (200, 201):
+                    media_id = r.json().get("id")
+                    if media_id:
+                        TAROT_MEDIA_IDS[fichier] = media_id
+                    else:
+                        print(f"[tarot-media] {fichier} : reponse sans id : {r.text[:200]}")
+                else:
+                    print(f"[tarot-media] {fichier} : upload echec {r.status_code} : {r.text[:200]}")
+            except Exception as e:
+                print(f"[tarot-media] {fichier} : exception upload : {e}")
+        _tarot_media_uploaded_at = time.time()
+        duree = _tarot_media_uploaded_at - debut
+        print(f"[tarot-media] {len(TAROT_MEDIA_IDS)}/{len(TAROT_MAPPING)} media_id obtenus en {duree:.1f}s")
+    finally:
+        _tarot_media_upload_lock.release()
+
+def _refresh_tarot_media_si_necessaire():
+    """Relance l'upload en tâche de fond si le cache a plus de
+    TAROT_MEDIA_REFRESH_INTERVAL_S (ou n'a jamais été rempli). Non bloquant : démarre
+    un thread et rend la main immédiatement. Appelé depuis cron_relances_intraday()
+    (APScheduler interne, toutes les heures) — ne dépend d'aucun redéploiement ni
+    d'aucun cron externe (Make.com) pour se déclencher."""
+    if time.time() - _tarot_media_uploaded_at >= TAROT_MEDIA_REFRESH_INTERVAL_S:
+        threading.Thread(target=_upload_tarot_media, daemon=True).start()
+
 _CITATIONS_PATH = os.path.join(os.path.dirname(__file__), "citations_spirituelles.json")
 try:
     with open(_CITATIONS_PATH, encoding="utf-8") as _f:
@@ -57,6 +116,8 @@ CORS(app, resources={r"/stripe/*": {"origins": ["https://auryelvoyance.com"]}})
 
 WHATSAPP_TOKEN  = os.environ.get("WHATSAPP_TOKEN")
 PHONE_NUMBER_ID = os.environ.get("PHONE_NUMBER_ID")
+if TAROT_MAPPING:
+    threading.Thread(target=_upload_tarot_media, daemon=True).start()
 GROQ_API_KEY    = os.environ.get("GROQ_API_KEY")
 VERIFY_TOKEN    = os.environ.get("VERIFY_TOKEN")
 ADMIN_PASSWORD  = os.environ.get("ADMIN_PASSWORD")
@@ -1388,9 +1449,26 @@ def send_message(to, text):
     print(f"📤 {r.status_code}")
     return r
 
-def send_image(phone, image_url, caption=""):
+def send_image(phone, image_url, caption="", media_id=None):
     url = f"https://graph.facebook.com/v18.0/{PHONE_NUMBER_ID}/messages"
     headers = {"Authorization": f"Bearer {WHATSAPP_TOKEN}", "Content-Type": "application/json"}
+
+    if media_id:
+        data = {
+            "messaging_product": "whatsapp",
+            "to": phone,
+            "type": "image",
+            "image": {"id": media_id, "caption": caption}
+        }
+        try:
+            r = requests.post(url, headers=headers, json=data, timeout=10)
+            if r.status_code in (200, 201):
+                print(f"📤 [image] {r.status_code} media_id")
+                return r
+            print(f"[tarot-media] media_id refuse ({r.status_code}) : {r.text[:200]} -> fallback link")
+        except Exception as e:
+            print(f"[tarot-media] media_id exception ({e}) -> fallback link")
+
     data = {
         "messaging_product": "whatsapp",
         "to": phone,
@@ -1398,7 +1476,7 @@ def send_image(phone, image_url, caption=""):
         "image": {"link": image_url, "caption": caption}
     }
     r = requests.post(url, headers=headers, json=data, timeout=10)
-    print(f"📤 [image] {r.status_code}")
+    print(f"📤 [image] {r.status_code} link")
     return r
 
 def tirer_cartes(phone):
@@ -1407,7 +1485,8 @@ def tirer_cartes(phone):
     fichier = _random_tarot.choice(list(TAROT_MAPPING.keys()))
     cartes = TAROT_MAPPING[fichier]
     image_url = f"{SITE_URL}/images/tarot/{fichier}"
-    send_image(phone, image_url, caption="")
+    media_id = TAROT_MEDIA_IDS.get(fichier)
+    send_image(phone, image_url, caption="", media_id=media_id)
     return fichier, cartes
 
 def send_template_message(phone, template_name, variables, language="fr"):
@@ -4030,7 +4109,12 @@ def choisir_message_relance(user, moment):
 
 
 def cron_relances_intraday():
-    """Vérifie toutes les heures si H+4 ou H+22 doit être envoyé."""
+    """Vérifie toutes les heures si H+4 ou H+22 doit être envoyé.
+    Vérifie aussi, à chaque passage, si le cache media_id du tirage tarot a besoin
+    d'être rafraîchi (voir _refresh_tarot_media_si_necessaire) — placé avant le filtre
+    d'horaire ci-dessous car ce rafraîchissement n'a aucun rapport avec la fenêtre
+    8h-22h des relances et doit tourner toutes les heures sans exception."""
+    _refresh_tarot_media_si_necessaire()
     now = datetime.now()
 
     from zoneinfo import ZoneInfo
