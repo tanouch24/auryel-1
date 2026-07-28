@@ -779,6 +779,22 @@ detecter_registre_message("je pense encore à mon ex, cette rupture me hante")
 _b2b("detecter_registre_message n'a pas de paramètre user → theme_dominant existant intact",
      _u_theme_fige.get("theme_dominant") == "figé")
 
+# --- formes fléchies courantes ajoutées à THEMES_EMOTIONNELS (en plus des cas ci-dessus) ---
+cas_registre_flechis = {
+    "deuil":   "ma mère est décédée",
+    "deuil2":  "il vient de mourir",
+    "amour":   "il m'a trompée",
+    "blocage": "je n'y arrive pas, plus la force",
+}
+_b2b("detecter_registre_message(« ma mère est décédée ») → deuil",
+     detecter_registre_message(cas_registre_flechis["deuil"]) == "deuil")
+_b2b("detecter_registre_message(« il vient de mourir ») → deuil",
+     detecter_registre_message(cas_registre_flechis["deuil2"]) == "deuil")
+_b2b("detecter_registre_message(« il m'a trompée ») → amour",
+     detecter_registre_message(cas_registre_flechis["amour"]) == "amour")
+_b2b("detecter_registre_message(« je n'y arrive pas, plus la force ») → blocage",
+     detecter_registre_message(cas_registre_flechis["blocage"]) == "blocage")
+
 # --- choisir_psaume : garde-fous, cooldown, probabilité ---
 _user_neutre = {"nb_echanges_dernier_psaume": 0, "niveau_detresse": 0,
                 "detresse_maj_at": None, "dernier_signal_aigu_at": None}

@@ -1549,10 +1549,13 @@ def _terme_present(terme, texte):
 
 
 THEMES_EMOTIONNELS = {
-    "amour":       ["amour", "relation", "couple", "ex", "rupture", "jaloux", "revenir", "quitter", "trahison", "manque"],
-    "deuil":       ["mort", "décès", "perdu", "disparu", "deuil", "plus là", "enterrement"],
+    "amour":       ["amour", "relation", "couple", "ex", "rupture", "jaloux", "revenir", "quitter", "trahison", "manque",
+                     "trompé", "trompée", "trompe", "quittée", "largué", "larguée", "séparé", "séparée"],
+    "deuil":       ["mort", "décès", "perdu", "disparu", "deuil", "plus là", "enterrement",
+                     "décédé", "décédée", "décéder", "mourir", "meurt", "funérailles", "perte"],
     "décision":    ["choisir", "décision", "hésit", "partir", "rester", "dois-je", "que faire", "choix"],
-    "blocage":     ["bloqué", "coincé", "avancer", "paralysé", "incapable", "impossible"],
+    "blocage":     ["bloqué", "coincé", "avancer", "paralysé", "incapable", "impossible",
+                     "avance pas", "arrive pas", "plus la force", "épuisé", "épuisée"],
     "sens de vie": ["sens", "pourquoi", "exister", "raison d'être", "but", "vide intérieur"],
     "peur":        ["peur", "angoisse", "panique", "effrayée", "effrayee", "anxieuse", "stressée", "stressee"],
 }
