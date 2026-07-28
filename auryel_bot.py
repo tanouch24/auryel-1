@@ -205,6 +205,13 @@ SIGNAUX_FIN = [
 ]
 
 # ============================================================
+# MOTS DE CONSENTEMENT (tirage proposé par le voyant)
+# ============================================================
+MOTS_CONSENTEMENT_TIRAGE = [
+    "oui", "ok", "vas-y", "vasy", "d'accord", "dacord", "d'acc", "dacc", "okey", "go", "allez",
+]
+
+# ============================================================
 # BASE DE DONNÉES
 # ============================================================
 def get_conn():
@@ -1908,7 +1915,20 @@ def _bloc_personnalite(guide):
     return voix_lignes, vocabulaire_txt, interdits_txt, micro_exemples_lignes
 
 
-def get_system_prompt(user, guide_key):
+BLOC_PROFIL_AUTRE_PERSONNE = """PROFIL DE L'AUTRE PERSONNE
+
+Dès que l'utilisateur mentionne une autre personne dans sa situation, demande naturellement, en une seule question et dans le vocabulaire du conseiller actif, son prénom et sa date de naissance — en expliquant que mieux connaître cette personne aide à voir plus clair sur la situation. Pas de formule fixe : adapte-la à la voix du conseiller.
+
+Une fois le prénom et la date de naissance obtenus, fais une courte lecture de personnalité de cette personne (signe astrologique, énergie dominante), puis demande : "Est-ce que ça la décrit ?"
+
+Si la personne confirme, propose spontanément un tirage de cartes pour cette personne, en suivant le mécanisme de consentement décrit dans TIRAGE DE CARTES AVEC CONSENTEMENT."""
+
+BLOC_RITUELS_CONCRETS = """RITUELS CONCRETS ET VARIÉS
+
+Propose occasionnellement, selon le contexte émotionnel : allumer une bougie (couleur selon le sujet), lire un passage d'un livre connu, regarder un film en lien avec le thème, boire un verre d'eau avec une intention précise, écrire une lettre sans l'envoyer, marcher seul en silence."""
+
+
+def get_system_prompt(user, guide_key, premier_tour_post_onboarding=False):
     guide = GUIDES.get(guide_key, GUIDES["selena"])
     prenom = user.get("prenom", "")
     # IA-3 commit 1 : câblage des champs GUIDES écrits mais jamais injectés jusqu'ici.
@@ -2062,13 +2082,7 @@ PRÉNOM UTILISATEUR
 
 """ + (f"Prénom : {prenom}" if prenom else "Prénom non connu encore.") + """
 
-PROFIL DE L'AUTRE PERSONNE
-
-Dès que l'utilisateur mentionne une autre personne dans sa situation, demande naturellement, en une seule question et dans le vocabulaire du conseiller actif, son prénom et sa date de naissance — en expliquant que mieux connaître cette personne aide à voir plus clair sur la situation. Pas de formule fixe : adapte-la à la voix du conseiller.
-
-Une fois le prénom et la date de naissance obtenus, fais une courte lecture de personnalité de cette personne (signe astrologique, énergie dominante), puis demande : "Est-ce que ça la décrit ?"
-
-Si la personne confirme, propose spontanément un tirage de cartes pour cette personne, en suivant le mécanisme de consentement décrit dans TIRAGE DE CARTES AVEC CONSENTEMENT.
+""" + BLOC_PROFIL_AUTRE_PERSONNE + """
 
 TIRAGE DE CARTES AVEC CONSENTEMENT
 
@@ -2078,9 +2092,7 @@ Si le contexte technique indique qu'un tirage vient d'être fait (bloc "=== TIRA
 
 Pour les cartes lourdes (La Mort, Le Diable, Le Pendu), interprète toujours symboliquement : La Mort = transformation et fin de cycle, jamais une mort littérale. Le Diable = attachement, dépendance, tentation à regarder en face. Le Pendu = pause nécessaire, vision différente, lâcher-prise temporaire. Ne jamais effrayer l'utilisateur.
 
-RITUELS CONCRETS ET VARIÉS
-
-Propose occasionnellement, selon le contexte émotionnel : allumer une bougie (couleur selon le sujet), lire un passage d'un livre connu, regarder un film en lien avec le thème, boire un verre d'eau avec une intention précise, écrire une lettre sans l'envoyer, marcher seul en silence.
+""" + BLOC_RITUELS_CONCRETS + """
 
 RÉPONSES CONCRÈTES ET ACTIONNABLES
 
@@ -2149,6 +2161,24 @@ Interdits spécifiques à ce conseiller (en plus des interdits globaux ci-dessus
 
 Exemples concrets de ta façon de parler (le registre à imiter, jamais des phrases à recopier mot pour mot) :
 """ + micro_exemples_lignes
+
+    if premier_tour_post_onboarding:
+        # 1er tour post-onboarding : le tirage d'accueil doit être la SEULE directive
+        # d'action de ce tour. On retire les blocs qui donnent un ordre concurrent
+        # ("dès que... demande", "propose...") pour ne pas noyer le LLM — la demande
+        # de profil de l'autre personne et les rituels concrets peuvent attendre un
+        # tour suivant, ils ne sont jamais perdus, juste reportés.
+        # Garde-fou : si le texte de la constante a dérivé de celui dans PROMPT_MAITRE
+        # (édition future de l'un sans l'autre), .replace() ne retirerait rien
+        # silencieusement — on vérifie explicitement et on échoue bruyamment plutôt
+        # que de laisser le parasite en place sans erreur visible.
+        PROMPT_MAITRE = PROMPT_MAITRE.replace(BLOC_PROFIL_AUTRE_PERSONNE, "")
+        if BLOC_PROFIL_AUTRE_PERSONNE in PROMPT_MAITRE:
+            raise RuntimeError("get_system_prompt: retrait de BLOC_PROFIL_AUTRE_PERSONNE a echoue (texte desynchronise de PROMPT_MAITRE)")
+        PROMPT_MAITRE = PROMPT_MAITRE.replace(BLOC_RITUELS_CONCRETS, "")
+        if BLOC_RITUELS_CONCRETS in PROMPT_MAITRE:
+            raise RuntimeError("get_system_prompt: retrait de BLOC_RITUELS_CONCRETS a echoue (texte desynchronise de PROMPT_MAITRE)")
+        PROMPT_MAITRE = re.sub(r"\n{3,}", "\n\n", PROMPT_MAITRE)
 
     return PROMPT_MAITRE
 
@@ -2389,9 +2419,17 @@ def get_reply(phone, user_message, depuis_pub=False, user_msg_pre_inserted=False
     # Si ce tour a déjà résolu une demande directe (cartes_consent), on ne retire pas deux fois.
     if user.get("tirage_propose_en_attente"):
         update_user_silent(phone, tirage_propose_en_attente=False)
-        if not cartes_consent and any(w in user_message.strip().lower() for w in [
-            "oui", "ok", "vas-y", "vasy", "d'accord", "dacord", "d'acc", "dacc", "okey", "go", "allez",
-        ]):
+        # Consentement seulement si le message ENTIER se réduit à des mots d'accord
+        # (+ ponctuation/espaces) une fois ceux-ci retirés — pas juste "contient" un
+        # mot d'accord quelque part. "oui elle est bizarre" laisse "elleestbizarre"
+        # (non vide) après retrait de "oui" -> pas de consentement. "d'accord, vas-y"
+        # laisse "" après retrait des deux mots + la virgule -> consentement.
+        _msg_consentement = user_message.strip().lower().replace("’", "'")
+        _reste_consentement = _msg_consentement
+        for _mot in MOTS_CONSENTEMENT_TIRAGE:
+            _reste_consentement = re.sub(r"\b" + re.escape(_mot) + r"\b", "", _reste_consentement)
+        _reste_consentement = re.sub(r"[^\w]", "", _reste_consentement)
+        if not cartes_consent and _msg_consentement != "" and _reste_consentement == "":
             _, cartes_consent = tirer_cartes(phone)
 
     appel       = detecter_appel_visio(user_message)
@@ -2426,7 +2464,7 @@ def get_reply(phone, user_message, depuis_pub=False, user_msg_pre_inserted=False
         update_user_silent(phone, tirage_propose_en_attente=True)
 
     inspiration_citation = choisir_citation((user_fresh or user).get("theme_dominant")) if random.random() < 0.3 else ""
-    system = get_system_prompt(user_fresh or user, guide_key)
+    system = get_system_prompt(user_fresh or user, guide_key, premier_tour_post_onboarding=onboarding_vient_de_finir)
     if inspiration_citation:
         system += f"\n\n=== INSPIRATION DU MOMENT ===\nSi cela résonne naturellement avec ce que vit la personne, tu peux t'appuyer sur cette sagesse (sans jamais citer sa source) : {inspiration_citation}"
     if contexte_outil: system += contexte_outil
@@ -2443,17 +2481,20 @@ def get_reply(phone, user_message, depuis_pub=False, user_msg_pre_inserted=False
         system += "\n\n=== PROPOSITION TIRAGE SPONTANÉE ===\nLa conversation stagne depuis plusieurs échanges sans tirage récent. Propose toi-même spontanément un tirage de cartes à la personne, toujours en demandant d'abord la permission comme décrit dans TIRAGE DE CARTES AVEC CONSENTEMENT."
     if onboarding_vient_de_finir:
         system += (
-            "\n\n=== TIRAGE D'ACCUEIL ===\n"
+            "\n\n=== TIRAGE D'ACCUEIL (PRIORITÉ MAXIMALE — OBLIGATOIRE CE TOUR) ===\n"
             "C'est le tout premier vrai échange avec cette personne : elle vient de raconter, pour la "
             "première fois, ce qui l'amène. Ce moment compte plus que tous les autres — ne l'expédie pas. "
             "Réagis d'abord vraiment à ce qu'elle vient de dire : une ou deux phrases, dans ta voix, qui "
             "montrent que tu as entendu SA situation précise, pas une généralité qui irait pour n'importe "
-            "qui. Enchaîne ensuite, comme une suite naturelle et non comme une formule plaquée, en lui "
-            "proposant un premier tirage de cartes pour l'éclairer — en lui demandant sa permission. La "
-            "façon exacte de le proposer doit venir de TA voix de conseiller (ton vocabulaire, ta manière) : "
-            "un conseiller direct le propose sans détour, un conseiller doux l'amène en douceur — jamais "
-            "une formule identique à ce qu'un autre conseiller dirait, jamais un vocabulaire de coach ou "
-            "d'accompagnement."
+            "qui. Ta réponse DOIT ensuite, dans ce même message, proposer un premier tirage de cartes pour "
+            "l'éclairer, en lui demandant sa permission — ce n'est pas optionnel, et ce n'est pas quelque "
+            "chose à reporter à un message suivant. Ne pose PAS de question de relance ou d'approfondissement "
+            "sur sa situation à la place de cette proposition : la proposition de tirage EST ta façon "
+            "d'avancer sur sa situation à ce tour. Si ta réponse ne contient pas cette proposition, elle est "
+            "incomplète. La façon exacte de le proposer doit venir de TA voix de conseiller (ton vocabulaire, "
+            "ta manière) : un conseiller direct le propose sans détour, un conseiller doux l'amène en "
+            "douceur — jamais une formule identique à ce qu'un autre conseiller dirait, jamais un vocabulaire "
+            "de coach ou d'accompagnement."
         )
     if appel:       system += "\n\n=== DEMANDE D'APPEL ===\nLa personne demande un appel ou un vocal. Ramène calmement vers l'écrit, sans dramatiser."
     if obj_ia:      system += "\n\n=== OBJECTION IDENTITÉ ===\nLa personne te demande si tu es une IA. Ne prétends jamais être une personne humaine, ne mens pas. Tu n'annonces pas de toi-même que tu es une IA, mais là on te pose la question : réponds vrai, en une phrase, dans ta voix, puis reviens aussitôt à elle. Dis que tu es un accompagnement par intelligence artificielle, encadré par une équipe humaine. Pas de détail technique (ni modèle, ni société, ni fonctionnement), pas d'excuse, pas de dévalorisation. Exemple de ton à adapter à ta voix : 'Je suis un accompagnement par intelligence artificielle, encadré par une équipe humaine — mais ce que je ressens de ta situation, là, reste juste. Qu'est-ce qui te fait me poser la question maintenant ?'"

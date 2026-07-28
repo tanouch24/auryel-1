@@ -656,3 +656,91 @@ with patch("auryel_bot.requests.post") as mock_post, \
         _ab._tarot_media_upload_lock.release()
 
 print("\n✅ TESTS TIRAGE media_id + refresh : PASS")
+
+# ============================================================
+# TESTS — priorité au tirage d'accueil, consentement par mot entier
+# ============================================================
+print("\n" + "=" * 60)
+print("TEST TIRAGE D'ACCUEIL — priorité au tirage, pas de parasite")
+print("=" * 60)
+
+def _run_get_reply_accueil(user_dict, message):
+    """Même pattern que _run_get_reply_capture_system (BUG 1) mais mocke aussi
+    tirer_cartes() directement — pas seulement requests.post — pour ne jamais faire
+    de vrai appel réseau ni dépendre d'un thread résiduel."""
+    with patch("auryel_bot.get_user", return_value=user_dict), \
+         patch("auryel_bot.check_and_increment_daily_limit", return_value=False), \
+         patch("auryel_bot.gerer_onboarding", return_value=None), \
+         patch("auryel_bot.get_history", return_value=[]), \
+         patch("auryel_bot.add_message"), \
+         patch("auryel_bot.update_user"), \
+         patch("auryel_bot.update_user_silent"), \
+         patch("auryel_bot.choisir_citation", return_value=""), \
+         patch("auryel_bot.log_event"), \
+         patch("auryel_bot.tirer_cartes", return_value=(None, ["La Lune", "Le Pape", "Le Pendu"])) as m_tirer, \
+         patch("auryel_bot.call_llm", return_value="réponse factice") as m_llm:
+        get_reply(_BUG1_PHONE, message)
+        system_prompt = m_llm.call_args[0][0][0]["content"]
+        return system_prompt, m_tirer.called
+
+# T1 : 1er tour post-onboarding, message mentionnant une autre personne
+# -> PROFIL DE L'AUTRE PERSONNE et RITUELS CONCRETS absents, TIRAGE D'ACCUEIL présent et impératif
+system_1, _ = _run_get_reply_accueil(_user_bug1(onboarding_done=False), "je pense qu'elle me trompe")
+assert "PROFIL DE L'AUTRE PERSONNE" not in system_1, "le parasite PROFIL n'a pas été neutralisé au 1er tour"
+assert "RITUELS CONCRETS ET VARIÉS" not in system_1, "le parasite RITUELS n'a pas été neutralisé au 1er tour"
+assert "TIRAGE D'ACCUEIL" in system_1, "le bloc TIRAGE D'ACCUEIL doit rester présent au 1er tour"
+assert "OBLIGATOIRE" in system_1, "le bloc doit être formulé de façon impérative"
+print("✅ 1er tour post-onboarding : PROFIL/RITUELS neutralisés, TIRAGE D'ACCUEIL impératif")
+
+# T2 : tour normal (onboarding déjà fait avant ce message) -> comportement inchangé
+system_2, _ = _run_get_reply_accueil(_user_bug1(onboarding_done=True), "je pense qu'elle me trompe")
+assert "PROFIL DE L'AUTRE PERSONNE" in system_2, "ne doit pas être supprimé hors 1er tour"
+assert "RITUELS CONCRETS ET VARIÉS" in system_2, "ne doit pas être supprimé hors 1er tour"
+assert "TIRAGE D'ACCUEIL" not in system_2, "ne doit apparaître qu'au 1er tour post-onboarding"
+print("✅ tour normal (hors onboarding) : PROFIL/RITUELS toujours présents, pas de TIRAGE D'ACCUEIL")
+
+print("\n" + "=" * 60)
+print("TEST CONSENTEMENT TIRAGE — mot entier, pas sous-chaîne")
+print("=" * 60)
+
+# T3 : "oui" noyé dans une phrase qui répond à autre chose -> pas de tirage (faux positif d'avant)
+_, appele_3 = _run_get_reply_accueil(
+    _user_bug1(onboarding_done=True, tirage_propose_en_attente=True),
+    "oui elle est bizarre"
+)
+assert not appele_3, "« oui elle est bizarre » ne doit PAS déclencher le tirage (faux positif substring)"
+print("✅ « oui elle est bizarre » → tirage NON déclenché")
+
+# T4 : "oui" seul -> déclenche bien le tirage
+_, appele_4 = _run_get_reply_accueil(
+    _user_bug1(onboarding_done=True, tirage_propose_en_attente=True),
+    "oui"
+)
+assert appele_4, "« oui » seul DOIT déclencher le tirage"
+print("✅ « oui » seul → tirage déclenché")
+
+# T5 : "d'accord, vas-y" (apostrophe droite) -> déclenche bien le tirage
+_, appele_5 = _run_get_reply_accueil(
+    _user_bug1(onboarding_done=True, tirage_propose_en_attente=True),
+    "d'accord, vas-y"
+)
+assert appele_5, "« d'accord, vas-y » DOIT déclencher le tirage"
+print("✅ « d'accord, vas-y » → tirage déclenché")
+
+# T6 : "d’accord" (apostrophe courbe, clavier iPhone) -> déclenche bien le tirage (normalisation)
+_, appele_6 = _run_get_reply_accueil(
+    _user_bug1(onboarding_done=True, tirage_propose_en_attente=True),
+    "d’accord"
+)
+assert appele_6, "« d’accord » (apostrophe courbe) DOIT déclencher le tirage"
+print("✅ « d’accord » (apostrophe courbe) → tirage déclenché")
+
+# T7 : pas de flag armé -> un "oui" isolé ne déclenche rien (comportement déjà correct, non-régression)
+_, appele_7 = _run_get_reply_accueil(
+    _user_bug1(onboarding_done=True, tirage_propose_en_attente=False),
+    "oui"
+)
+assert not appele_7, "sans flag armé, « oui » ne doit rien déclencher"
+print("✅ pas de flag armé → « oui » ne déclenche rien (non-régression)")
+
+print("\n✅ TESTS TIRAGE ACCUEIL + CONSENTEMENT : PASS")
