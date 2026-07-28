@@ -417,6 +417,13 @@ def init_db():
     except Exception as e:
         conn.rollback()
         print(f"Migration v16: {e}")
+    # Migration v17 — cooldown en tours du psaume de rebond (Brique 2b)
+    try:
+        c.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS nb_echanges_dernier_psaume INTEGER DEFAULT 0")
+        conn.commit()
+    except Exception as e:
+        conn.rollback()
+        print(f"Migration v17: {e}")
     conn.close()
 
 def reset_db():
@@ -454,7 +461,7 @@ def get_user(phone):
             dernier_signal_aigu_at,detresse_maj_at,
             retour_j7_envoyee,retour_j15_envoyee,retour_j30_envoyee,
             proactifs_today_count,proactifs_today_date,
-            tirage_propose_en_attente
+            tirage_propose_en_attente,nb_echanges_dernier_psaume
             FROM users WHERE phone=%s""", (phone,))
         row = c.fetchone()
         if row:
@@ -506,6 +513,7 @@ def get_user(phone):
                 "proactifs_today_count":row[59] or 0,
                 "proactifs_today_date":row[60] or "",
                 "tirage_propose_en_attente":row[61] or False,
+                "nb_echanges_dernier_psaume":row[62] or 0,
             }
         return None
     except Exception as e:
@@ -1540,18 +1548,20 @@ def _terme_present(terme, texte):
     return re.search(r"\b" + re.escape(terme) + r"\b", texte) is not None
 
 
+THEMES_EMOTIONNELS = {
+    "amour":       ["amour", "relation", "couple", "ex", "rupture", "jaloux", "revenir", "quitter", "trahison", "manque"],
+    "deuil":       ["mort", "décès", "perdu", "disparu", "deuil", "plus là", "enterrement"],
+    "décision":    ["choisir", "décision", "hésit", "partir", "rester", "dois-je", "que faire", "choix"],
+    "blocage":     ["bloqué", "coincé", "avancer", "paralysé", "incapable", "impossible"],
+    "sens de vie": ["sens", "pourquoi", "exister", "raison d'être", "but", "vide intérieur"],
+    "peur":        ["peur", "angoisse", "panique", "effrayée", "effrayee", "anxieuse", "stressée", "stressee"],
+}
+
 def detecter_contexte_emotionnel(message, user):
     message_lower = message.lower().replace("’", "'")
 
-    themes = {
-        "amour":       ["amour", "relation", "couple", "ex", "rupture", "jaloux", "revenir", "quitter", "trahison", "manque"],
-        "deuil":       ["mort", "décès", "perdu", "disparu", "deuil", "plus là", "enterrement"],
-        "décision":    ["choisir", "décision", "hésit", "partir", "rester", "dois-je", "que faire", "choix"],
-        "blocage":     ["bloqué", "coincé", "avancer", "paralysé", "incapable", "impossible"],
-        "sens de vie": ["sens", "pourquoi", "exister", "raison d'être", "but", "vide intérieur"]
-    }
     if not user.get("theme_dominant"):
-        for theme, mots in themes.items():
+        for theme, mots in THEMES_EMOTIONNELS.items():
             if any(mot in message_lower for mot in mots):
                 user["theme_dominant"] = theme
                 break
@@ -1715,6 +1725,55 @@ def choisir_citation(theme_dominant):
     if not pool:
         return ""
     return random.choice(pool).get("citation", "")
+
+
+# ============================================================
+# PSAUME DE REBOND (Brique 2b) — rare, en appui, jamais en ouverture
+# ============================================================
+POOLS_PSAUMES = {
+    "amour":       [22,25,27,34,36,42,62,63,84,85,103,107,117,126,130,133,136,146,147],
+    "deuil":       [22,23,30,34,39,46,68,88,90,116,121,126,137,145,146,147],
+    "blocage":     [6,13,40,55,61,77,94,113,118,126,130,131,143,145],
+    "décision":    [16,25,37,43,73,86,119,121,143],
+    "sens de vie": [1,8,16,19,39,62,63,90,104,107,139,145],
+    "peur":        [18,23,27,31,46,56,91,112,121,125,144],
+}
+
+COOLDOWN_TOURS_PSAUME = 6
+PROBA_PSAUME = 0.25
+
+# LIMITE CONNUE (v1) : détection par mots-clés — rate les formulations sans mot exact
+# du dict, et prend le 1er thème qui matche en cas de registres multiples. À faire
+# évoluer vers détection LLM si le psaume tombe à côté en réel.
+def detecter_registre_message(message):
+    """Lecture seule : registre du MESSAGE COURANT, sans jamais toucher theme_dominant
+    (qui reste figé à vie et sert uniquement à choisir_citation)."""
+    msg = message.lower().replace("’", "'")
+    for theme, mots in THEMES_EMOTIONNELS.items():
+        if any(mot in msg for mot in mots):
+            return theme
+    return None
+
+def choisir_psaume(registre_courant, user, onboarding_vient_de_finir, nb_echanges_actuel):
+    """Rare, en appui. None si : tirage d'accueil en cours, aucun registre détecté ce
+    tour, signal aigu récent ou marketing bloqué pour détresse (mêmes garde-fous que
+    le marketing proactif — lecture seule, aucune logique de détresse dupliquée ici),
+    cooldown de tours pas écoulé, ou tirage de probabilité manqué."""
+    if onboarding_vient_de_finir or not registre_courant:
+        return None
+    if _signal_aigu_recent(user, fenetre_heures=24):
+        return None
+    bloque, _ = _detresse_bloque_marketing(user)
+    if bloque:
+        return None
+    nb_dernier = user.get("nb_echanges_dernier_psaume", 0) or 0
+    if (nb_echanges_actuel - nb_dernier) < COOLDOWN_TOURS_PSAUME:
+        return None
+    if random.random() >= PROBA_PSAUME:
+        return None
+    pool = POOLS_PSAUMES.get(registre_courant)
+    numero = random.choice(pool)
+    return numero, PSAUMES.get(numero, PSAUMES[23])
 
 
 def construire_message_reprise(user, guide_key, jours_absence):
@@ -2451,10 +2510,15 @@ def get_reply(phone, user_message, depuis_pub=False, user_msg_pre_inserted=False
     nb_echanges_dernier_tirage = (user_fresh or user).get("nb_echanges_dernier_tirage", 0)
     date_derniere_proposition_tirage = (user_fresh or user).get("date_derniere_proposition_tirage") or ""
     aujourd_hui = date.today().isoformat()
+
+    registre_courant = detecter_registre_message(user_message)
+    psaume_candidat = choisir_psaume(registre_courant, user_fresh or user, onboarding_vient_de_finir, nb_echanges_actuel)
+
     proposer_tirage_spontane = (
         (nb_echanges_actuel - nb_echanges_dernier_tirage) >= 5 and
         date_derniere_proposition_tirage != aujourd_hui and
-        not onboarding_vient_de_finir
+        not onboarding_vient_de_finir and
+        not psaume_candidat
     )
     if proposer_tirage_spontane:
         update_user_silent(phone, date_derniere_proposition_tirage=aujourd_hui,
@@ -2463,10 +2527,25 @@ def get_reply(phone, user_message, depuis_pub=False, user_msg_pre_inserted=False
     if onboarding_vient_de_finir:
         update_user_silent(phone, tirage_propose_en_attente=True)
 
-    inspiration_citation = choisir_citation((user_fresh or user).get("theme_dominant")) if random.random() < 0.3 else ""
+    inspiration_citation = (
+        choisir_citation((user_fresh or user).get("theme_dominant"))
+        if (not psaume_candidat and random.random() < 0.3) else ""
+    )
     system = get_system_prompt(user_fresh or user, guide_key, premier_tour_post_onboarding=onboarding_vient_de_finir)
     if inspiration_citation:
         system += f"\n\n=== INSPIRATION DU MOMENT ===\nSi cela résonne naturellement avec ce que vit la personne, tu peux t'appuyer sur cette sagesse (sans jamais citer sa source) : {inspiration_citation}"
+    if psaume_candidat:
+        numero_psaume, texte_psaume = psaume_candidat
+        system += (
+            "\n\n=== PSAUME EN APPUI (rare, JAMAIS en ouverture) ===\n"
+            f"Psaume {numero_psaume} : « {texte_psaume} ».\n"
+            "Réponds d'abord vraiment à ce que la personne vient de dire. Puis, si et seulement si ça vient "
+            "naturellement, glisse ce psaume EN APPUI dans ta voix — jamais comme première phrase de ta "
+            "réponse, jamais en disant que c'est un psaume ou en citant son numéro ou sa source. Ce n'est ni "
+            "obligatoire ni systématique : si ça ne s'intègre pas naturellement à ce tour, ignore-le "
+            "complètement et réponds normalement."
+        )
+        update_user_silent(phone, nb_echanges_dernier_psaume=nb_echanges_actuel)
     if contexte_outil: system += contexte_outil
     if cartes_consent:
         system += (

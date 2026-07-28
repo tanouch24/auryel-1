@@ -743,4 +743,175 @@ _, appele_7 = _run_get_reply_accueil(
 assert not appele_7, "sans flag armé, « oui » ne doit rien déclencher"
 print("✅ pas de flag armé → « oui » ne déclenche rien (non-régression)")
 
+# ============================================================
+# TESTS — Brique 2b : psaume de rebond (rare, en appui)
+# ============================================================
+print("\n" + "=" * 60)
+print("TEST BRIQUE 2b — psaume de rebond")
+print("=" * 60)
+
+from auryel_bot import detecter_registre_message, choisir_psaume, POOLS_PSAUMES, PSAUMES
+
+b2b_results = []
+def _b2b(label, condition):
+    b2b_results.append(condition)
+    print(f"{'✅' if condition else '❌'} {label}")
+
+# --- detecter_registre_message : un cas par registre + aucun match ---
+cas_registre = {
+    "amour":       "je pense encore à mon ex, cette rupture me hante",
+    "deuil":       "j'ai appris son décès la semaine dernière, quel deuil",
+    "décision":    "je dois choisir entre rester ou partir, quelle décision prendre",
+    "blocage":     "je me sens bloquée, incapable d'avancer",
+    "sens de vie": "je me demande quel est le sens de tout ça",
+    "peur":        "j'ai tellement peur, cette angoisse ne me lâche pas",
+}
+for registre_attendu, phrase in cas_registre.items():
+    _b2b(f"detecter_registre_message(« {phrase} ») → {registre_attendu}",
+         detecter_registre_message(phrase) == registre_attendu)
+
+_b2b("detecter_registre_message(message neutre) → None",
+     detecter_registre_message("comment ça va aujourd'hui") is None)
+
+# --- ne touche jamais theme_dominant (pas de paramètre user : verrou structurel) ---
+_u_theme_fige = {"theme_dominant": "figé", "niveau_detresse": 0, "niveau_attachement": 0}
+detecter_registre_message("je pense encore à mon ex, cette rupture me hante")
+_b2b("detecter_registre_message n'a pas de paramètre user → theme_dominant existant intact",
+     _u_theme_fige.get("theme_dominant") == "figé")
+
+# --- choisir_psaume : garde-fous, cooldown, probabilité ---
+_user_neutre = {"nb_echanges_dernier_psaume": 0, "niveau_detresse": 0,
+                "detresse_maj_at": None, "dernier_signal_aigu_at": None}
+
+with patch("auryel_bot.random.random", return_value=0.0):
+    _b2b("choisir_psaume → None si onboarding_vient_de_finir",
+         choisir_psaume("amour", _user_neutre, True, 10) is None)
+
+    _b2b("choisir_psaume → None si aucun registre détecté ce tour",
+         choisir_psaume(None, _user_neutre, False, 10) is None)
+
+    _user_cooldown_actif = {**_user_neutre, "nb_echanges_dernier_psaume": 8}
+    _b2b("choisir_psaume → None si (nb_echanges_actuel - nb_echanges_dernier_psaume) < 6",
+         choisir_psaume("amour", _user_cooldown_actif, False, 10) is None)  # 10-8=2 < 6
+
+    _res_ok = choisir_psaume("amour", _user_neutre, False, 10)  # 10-0=10 >= 6
+    _b2b("choisir_psaume → renvoie (numero, texte) valide quand toutes les conditions sont réunies",
+         _res_ok is not None and _res_ok[0] in POOLS_PSAUMES["amour"] and _res_ok[1] == PSAUMES[_res_ok[0]])
+
+    _user_signal_aigu = {**_user_neutre, "dernier_signal_aigu_at": datetime.now().isoformat()}
+    _b2b("choisir_psaume → None si signal aigu détecté ce tour (<24h) — garde-fou détresse",
+         choisir_psaume("amour", _user_signal_aigu, False, 10) is None)
+
+    _user_detresse_haute = {**_user_neutre, "niveau_detresse": 100, "detresse_maj_at": None}
+    _b2b("choisir_psaume → None si marketing bloqué pour détresse (score effectif >= 70)",
+         choisir_psaume("amour", _user_detresse_haute, False, 10) is None)
+
+    for _registre in POOLS_PSAUMES:
+        for _ in range(15):
+            _res = choisir_psaume(_registre, _user_neutre, False, 10)
+            if _res is not None:
+                _b2b(f"choisir_psaume({_registre}) → numéro toujours dans POOLS_PSAUMES[{_registre}]",
+                     _res[0] in POOLS_PSAUMES[_registre])
+
+with patch("auryel_bot.random.random", return_value=0.99):
+    _b2b("choisir_psaume → None si le tirage de probabilité échoue (random >= PROBA_PSAUME)",
+         choisir_psaume("amour", _user_neutre, False, 10) is None)
+
+b2b_ok = all(b2b_results)
+print(f"\n{'✅' if b2b_ok else '❌'} BRIQUE 2b — detecter_registre_message/choisir_psaume ({len(b2b_results)} assertions) : {'PASS' if b2b_ok else 'FAIL'}")
+if not b2b_ok:
+    raise SystemExit(1)
+
+# --- Arbitrage un-seul-supplément/tour : psaume prioritaire sur citation et tirage spontané ---
+print("\n" + "=" * 60)
+print("TEST BRIQUE 2b — arbitrage un seul supplément spirituel par tour")
+print("=" * 60)
+
+def _run_get_reply_arbitrage(user_dict, message, psaume_retour):
+    with patch("auryel_bot.get_user", return_value=user_dict), \
+         patch("auryel_bot.check_and_increment_daily_limit", return_value=False), \
+         patch("auryel_bot.gerer_onboarding", return_value=None), \
+         patch("auryel_bot.get_history", return_value=[]), \
+         patch("auryel_bot.add_message"), \
+         patch("auryel_bot.update_user"), \
+         patch("auryel_bot.update_user_silent"), \
+         patch("auryel_bot.choisir_psaume", return_value=psaume_retour), \
+         patch("auryel_bot.choisir_citation") as m_citation, \
+         patch("auryel_bot.log_event"), \
+         patch("auryel_bot.call_llm", return_value="réponse factice") as m_llm:
+        get_reply(_BUG1_PHONE, message)
+        system_prompt = m_llm.call_args[0][0][0]["content"]
+        return system_prompt, m_citation.called
+
+# User dont l'état ferait normalement déclencher un tirage spontané (>=5 échanges depuis
+# le dernier, pas encore proposé aujourd'hui) — sert à prouver que l'arbitrage supprime bien
+# le tirage spontané quand un psaume est retenu, pas juste qu'il n'apparaît jamais.
+_user_arbitrage = _user_bug1(nb_echanges=10, nb_echanges_dernier_tirage=0,
+                              date_derniere_proposition_tirage="", onboarding_done=True,
+                              tirage_propose_en_attente=False)
+
+arb_results = []
+def _arb(label, condition):
+    arb_results.append(condition)
+    print(f"{'✅' if condition else '❌'} {label}")
+
+system_avec_psaume, citation_appelee = _run_get_reply_arbitrage(
+    _user_arbitrage, "je pense encore à mon ex", (23, PSAUMES[23]))
+_arb("psaume retenu → choisir_citation JAMAIS appelée", not citation_appelee)
+_arb("psaume retenu → bloc PSAUME EN APPUI présent", "PSAUME EN APPUI" in system_avec_psaume)
+_arb("psaume retenu → bloc INSPIRATION DU MOMENT absent", "INSPIRATION DU MOMENT" not in system_avec_psaume)
+_arb("psaume retenu → bloc PROPOSITION TIRAGE SPONTANÉE absent (supprimé par l'arbitrage)",
+     "PROPOSITION TIRAGE SPONTANÉE" not in system_avec_psaume)
+
+system_sans_psaume, _ = _run_get_reply_arbitrage(_user_arbitrage, "je pense encore à mon ex", None)
+_arb("sans psaume → bloc PSAUME EN APPUI absent", "PSAUME EN APPUI" not in system_sans_psaume)
+_arb("sans psaume → bloc PROPOSITION TIRAGE SPONTANÉE présent (confirme que le test mesure bien une suppression)",
+     "PROPOSITION TIRAGE SPONTANÉE" in system_sans_psaume)
+
+arb_ok = all(arb_results)
+print(f"\n{'✅' if arb_ok else '❌'} BRIQUE 2b — arbitrage ({len(arb_results)} assertions) : {'PASS' if arb_ok else 'FAIL'}")
+if not arb_ok:
+    raise SystemExit(1)
+
+# --- Migration v17 : get_user() expose bien nb_echanges_dernier_psaume ---
+print("\n" + "=" * 60)
+print("TEST MIGRATION v17 — nb_echanges_dernier_psaume exposé par get_user()")
+print("=" * 60)
+
+import inspect as _inspect
+import re as _re
+from auryel_bot import get_user as _get_user
+
+_src = _inspect.getsource(_get_user)
+_select_match = _re.search(r"SELECT\s+(.*?)\s+FROM users", _src, _re.S)
+_cols = [c.strip() for c in _select_match.group(1).replace("\n", " ").split(",") if c.strip()]
+# Toutes les colonnes à 0 sauf la dernière (nb_echanges_dernier_psaume) : évite tout crash sur
+# les colonnes date (`row[N].isoformat() if row[N] else ""`) tout en isolant la colonne visée.
+_fake_row = tuple([0] * (len(_cols) - 1) + [999])
+
+_cur_v17 = MagicMock()
+_cur_v17.fetchone.return_value = _fake_row
+_conn_v17 = MagicMock()
+_conn_v17.cursor.return_value = _cur_v17
+
+with patch("auryel_bot.get_conn", return_value=_conn_v17):
+    _u_v17 = _get_user("+33600000000")
+
+v17_results = []
+def _v17(label, condition):
+    v17_results.append(condition)
+    print(f"{'✅' if condition else '❌'} {label}")
+
+_v17("nb_echanges_dernier_psaume est la dernière colonne du SELECT (migration v17 bien ajoutée en fin)",
+     _cols[-1] == "nb_echanges_dernier_psaume")
+_v17("get_user() expose nb_echanges_dernier_psaume avec la bonne valeur de colonne",
+     _u_v17.get("nb_echanges_dernier_psaume") == 999)
+
+v17_ok = all(v17_results)
+print(f"\n{'✅' if v17_ok else '❌'} MIGRATION v17 ({len(v17_results)} assertions) : {'PASS' if v17_ok else 'FAIL'}")
+if not v17_ok:
+    raise SystemExit(1)
+
+print("\n✅ TESTS BRIQUE 2b (psaume de rebond) : PASS")
+
 print("\n✅ TESTS TIRAGE ACCUEIL + CONSENTEMENT : PASS")
