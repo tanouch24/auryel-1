@@ -676,6 +676,7 @@ def _run_get_reply_accueil(user_dict, message):
          patch("auryel_bot.update_user"), \
          patch("auryel_bot.update_user_silent"), \
          patch("auryel_bot.choisir_citation", return_value=""), \
+         patch("auryel_bot.choisir_psaume", return_value=None), \
          patch("auryel_bot.log_event"), \
          patch("auryel_bot.tirer_cartes", return_value=(None, ["La Lune", "Le Pape", "Le Pendu"])) as m_tirer, \
          patch("auryel_bot.call_llm", return_value="réponse factice") as m_llm:
@@ -931,3 +932,102 @@ if not v17_ok:
 print("\n✅ TESTS BRIQUE 2b (psaume de rebond) : PASS")
 
 print("\n✅ TESTS TIRAGE ACCUEIL + CONSENTEMENT : PASS")
+
+# ============================================================
+# TESTS — CONSULTATION point 1 : rituels conditionnels + sobriété moments graves
+# ============================================================
+print("\n" + "=" * 60)
+print("TEST CONSULTATION 1 — BLOC_RITUELS_CONCRETS conditionnel")
+print("=" * 60)
+
+cons1_results = []
+def _cons1(label, condition):
+    cons1_results.append(condition)
+    print(f"{'✅' if condition else '❌'} {label}")
+
+_user_rc = {**USER_BASE, "guide": "selena"}
+_sys_rc_avec = get_system_prompt(_user_rc, "selena", proposer_rituel_concret=True)
+_sys_rc_sans = get_system_prompt(_user_rc, "selena", proposer_rituel_concret=False)
+_sys_rc_defaut = get_system_prompt(_user_rc, "selena")
+
+_cons1("proposer_rituel_concret=True → RITUELS CONCRETS ET VARIÉS présent",
+       "RITUELS CONCRETS ET VARIÉS" in _sys_rc_avec)
+_cons1("proposer_rituel_concret=False → RITUELS CONCRETS ET VARIÉS absent",
+       "RITUELS CONCRETS ET VARIÉS" not in _sys_rc_sans)
+_cons1("valeur par défaut (non précisée) → RITUELS CONCRETS ET VARIÉS absent",
+       "RITUELS CONCRETS ET VARIÉS" not in _sys_rc_defaut)
+
+cons1_ok = all(cons1_results)
+print(f"\n{'✅' if cons1_ok else '❌'} CONSULTATION 1 — rituels conditionnels ({len(cons1_results)} assertions) : {'PASS' if cons1_ok else 'FAIL'}")
+if not cons1_ok:
+    raise SystemExit(1)
+
+print("\n" + "=" * 60)
+print("TEST CONSULTATION 1 — detecter_moment_grave (déclencheur dédié, pas le registre)")
+print("=" * 60)
+
+from auryel_bot import detecter_moment_grave
+
+cons_dmg_results = []
+def _cons_dmg(label, condition):
+    cons_dmg_results.append(condition)
+    print(f"{'✅' if condition else '❌'} {label}")
+
+# Faux positifs à écarter (polysémie de "perdu"/"perte"/"mort" nu) — resserrage demandé.
+_cons_dmg("« j'ai perdu mon travail » → PAS grave (perte au sens large, pas un deuil)",
+          not detecter_moment_grave("j'ai perdu mon travail"))
+_cons_dmg("« je me sens perdue » → PAS grave",
+          not detecter_moment_grave("je me sens perdue"))
+_cons_dmg("« je suis morte de rire » → PAS grave (hyperbole, pas un décès)",
+          not detecter_moment_grave("je suis morte de rire"))
+
+# Vrais positifs à couvrir.
+_cons_dmg("« ma mère est décédée » → grave",
+          detecter_moment_grave("ma mère est décédée"))
+_cons_dmg("« j'ai perdu ma mère » → grave (lien de parenté explicite)",
+          detecter_moment_grave("j'ai perdu ma mère"))
+_cons_dmg("« il vient de mourir » → grave",
+          detecter_moment_grave("il vient de mourir"))
+
+cons_dmg_ok = all(cons_dmg_results)
+print(f"\n{'✅' if cons_dmg_ok else '❌'} CONSULTATION 1 — detecter_moment_grave ({len(cons_dmg_results)} assertions) : {'PASS' if cons_dmg_ok else 'FAIL'}")
+if not cons_dmg_ok:
+    raise SystemExit(1)
+
+print("\n" + "=" * 60)
+print("TEST CONSULTATION 1 — sobriété moment grave (deuil/décès)")
+print("=" * 60)
+
+cons2_results = []
+def _cons2(label, condition):
+    cons2_results.append(condition)
+    print(f"{'✅' if condition else '❌'} {label}")
+
+# Moment grave EN COURS D'ONBOARDING (1er tour) : la sobriété doit primer sur le tirage d'accueil.
+system_grave_onboarding, _ = _run_get_reply_accueil(
+    _user_bug1(onboarding_done=False), "ma mère est décédée hier")
+_cons2("deuil au 1er tour → bloc MOMENT GRAVE présent", "MOMENT GRAVE" in system_grave_onboarding)
+_cons2("deuil au 1er tour → bloc TIRAGE D'ACCUEIL absent (sobriété prioritaire)",
+       "TIRAGE D'ACCUEIL" not in system_grave_onboarding)
+_cons2("deuil au 1er tour → PSAUME EN APPUI absent", "PSAUME EN APPUI" not in system_grave_onboarding)
+_cons2("deuil au 1er tour → INSPIRATION DU MOMENT absent", "INSPIRATION DU MOMENT" not in system_grave_onboarding)
+_cons2("deuil au 1er tour → RITUELS CONCRETS ET VARIÉS absent", "RITUELS CONCRETS ET VARIÉS" not in system_grave_onboarding)
+
+# Moment grave en cours de conversation normale (hors onboarding).
+system_grave_normal, _ = _run_get_reply_accueil(
+    _user_bug1(onboarding_done=True), "ma mère est décédée hier")
+_cons2("deuil hors onboarding → bloc MOMENT GRAVE présent", "MOMENT GRAVE" in system_grave_normal)
+_cons2("deuil hors onboarding → PROPOSITION TIRAGE SPONTANÉE absent",
+       "PROPOSITION TIRAGE SPONTANÉE" not in system_grave_normal)
+_cons2("deuil hors onboarding → RITUELS CONCRETS ET VARIÉS absent", "RITUELS CONCRETS ET VARIÉS" not in system_grave_normal)
+
+# Message neutre (non grave) : aucun des deux ne doit apparaître.
+system_neutre, _ = _run_get_reply_accueil(_user_bug1(onboarding_done=True), "je pense qu'elle me trompe")
+_cons2("message non grave → bloc MOMENT GRAVE absent", "MOMENT GRAVE" not in system_neutre)
+
+cons2_ok = all(cons2_results)
+print(f"\n{'✅' if cons2_ok else '❌'} CONSULTATION 1 — sobriété moment grave ({len(cons2_results)} assertions) : {'PASS' if cons2_ok else 'FAIL'}")
+if not cons2_ok:
+    raise SystemExit(1)
+
+print("\n✅ TESTS CONSULTATION 1 (rituels conditionnels + sobriété) : PASS")

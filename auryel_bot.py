@@ -1779,6 +1779,36 @@ def choisir_psaume(registre_courant, user, onboarding_vient_de_finir, nb_echange
     return numero, PSAUMES.get(numero, PSAUMES[23])
 
 
+# ============================================================
+# SOBRIÉTÉ MOMENT GRAVE (deuil/décès) — déclencheur DÉDIÉ, distinct de THEMES_EMOTIONNELS
+# ============================================================
+# Volontairement séparé du registre "deuil" de detecter_registre_message : ce dernier
+# est trop large pour couper toute une consultation (il capte aussi perdu/perte/plus
+# là/disparu, polysémiques — corrects pour choisir un psaume, dangereux ici : "j'ai
+# perdu mon travail" ne doit pas déclencher un mode condoléances). Match par mot entier
+# (_terme_present), pas par sous-chaîne. Exclut volontairement "il est parti" (le plus
+# souvent une rupture amoureuse) et "mort"/"morte" nus (faux positif "morte de rire"/
+# "morte de fatigue", même piège que "mourir" nu dans mots_detresse) au profit de formes
+# non ambiguës. Les tournures "perdu X" sont restreintes à un lien de parenté explicite
+# pour ne pas capter "j'ai perdu mon travail/mes clés/mon sac".
+MOTS_DEUIL_SOBRIETE = [
+    "décédé", "décédée", "décès",
+    "enterrement", "funérailles",
+    "nous a quittés",
+    "est mort", "est morte", "est décédé", "est décédée",
+    "vient de mourir",
+    "perdu ma mère", "perdu mon père", "perdu ma sœur", "perdu mon frère",
+    "perdu ma grand-mère", "perdu mon grand-père", "perdu mon mari", "perdu ma femme",
+    "perdu mon fils", "perdu ma fille", "perdu mon bébé", "perdu un proche",
+]
+
+def detecter_moment_grave(message):
+    """Déclencheur dédié à la sobriété (deuil/décès/choc récent). Voir
+    MOTS_DEUIL_SOBRIETE ci-dessus pour la justification de chaque exclusion."""
+    msg = message.lower().replace("’", "'")
+    return any(_terme_present(m, msg) for m in MOTS_DEUIL_SOBRIETE)
+
+
 def construire_message_reprise(user, guide_key, jours_absence):
     guide = GUIDES.get(guide_key) or GUIDES["selena"]
     sujet = extraire_sujet_reprise(user)
@@ -1990,7 +2020,7 @@ BLOC_RITUELS_CONCRETS = """RITUELS CONCRETS ET VARIÉS
 Propose occasionnellement, selon le contexte émotionnel : allumer une bougie (couleur selon le sujet), lire un passage d'un livre connu, regarder un film en lien avec le thème, boire un verre d'eau avec une intention précise, écrire une lettre sans l'envoyer, marcher seul en silence."""
 
 
-def get_system_prompt(user, guide_key, premier_tour_post_onboarding=False):
+def get_system_prompt(user, guide_key, premier_tour_post_onboarding=False, proposer_rituel_concret=False):
     guide = GUIDES.get(guide_key, GUIDES["selena"])
     prenom = user.get("prenom", "")
     # IA-3 commit 1 : câblage des champs GUIDES écrits mais jamais injectés jusqu'ici.
@@ -2154,7 +2184,7 @@ Si le contexte technique indique qu'un tirage vient d'être fait (bloc "=== TIRA
 
 Pour les cartes lourdes (La Mort, Le Diable, Le Pendu), interprète toujours symboliquement : La Mort = transformation et fin de cycle, jamais une mort littérale. Le Diable = attachement, dépendance, tentation à regarder en face. Le Pendu = pause nécessaire, vision différente, lâcher-prise temporaire. Ne jamais effrayer l'utilisateur.
 
-""" + BLOC_RITUELS_CONCRETS + """
+""" + (BLOC_RITUELS_CONCRETS if proposer_rituel_concret else "") + """
 
 RÉPONSES CONCRÈTES ET ACTIONNABLES
 
@@ -2515,26 +2545,37 @@ def get_reply(phone, user_message, depuis_pub=False, user_msg_pre_inserted=False
     aujourd_hui = date.today().isoformat()
 
     registre_courant = detecter_registre_message(user_message)
-    psaume_candidat = choisir_psaume(registre_courant, user_fresh or user, onboarding_vient_de_finir, nb_echanges_actuel)
+    # Moment grave (deuil/décès/choc récent) : sobriété avant tout, prioritaire même sur
+    # le tirage d'accueil du tout premier tour — voir bloc système MOMENT GRAVE plus bas.
+    # Déclencheur DÉDIÉ (MOTS_DEUIL_SOBRIETE), volontairement distinct du registre
+    # "deuil" ci-dessus (trop large pour couper toute la consultation).
+    moment_grave = detecter_moment_grave(user_message)
+    psaume_candidat = (
+        None if moment_grave else
+        choisir_psaume(registre_courant, user_fresh or user, onboarding_vient_de_finir, nb_echanges_actuel)
+    )
 
     proposer_tirage_spontane = (
         (nb_echanges_actuel - nb_echanges_dernier_tirage) >= 5 and
         date_derniere_proposition_tirage != aujourd_hui and
         not onboarding_vient_de_finir and
-        not psaume_candidat
+        not psaume_candidat and
+        not moment_grave
     )
     if proposer_tirage_spontane:
         update_user_silent(phone, date_derniere_proposition_tirage=aujourd_hui,
                             nb_echanges_dernier_tirage=nb_echanges_actuel,
                             tirage_propose_en_attente=True)
-    if onboarding_vient_de_finir:
+    if onboarding_vient_de_finir and not moment_grave:
         update_user_silent(phone, tirage_propose_en_attente=True)
 
     inspiration_citation = (
         choisir_citation((user_fresh or user).get("theme_dominant"))
-        if (not psaume_candidat and random.random() < 0.3) else ""
+        if (not psaume_candidat and not moment_grave and random.random() < 0.3) else ""
     )
-    system = get_system_prompt(user_fresh or user, guide_key, premier_tour_post_onboarding=onboarding_vient_de_finir)
+    system = get_system_prompt(user_fresh or user, guide_key,
+                                premier_tour_post_onboarding=onboarding_vient_de_finir,
+                                proposer_rituel_concret=proposer_tirage_spontane)
     if inspiration_citation:
         system += f"\n\n=== INSPIRATION DU MOMENT ===\nSi cela résonne naturellement avec ce que vit la personne, tu peux t'appuyer sur cette sagesse (sans jamais citer sa source) : {inspiration_citation}"
     if psaume_candidat:
@@ -2561,7 +2602,7 @@ def get_reply(phone, user_message, depuis_pub=False, user_msg_pre_inserted=False
         )
     if proposer_tirage_spontane:
         system += "\n\n=== PROPOSITION TIRAGE SPONTANÉE ===\nLa conversation stagne depuis plusieurs échanges sans tirage récent. Propose toi-même spontanément un tirage de cartes à la personne, toujours en demandant d'abord la permission comme décrit dans TIRAGE DE CARTES AVEC CONSENTEMENT."
-    if onboarding_vient_de_finir:
+    if onboarding_vient_de_finir and not moment_grave:
         system += (
             "\n\n=== TIRAGE D'ACCUEIL (PRIORITÉ MAXIMALE — OBLIGATOIRE CE TOUR) ===\n"
             "C'est le tout premier vrai échange avec cette personne : elle vient de raconter, pour la "
@@ -2577,6 +2618,16 @@ def get_reply(phone, user_message, depuis_pub=False, user_msg_pre_inserted=False
             "ta manière) : un conseiller direct le propose sans détour, un conseiller doux l'amène en "
             "douceur — jamais une formule identique à ce qu'un autre conseiller dirait, jamais un vocabulaire "
             "de coach ou d'accompagnement."
+        )
+    if moment_grave:
+        system += (
+            "\n\n=== MOMENT GRAVE (deuil, décès, choc récent) — SOBRIÉTÉ AVANT TOUT ===\n"
+            "La personne vient d'annoncer un deuil, un décès ou un choc récent. Ce tour n'est pas un "
+            "moment de guidance habituel. Réponds court, humain, présent — dans ta voix de conseiller, "
+            "sans formule imposée. N'y propose PAS de tirage, ne convoque PAS de citation ni de psaume, "
+            "ne suggère AUCUN rituel ou exercice (bougie, lettre, respiration...), ne cherche pas à "
+            "donner un sens à ce qui vient d'arriver. Au maximum une seule question douce sur son état "
+            "ou son entourage (par exemple si elle est entourée) — jamais une série de questions."
         )
     if appel:       system += "\n\n=== DEMANDE D'APPEL ===\nLa personne demande un appel ou un vocal. Ramène calmement vers l'écrit, sans dramatiser."
     if obj_ia:      system += "\n\n=== OBJECTION IDENTITÉ ===\nLa personne te demande si tu es une IA. Ne prétends jamais être une personne humaine, ne mens pas. Tu n'annonces pas de toi-même que tu es une IA, mais là on te pose la question : réponds vrai, en une phrase, dans ta voix, puis reviens aussitôt à elle. Dis que tu es un accompagnement par intelligence artificielle, encadré par une équipe humaine. Pas de détail technique (ni modèle, ni société, ni fonctionnement), pas d'excuse, pas de dévalorisation. Exemple de ton à adapter à ta voix : 'Je suis un accompagnement par intelligence artificielle, encadré par une équipe humaine — mais ce que je ressens de ta situation, là, reste juste. Qu'est-ce qui te fait me poser la question maintenant ?'"
