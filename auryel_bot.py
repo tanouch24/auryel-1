@@ -424,6 +424,13 @@ def init_db():
     except Exception as e:
         conn.rollback()
         print(f"Migration v17: {e}")
+    # Migration v18 — genre utilisateur (demandé explicitement à l'onboarding)
+    try:
+        c.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS genre TEXT DEFAULT ''")
+        conn.commit()
+    except Exception as e:
+        conn.rollback()
+        print(f"Migration v18: {e}")
     conn.close()
 
 def reset_db():
@@ -461,7 +468,7 @@ def get_user(phone):
             dernier_signal_aigu_at,detresse_maj_at,
             retour_j7_envoyee,retour_j15_envoyee,retour_j30_envoyee,
             proactifs_today_count,proactifs_today_date,
-            tirage_propose_en_attente,nb_echanges_dernier_psaume
+            tirage_propose_en_attente,nb_echanges_dernier_psaume,genre
             FROM users WHERE phone=%s""", (phone,))
         row = c.fetchone()
         if row:
@@ -514,6 +521,7 @@ def get_user(phone):
                 "proactifs_today_date":row[60] or "",
                 "tirage_propose_en_attente":row[61] or False,
                 "nb_echanges_dernier_psaume":row[62] or 0,
+                "genre":row[63] or "",
             }
         return None
     except Exception as e:
@@ -1296,6 +1304,17 @@ def detecter_prenom(message):
                 return mot_propre.capitalize()
     return None
 
+def detecter_genre(message):
+    """'m'/'f' si la réponse est claire, '' si ambigu/autre — jamais bloquant : le
+    step "genre" de l'onboarding avance toujours vers "prenom" quel que soit le
+    résultat, il ne reboucle jamais sur cette question."""
+    msg = message.lower().strip().replace("’", "'")
+    if any(_terme_present(m, msg) for m in ["homme", "masculin", "mec", "garçon", "un homme"]):
+        return "m"
+    if any(_terme_present(m, msg) for m in ["femme", "féminin", "feminin", "fille", "nana", "une femme"]):
+        return "f"
+    return ""
+
 def detecter_pas_les_moyens(message):
     msg = message.lower()
     return any(w in msg for w in ["pas les moyens","trop cher","pas d'argent","pas assez","budget"])
@@ -2023,6 +2042,7 @@ Propose occasionnellement, selon le contexte émotionnel : allumer une bougie (c
 def get_system_prompt(user, guide_key, premier_tour_post_onboarding=False, proposer_rituel_concret=False):
     guide = GUIDES.get(guide_key, GUIDES["selena"])
     prenom = user.get("prenom", "")
+    genre = user.get("genre", "")
     # IA-3 commit 1 : câblage des champs GUIDES écrits mais jamais injectés jusqu'ici.
     # On branche le contenu existant tel quel — pas de réécriture dans ce commit.
     voix_lignes, vocabulaire_txt, interdits_txt, micro_exemples_lignes = _bloc_personnalite(guide)
@@ -2148,7 +2168,7 @@ SÉCURITÉ ÉMOTIONNELLE
 Si l'utilisateur parle de suicide, violence, danger immédiat :
 "Là, je veux te répondre sérieusement.
 Si tu risques de te faire du mal ou si tu es en danger, il faut appeler les urgences maintenant.
-Tu ne dois pas rester seul(e) avec ça."
+Tu ne dois pas rester seul avec ça, entoure-toi maintenant."
 France : urgence 15/17/18/112, idées suicidaires : 3114.
 
 MOTS ET PHRASES INTERDITS
@@ -2173,6 +2193,14 @@ MOTS ET PHRASES INTERDITS
 PRÉNOM UTILISATEUR
 
 """ + (f"Prénom : {prenom}" if prenom else "Prénom non connu encore.") + """
+
+""" + (
+    "Genre de la personne : masculin — accorde tous les participes et adjectifs au masculin."
+    if genre == "m" else
+    "Genre de la personne : féminin — accorde tous les participes et adjectifs au féminin."
+    if genre == "f" else
+    "Genre de la personne : inconnu — tourne TOUJOURS tes phrases pour éviter tout accord genré (jamais de \"(e)\", jamais de \"content(e)\"/\"prêt(e)\"), reformule au lieu d'accorder."
+) + """
 
 """ + BLOC_PROFIL_AUTRE_PERSONNE + """
 
@@ -2381,7 +2409,16 @@ def gerer_onboarding(phone, user, user_message):
         guide_obj = GUIDES.get(guide_key_choix, GUIDES["selena"])
         nom_affiche = guide_obj["nom"]
         update_user_silent(phone, guide=guide_key_choix, nom_affiche=nom_affiche,
-                           onboarding_step="prenom")
+                           onboarding_step="genre")
+        reply = f"Bonjour, moi c'est {nom_affiche}. Avant de commencer, je m'adresse à toi au masculin ou au féminin ?"
+        enregistrer_echange_onboarding(phone, user, user_message, reply)
+        return reply
+
+    if step == "genre":
+        # Jamais bloquant : quel que soit le résultat ('m'/'f'/'' ambigu), on écrit
+        # et on avance vers "prenom" — cette question ne reboucle jamais.
+        genre_detecte = detecter_genre(user_message)
+        update_user_silent(phone, genre=genre_detecte, onboarding_step="prenom")
         reply = "Avant de commencer, comment t'appelles-tu ?"
         enregistrer_echange_onboarding(phone, user, user_message, reply)
         return reply
@@ -2394,7 +2431,14 @@ def gerer_onboarding(phone, user, user_message):
             return reply
 
         update_user_silent(phone, prenom=prenom, onboarding_step="email")
-        reply = f"Enchanté(e) {prenom}. Quelle adresse email puis-je garder pour ton suivi ?"
+        genre = user.get("genre", "")
+        if genre == "m":
+            salutation = f"Enchanté {prenom}."
+        elif genre == "f":
+            salutation = f"Enchantée {prenom}."
+        else:
+            salutation = f"Bienvenue {prenom}."
+        reply = f"{salutation} Quelle adresse email puis-je garder pour ton suivi ?"
         enregistrer_echange_onboarding(phone, user, user_message, reply)
         return reply
 
@@ -2436,8 +2480,10 @@ def gerer_onboarding(phone, user, user_message):
                   guide=user.get("guide", ""), ts=datetime.utcnow().isoformat())
         return None
 
-    update_user_silent(phone, onboarding_step="prenom")
-    reply = "Avant de commencer, comment t'appelles-tu ?"
+    # État inconnu/corrompu : redémarre depuis le vrai début de l'onboarding (genre),
+    # cohérent avec le nouvel ordre conseiller → genre → prenom → email → présentation.
+    update_user_silent(phone, onboarding_step="genre")
+    reply = "Avant de commencer, je m'adresse à toi au masculin ou au féminin ?"
     enregistrer_echange_onboarding(phone, user, user_message, reply)
     return reply
 
@@ -2720,19 +2766,19 @@ def get_rituel(user):
 def msg_bienvenue_pub(nom_affiche):
     return (
         f"Bonjour, moi c'est {nom_affiche}.\n\n"
-        f"Comment tu t'appelles ?"
+        f"Avant de commencer, je m'adresse à toi au masculin ou au féminin ?"
     )
 
 def msg_bienvenue(nom_affiche):
     return (
         f"Bonjour, moi c'est {nom_affiche}.\n\n"
-        f"Comment tu t'appelles ?"
+        f"Avant de commencer, je m'adresse à toi au masculin ou au féminin ?"
     )
 
 def msg_bienvenue_site(nom_affiche):
     return (
         f"Bonjour, moi c'est {nom_affiche}.\n\n"
-        f"Comment tu t'appelles ?"
+        f"Avant de commencer, je m'adresse à toi au masculin ou au féminin ?"
     )
 
 # ============================================================
@@ -2780,6 +2826,7 @@ def receive():
             if is_new:
                 if guide_key_code:
                     create_user(from_num, guide_key_code, nom_affiche_code, depuis_site=True)
+                    update_user_silent(from_num, onboarding_step="genre")
                     if wamid and not insert_user_msg_dedup(from_num, user_text, wamid):
                         print(f"[webhook] doublon ignoré wamid={wamid}")
                         return jsonify({"status": "ok"}), 200
@@ -2805,11 +2852,11 @@ def receive():
                             return jsonify({"status": "ok"}), 200
                         def send_demande_prenom(num):
                             time.sleep(1)
-                            msg = "Avant de commencer, comment t'appelles-tu ?"
+                            msg = "Avant de commencer, je m'adresse à toi au masculin ou au féminin ?"
                             send_message(num, msg)
                             add_message(num, "assistant", msg)
                         threading.Thread(target=send_demande_prenom, args=(from_num,), daemon=True).start()
-                        update_user_silent(from_num, onboarding_step="prenom")
+                        update_user_silent(from_num, onboarding_step="genre")
                     else:
                         # Vient de Meta Ads ou message inconnu — envoie la liste des conseillers
                         guide_key = detecter_guide(user_text)
@@ -2944,6 +2991,7 @@ def receive():
         else:
             if is_new:
                 create_user(from_num, "selena", "Séléna")
+                update_user_silent(from_num, onboarding_step="genre")
                 threading.Thread(target=lambda num: (time.sleep(2), send_message(num, msg_bienvenue("Séléna"))), args=(from_num,), daemon=True).start()
             else:
                 user = get_user(from_num)
@@ -2982,6 +3030,7 @@ def stripe_webhook():
             user = get_user(phone)
             if not user:
                 create_user(phone, "selena", "Séléna", depuis_site=True)
+                update_user_silent(phone, onboarding_step="genre")
                 user = get_user(phone)
                 print(f"[webhook] Nouvel user créé depuis landing : {phone}")
 
@@ -3000,7 +3049,7 @@ def stripe_webhook():
 
 Je suis {nom}, ton conseiller personnel sur Auryel.
 
-Dis-moi — comment tu t'appelles ? 🌙"""
+Avant de commencer, je m'adresse à toi au masculin ou au féminin ? 🌙"""
                 else:
                     msg = msg_retour_paiement(nom, prenom)
                 send_message(num, msg)

@@ -902,9 +902,12 @@ from auryel_bot import get_user as _get_user
 _src = _inspect.getsource(_get_user)
 _select_match = _re.search(r"SELECT\s+(.*?)\s+FROM users", _src, _re.S)
 _cols = [c.strip() for c in _select_match.group(1).replace("\n", " ").split(",") if c.strip()]
-# Toutes les colonnes à 0 sauf la dernière (nb_echanges_dernier_psaume) : évite tout crash sur
-# les colonnes date (`row[N].isoformat() if row[N] else ""`) tout en isolant la colonne visée.
-_fake_row = tuple([0] * (len(_cols) - 1) + [999])
+# Toutes les colonnes à 0 sauf celle visée (à son index réel, pas "la dernière" —
+# des migrations ultérieures peuvent ajouter des colonnes après elle) : évite tout
+# crash sur les colonnes date (`row[N].isoformat() if row[N] else ""`) tout en
+# isolant la colonne visée par sa position réelle dans le SELECT.
+_idx_psaume17 = _cols.index("nb_echanges_dernier_psaume")
+_fake_row = tuple(999 if i == _idx_psaume17 else 0 for i in range(len(_cols)))
 
 _cur_v17 = MagicMock()
 _cur_v17.fetchone.return_value = _fake_row
@@ -919,8 +922,8 @@ def _v17(label, condition):
     v17_results.append(condition)
     print(f"{'✅' if condition else '❌'} {label}")
 
-_v17("nb_echanges_dernier_psaume est la dernière colonne du SELECT (migration v17 bien ajoutée en fin)",
-     _cols[-1] == "nb_echanges_dernier_psaume")
+_v17("nb_echanges_dernier_psaume présent dans le SELECT (colonne ajoutée en migration v17)",
+     "nb_echanges_dernier_psaume" in _cols)
 _v17("get_user() expose nb_echanges_dernier_psaume avec la bonne valeur de colonne",
      _u_v17.get("nb_echanges_dernier_psaume") == 999)
 
@@ -1031,3 +1034,130 @@ if not cons2_ok:
     raise SystemExit(1)
 
 print("\n✅ TESTS CONSULTATION 1 (rituels conditionnels + sobriété) : PASS")
+
+# ============================================================
+# TESTS — CONSULTATION point 3 : genre utilisateur (onboarding)
+# ============================================================
+print("\n" + "=" * 60)
+print("TEST CONSULTATION 3 — detecter_genre")
+print("=" * 60)
+
+from auryel_bot import detecter_genre, gerer_onboarding
+
+cons3_results = []
+def _cons3(label, condition):
+    cons3_results.append(condition)
+    print(f"{'✅' if condition else '❌'} {label}")
+
+for mot in ["homme", "masculin", "mec", "garçon", "un homme", "je suis un homme"]:
+    _cons3(f"detecter_genre(« {mot} ») → 'm'", detecter_genre(mot) == "m")
+for mot in ["femme", "féminin", "feminin", "fille", "nana", "une femme", "je suis une femme"]:
+    _cons3(f"detecter_genre(« {mot} ») → 'f'", detecter_genre(mot) == "f")
+for mot in ["je ne sais pas", "peu importe", "aucune idée", ""]:
+    _cons3(f"detecter_genre(« {mot} ») → '' (ambigu)", detecter_genre(mot) == "")
+
+cons3a_ok = all(cons3_results)
+print(f"\n{'✅' if cons3a_ok else '❌'} CONSULTATION 3 — detecter_genre ({len(cons3_results)} assertions) : {'PASS' if cons3a_ok else 'FAIL'}")
+if not cons3a_ok:
+    raise SystemExit(1)
+
+print("\n" + "=" * 60)
+print("TEST CONSULTATION 3 — gerer_onboarding, nouvel ordre conseiller→genre→prenom→email")
+print("=" * 60)
+
+_GENRE_PHONE = "+33699000077"
+
+def _run_onboarding_step(user_dict, message):
+    with patch("auryel_bot.update_user_silent") as m_update, \
+         patch("auryel_bot.add_message"), \
+         patch("auryel_bot.log_event"):
+        reply = gerer_onboarding(_GENRE_PHONE, user_dict, message)
+        return reply, m_update.call_args_list
+
+cons3b_results = []
+def _cons3b(label, condition):
+    cons3b_results.append(condition)
+    print(f"{'✅' if condition else '❌'} {label}")
+
+# step choix_conseiller → transition vers "genre" (pas "prenom"), question avec le nom du conseiller
+user_choix = {**USER_BASE, "phone": _GENRE_PHONE, "onboarding_step": "choix_conseiller",
+              "onboarding_done": False, "nb_echanges": 0}
+reply_choix, calls_choix = _run_onboarding_step(user_choix, "1")
+steps_choix = [c.kwargs.get("onboarding_step") for c in calls_choix if "onboarding_step" in c.kwargs]
+_cons3b("step choix_conseiller → transition vers 'genre' (pas 'prenom')", "genre" in steps_choix)
+_cons3b("step choix_conseiller → question de genre posée avec le nom du conseiller",
+        "masculin ou au féminin" in reply_choix and "Séléna" in reply_choix)
+
+# step genre → ne reboucle JAMAIS, transition vers "prenom" quel que soit le résultat
+for message_genre, genre_attendu in [("un homme", "m"), ("une femme", "f"), ("je ne sais pas", "")]:
+    user_genre = {**USER_BASE, "phone": _GENRE_PHONE, "onboarding_step": "genre",
+                  "onboarding_done": False, "nb_echanges": 0, "genre": ""}
+    reply_g, calls_g = _run_onboarding_step(user_genre, message_genre)
+    steps_g = [c.kwargs.get("onboarding_step") for c in calls_g if "onboarding_step" in c.kwargs]
+    genres_g = [c.kwargs.get("genre") for c in calls_g if "genre" in c.kwargs]
+    _cons3b(f"step genre, message « {message_genre} » → transition vers 'prenom' (jamais de reboucle)",
+            "prenom" in steps_g)
+    _cons3b(f"step genre, message « {message_genre} » → genre écrit = '{genre_attendu}'",
+            genre_attendu in genres_g)
+    _cons3b(f"step genre, message « {message_genre} » → question du prénom posée",
+            "comment t'appelles-tu" in reply_g.lower())
+
+# step prenom → salutation accordée selon le genre déjà enregistré
+for genre_val, reply_attendu in [
+    ("m", "Enchanté Marie. Quelle adresse email puis-je garder pour ton suivi ?"),
+    ("f", "Enchantée Marie. Quelle adresse email puis-je garder pour ton suivi ?"),
+    ("", "Bienvenue Marie. Quelle adresse email puis-je garder pour ton suivi ?"),
+]:
+    user_prenom = {**USER_BASE, "phone": _GENRE_PHONE, "onboarding_step": "prenom",
+                   "onboarding_done": False, "nb_echanges": 0, "genre": genre_val, "prenom": ""}
+    reply_p, _ = _run_onboarding_step(user_prenom, "Marie")
+    _cons3b(f"step prenom, genre='{genre_val}' → « {reply_attendu} »", reply_p == reply_attendu)
+
+# Non-régression : attente_reponse_presentation bascule toujours onboarding_done=True
+user_presentation = {**USER_BASE, "phone": _GENRE_PHONE, "onboarding_step": "attente_reponse_presentation",
+                      "onboarding_done": False, "nb_echanges": 0, "guide": "selena"}
+reply_pres, calls_pres = _run_onboarding_step(user_presentation, "je me sens perdue")
+onboarding_done_calls = [c.kwargs.get("onboarding_done") for c in calls_pres if "onboarding_done" in c.kwargs]
+_cons3b("step attente_reponse_presentation → onboarding_done passe à True (non-régression)",
+        True in onboarding_done_calls)
+_cons3b("step attente_reponse_presentation → reply est None (relance la conversation IA, non-régression)",
+        reply_pres is None)
+
+cons3b_ok = all(cons3b_results)
+print(f"\n{'✅' if cons3b_ok else '❌'} CONSULTATION 3 — gerer_onboarding ({len(cons3b_results)} assertions) : {'PASS' if cons3b_ok else 'FAIL'}")
+if not cons3b_ok:
+    raise SystemExit(1)
+
+print("\n" + "=" * 60)
+print("TEST MIGRATION v18 — genre exposé par get_user()")
+print("=" * 60)
+
+_src18 = _inspect.getsource(_get_user)
+_select_match18 = _re.search(r"SELECT\s+(.*?)\s+FROM users", _src18, _re.S)
+_cols18 = [c.strip() for c in _select_match18.group(1).replace("\n", " ").split(",") if c.strip()]
+_fake_row18 = tuple([0] * (len(_cols18) - 1) + ["m"])
+
+_cur18 = MagicMock()
+_cur18.fetchone.return_value = _fake_row18
+_conn18 = MagicMock()
+_conn18.cursor.return_value = _cur18
+
+with patch("auryel_bot.get_conn", return_value=_conn18):
+    _u18 = _get_user("+33600000000")
+
+v18_results = []
+def _v18(label, condition):
+    v18_results.append(condition)
+    print(f"{'✅' if condition else '❌'} {label}")
+
+_v18("genre est la dernière colonne du SELECT (migration v18 bien ajoutée en fin)",
+     _cols18[-1] == "genre")
+_v18("get_user() expose genre avec la bonne valeur de colonne",
+     _u18.get("genre") == "m")
+
+v18_ok = all(v18_results)
+print(f"\n{'✅' if v18_ok else '❌'} MIGRATION v18 ({len(v18_results)} assertions) : {'PASS' if v18_ok else 'FAIL'}")
+if not v18_ok:
+    raise SystemExit(1)
+
+print("\n✅ TESTS CONSULTATION 3 (genre utilisateur) : PASS")
