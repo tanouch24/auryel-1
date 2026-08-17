@@ -691,21 +691,97 @@ def _run_get_reply_accueil(user_dict, message):
         system_prompt = m_llm.call_args[0][0][0]["content"]
         return system_prompt, m_tirer.called
 
-# T1 : 1er tour post-onboarding, message mentionnant une autre personne
-# -> PROFIL DE L'AUTRE PERSONNE et RITUELS CONCRETS absents, TIRAGE D'ACCUEIL présent et impératif
-system_1, _ = _run_get_reply_accueil(_user_bug1(onboarding_done=False), "je pense qu'elle me trompe")
-assert "PROFIL DE L'AUTRE PERSONNE" not in system_1, "le parasite PROFIL n'a pas été neutralisé au 1er tour"
-assert "RITUELS CONCRETS ET VARIÉS" not in system_1, "le parasite RITUELS n'a pas été neutralisé au 1er tour"
-assert "TIRAGE D'ACCUEIL" in system_1, "le bloc TIRAGE D'ACCUEIL doit rester présent au 1er tour"
-assert "OBLIGATOIRE" in system_1, "le bloc doit être formulé de façon impérative"
-print("✅ 1er tour post-onboarding : PROFIL/RITUELS neutralisés, TIRAGE D'ACCUEIL impératif")
+def _run_get_reply_accueil_capture_updates(user_dict, message):
+    """Variante de _run_get_reply_accueil qui capture aussi les appels à
+    update_user_silent (CONSULTATION point 2 lot B : consommation de
+    nb_echanges_decouverte) — helper dédié pour ne pas changer la signature
+    2-tuple de _run_get_reply_accueil, utilisée telle quelle par T3-T7."""
+    with patch("auryel_bot.get_user", return_value=user_dict), \
+         patch("auryel_bot.check_and_increment_daily_limit", return_value=False), \
+         patch("auryel_bot.gerer_onboarding", return_value=None), \
+         patch("auryel_bot.get_history", return_value=[]), \
+         patch("auryel_bot.add_message"), \
+         patch("auryel_bot.update_user"), \
+         patch("auryel_bot.update_user_silent") as m_update, \
+         patch("auryel_bot.choisir_citation", return_value=""), \
+         patch("auryel_bot.choisir_psaume", return_value=None), \
+         patch("auryel_bot.log_event"), \
+         patch("auryel_bot.tirer_cartes", return_value=(None, ["La Lune", "Le Pape", "Le Pendu"])), \
+         patch("auryel_bot.call_llm", return_value="réponse factice") as m_llm:
+        get_reply(_BUG1_PHONE, message)
+        system_prompt = m_llm.call_args[0][0][0]["content"]
+        return system_prompt, m_update.call_args_list
 
-# T2 : tour normal (onboarding déjà fait avant ce message) -> comportement inchangé
+# T1 : tour 0 (decouverte_du_tour), signe_zodiaque renseigné (date de naissance captée
+# au lot A) -> PROFIL et DÉCOUVERTE présents, TIRAGE D'ACCUEIL absent (déplacé au tour 1),
+# et l'anti-bruit (PROFIL DE L'AUTRE PERSONNE / RITUELS CONCRETS) s'applique quand même
+# à ce tour puisque premier_tour_post_onboarding = decouverte_du_tour or tirage_accueil_du_tour.
+system_1, _ = _run_get_reply_accueil(
+    _user_bug1(onboarding_done=False, chemin_de_vie=9, signe_zodiaque="Taureau"),
+    "je pense qu'elle me trompe")
+assert "PROFIL DE L'AUTRE PERSONNE" not in system_1, "le parasite PROFIL n'a pas été neutralisé au tour 0"
+assert "RITUELS CONCRETS ET VARIÉS" not in system_1, "le parasite RITUELS n'a pas été neutralisé au tour 0"
+assert "=== PROFIL ===" in system_1, "le bloc PROFIL doit apparaître au tour 0 (signe_zodiaque renseigné)"
+assert "Taureau" in system_1 and "9" in system_1, "le profil doit donner chemin_de_vie et signe en clair"
+assert "=== DÉCOUVERTE ===" in system_1, "le bloc DÉCOUVERTE doit apparaître au tour 0"
+assert "TIRAGE D'ACCUEIL" not in system_1, "le tirage d'accueil est déplacé au tour 1, absent au tour 0"
+print("✅ tour 0 (profil renseigné) : PROFIL + DÉCOUVERTE présents, TIRAGE D'ACCUEIL absent, anti-bruit actif")
+
+# T1-skip : tour 0, signe_zodiaque VIDE (date de naissance refusée au lot A) -> PROFIL
+# absent (skip gracieux, jamais de profil vide), DÉCOUVERTE toujours présente.
+system_1_skip, _ = _run_get_reply_accueil(
+    _user_bug1(onboarding_done=False, chemin_de_vie=0, signe_zodiaque=""),
+    "je pense qu'elle me trompe")
+assert "=== PROFIL ===" not in system_1_skip, "signe_zodiaque vide -> PROFIL doit être skippé"
+assert "=== DÉCOUVERTE ===" in system_1_skip, "DÉCOUVERTE doit rester présente même sans profil"
+print("✅ tour 0 (date de naissance refusée) : PROFIL skippé, DÉCOUVERTE toujours présente")
+
+# T1-bis : tour 1 (tirage_accueil_du_tour — onboarding_done=True, nb_echanges_decouverte=1)
+# -> TIRAGE D'ACCUEIL présent et impératif, PROFIL/DÉCOUVERTE absents (déjà faits au tour 0),
+# anti-bruit toujours actif à ce tour.
+system_1bis, _ = _run_get_reply_accueil(
+    _user_bug1(onboarding_done=True, nb_echanges_decouverte=1),
+    "je pense qu'elle me trompe")
+assert "PROFIL DE L'AUTRE PERSONNE" not in system_1bis, "le parasite PROFIL doit aussi être neutralisé au tour 1"
+assert "RITUELS CONCRETS ET VARIÉS" not in system_1bis, "le parasite RITUELS doit aussi être neutralisé au tour 1"
+assert "TIRAGE D'ACCUEIL" in system_1bis, "le bloc TIRAGE D'ACCUEIL doit apparaître au tour 1 (découverte faite)"
+assert "OBLIGATOIRE" in system_1bis, "le bloc doit être formulé de façon impérative"
+assert "=== PROFIL ===" not in system_1bis, "PROFIL ne doit pas réapparaître au tour 1"
+assert "=== DÉCOUVERTE ===" not in system_1bis, "DÉCOUVERTE ne doit pas réapparaître au tour 1"
+print("✅ tour 1 (découverte faite) : TIRAGE D'ACCUEIL impératif, PROFIL/DÉCOUVERTE absents, anti-bruit actif")
+
+# T2 : tour normal (onboarding déjà fait, nb_echanges_decouverte=0/absent) -> comportement inchangé
 system_2, _ = _run_get_reply_accueil(_user_bug1(onboarding_done=True), "je pense qu'elle me trompe")
-assert "PROFIL DE L'AUTRE PERSONNE" in system_2, "ne doit pas être supprimé hors 1er tour"
-assert "RITUELS CONCRETS ET VARIÉS" in system_2, "ne doit pas être supprimé hors 1er tour"
-assert "TIRAGE D'ACCUEIL" not in system_2, "ne doit apparaître qu'au 1er tour post-onboarding"
-print("✅ tour normal (hors onboarding) : PROFIL/RITUELS toujours présents, pas de TIRAGE D'ACCUEIL")
+assert "PROFIL DE L'AUTRE PERSONNE" in system_2, "ne doit pas être supprimé hors tour 0/tour 1"
+assert "RITUELS CONCRETS ET VARIÉS" in system_2, "ne doit pas être supprimé hors tour 0/tour 1"
+assert "TIRAGE D'ACCUEIL" not in system_2, "ne doit apparaître qu'au tour 1 (découverte faite)"
+assert "=== PROFIL ===" not in system_2, "PROFIL ne doit apparaître qu'au tour 0"
+assert "=== DÉCOUVERTE ===" not in system_2, "DÉCOUVERTE ne doit apparaître qu'au tour 0"
+print("✅ tour normal (hors tour 0/tour 1) : PROFIL/RITUELS toujours présents, rien de nouveau injecté")
+
+# T-consommation : nb_echanges_decouverte armé à 1 au tour 0, remis à 0 au tour 1
+# (même principe que la consommation de tirage_propose_en_attente).
+_, updates_tour0 = _run_get_reply_accueil_capture_updates(
+    _user_bug1(onboarding_done=False, chemin_de_vie=9, signe_zodiaque="Taureau"),
+    "je pense qu'elle me trompe")
+decouverte_vals_tour0 = [c.kwargs.get("nb_echanges_decouverte") for c in updates_tour0
+                         if "nb_echanges_decouverte" in c.kwargs]
+tirage_vals_tour0 = [c.kwargs.get("tirage_propose_en_attente") for c in updates_tour0
+                     if "tirage_propose_en_attente" in c.kwargs]
+assert 1 in decouverte_vals_tour0, "tour 0 doit armer nb_echanges_decouverte=1"
+assert True not in tirage_vals_tour0, "tour 0 ne doit PLUS armer tirage_propose_en_attente"
+print("✅ tour 0 → nb_echanges_decouverte=1 armé, tirage_propose_en_attente NON armé (retiré du tour 0)")
+
+_, updates_tour1 = _run_get_reply_accueil_capture_updates(
+    _user_bug1(onboarding_done=True, nb_echanges_decouverte=1),
+    "je pense qu'elle me trompe")
+decouverte_vals_tour1 = [c.kwargs.get("nb_echanges_decouverte") for c in updates_tour1
+                         if "nb_echanges_decouverte" in c.kwargs]
+tirage_vals_tour1 = [c.kwargs.get("tirage_propose_en_attente") for c in updates_tour1
+                     if "tirage_propose_en_attente" in c.kwargs]
+assert 0 in decouverte_vals_tour1, "tour 1 doit consommer nb_echanges_decouverte (remis à 0)"
+assert True in tirage_vals_tour1, "tour 1 doit armer tirage_propose_en_attente=True"
+print("✅ tour 1 → nb_echanges_decouverte consommé (0), tirage_propose_en_attente=True armé")
 
 print("\n" + "=" * 60)
 print("TEST CONSENTEMENT TIRAGE — mot entier, pas sous-chaîne")
@@ -1013,15 +1089,32 @@ def _cons2(label, condition):
     cons2_results.append(condition)
     print(f"{'✅' if condition else '❌'} {label}")
 
-# Moment grave EN COURS D'ONBOARDING (1er tour) : la sobriété doit primer sur le tirage d'accueil.
+# Moment grave au TOUR 0 (decouverte_du_tour) : CONSULTATION point 2 lot B — la sobriété
+# doit primer sur PROFIL et DÉCOUVERTE (plus TIRAGE D'ACCUEIL, qui n'est de toute façon
+# plus atteignable au tour 0 depuis le lot B — le vrai garde-fou pertinent ici est PROFIL/
+# DÉCOUVERTE, testé séparément au tour 1 pour TIRAGE D'ACCUEIL).
 system_grave_onboarding, _ = _run_get_reply_accueil(
-    _user_bug1(onboarding_done=False), "ma mère est décédée hier")
-_cons2("deuil au 1er tour → bloc MOMENT GRAVE présent", "MOMENT GRAVE" in system_grave_onboarding)
-_cons2("deuil au 1er tour → bloc TIRAGE D'ACCUEIL absent (sobriété prioritaire)",
+    _user_bug1(onboarding_done=False, chemin_de_vie=9, signe_zodiaque="Taureau"),
+    "ma mère est décédée hier")
+_cons2("deuil au tour 0 → bloc MOMENT GRAVE présent", "MOMENT GRAVE" in system_grave_onboarding)
+_cons2("deuil au tour 0 → bloc PROFIL absent (sobriété prioritaire, même avec signe_zodiaque renseigné)",
+       "=== PROFIL ===" not in system_grave_onboarding)
+_cons2("deuil au tour 0 → bloc DÉCOUVERTE absent (sobriété prioritaire)",
+       "=== DÉCOUVERTE ===" not in system_grave_onboarding)
+_cons2("deuil au tour 0 → bloc TIRAGE D'ACCUEIL absent (de toute façon plus atteignable au tour 0)",
        "TIRAGE D'ACCUEIL" not in system_grave_onboarding)
-_cons2("deuil au 1er tour → PSAUME EN APPUI absent", "PSAUME EN APPUI" not in system_grave_onboarding)
-_cons2("deuil au 1er tour → INSPIRATION DU MOMENT absent", "INSPIRATION DU MOMENT" not in system_grave_onboarding)
-_cons2("deuil au 1er tour → RITUELS CONCRETS ET VARIÉS absent", "RITUELS CONCRETS ET VARIÉS" not in system_grave_onboarding)
+_cons2("deuil au tour 0 → PSAUME EN APPUI absent", "PSAUME EN APPUI" not in system_grave_onboarding)
+_cons2("deuil au tour 0 → INSPIRATION DU MOMENT absent", "INSPIRATION DU MOMENT" not in system_grave_onboarding)
+_cons2("deuil au tour 0 → RITUELS CONCRETS ET VARIÉS absent", "RITUELS CONCRETS ET VARIÉS" not in system_grave_onboarding)
+
+# Moment grave au TOUR 1 (tirage_accueil_du_tour) : la sobriété doit primer sur le
+# tirage d'accueil relocalisé, exactement comme elle primait sur lui au tour 0 avant
+# le lot B — c'est le garde-fou qui a effectivement bougé de tour.
+system_grave_tour1, _ = _run_get_reply_accueil(
+    _user_bug1(onboarding_done=True, nb_echanges_decouverte=1), "ma mère est décédée hier")
+_cons2("deuil au tour 1 → bloc MOMENT GRAVE présent", "MOMENT GRAVE" in system_grave_tour1)
+_cons2("deuil au tour 1 → bloc TIRAGE D'ACCUEIL absent (sobriété prioritaire)",
+       "TIRAGE D'ACCUEIL" not in system_grave_tour1)
 
 # Moment grave en cours de conversation normale (hors onboarding).
 system_grave_normal, _ = _run_get_reply_accueil(

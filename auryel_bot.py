@@ -1941,11 +1941,14 @@ def detecter_registre_message(message):
     return None
 
 def choisir_psaume(registre_courant, user, onboarding_vient_de_finir, nb_echanges_actuel):
-    """Rare, en appui. None si : tirage d'accueil en cours, aucun registre détecté ce
-    tour, signal aigu récent ou marketing bloqué pour détresse (mêmes garde-fous que
-    le marketing proactif — lecture seule, aucune logique de détresse dupliquée ici),
-    cooldown de tours pas écoulé, ou tirage de probabilité manqué."""
-    if onboarding_vient_de_finir or not registre_courant:
+    """Rare, en appui. None si : découverte ou tirage d'accueil en cours (CONSULTATION
+    point 2 lot B : le tirage d'accueil a été déplacé au tour suivant la découverte —
+    tirage_accueil_du_tour recalculé ici à partir de user, pas de paramètre supplémentaire),
+    aucun registre détecté ce tour, signal aigu récent ou marketing bloqué pour détresse
+    (mêmes garde-fous que le marketing proactif — lecture seule, aucune logique de détresse
+    dupliquée ici), cooldown de tours pas écoulé, ou tirage de probabilité manqué."""
+    tirage_accueil_du_tour = (not onboarding_vient_de_finir) and (user.get("nb_echanges_decouverte", 0) or 0) >= 1
+    if onboarding_vient_de_finir or tirage_accueil_du_tour or not registre_courant:
         return None
     if _signal_aigu_recent(user, fenetre_heures=24):
         return None
@@ -2809,6 +2812,14 @@ def get_reply(phone, user_message, depuis_pub=False, user_msg_pre_inserted=False
     # Déclencheur DÉDIÉ (MOTS_DEUIL_SOBRIETE), volontairement distinct du registre
     # "deuil" ci-dessus (trop large pour couper toute la consultation).
     moment_grave = detecter_moment_grave(user_message)
+
+    # CONSULTATION point 2 lot B : le tirage d'accueil est déplacé après une phase de
+    # découverte d'un seul échange. Conditions lues sur `user`, le snapshot pré-tour
+    # (même principe que tirage_propose_en_attente) — jamais sur user_fresh, qui peut
+    # déjà refléter des écritures faites plus haut dans ce même tour.
+    decouverte_du_tour = onboarding_vient_de_finir
+    tirage_accueil_du_tour = (not onboarding_vient_de_finir) and (user.get("nb_echanges_decouverte", 0) or 0) >= 1
+
     psaume_candidat = (
         None if moment_grave else
         choisir_psaume(registre_courant, user_fresh or user, onboarding_vient_de_finir, nb_echanges_actuel)
@@ -2825,15 +2836,20 @@ def get_reply(phone, user_message, depuis_pub=False, user_msg_pre_inserted=False
         update_user_silent(phone, date_derniere_proposition_tirage=aujourd_hui,
                             nb_echanges_dernier_tirage=nb_echanges_actuel,
                             tirage_propose_en_attente=True)
-    if onboarding_vient_de_finir and not moment_grave:
-        update_user_silent(phone, tirage_propose_en_attente=True)
+    if decouverte_du_tour and not moment_grave:
+        update_user_silent(phone, nb_echanges_decouverte=1)
+    if tirage_accueil_du_tour and not moment_grave:
+        # Consommation du compteur de découverte : ne redéclenche jamais le tirage
+        # d'accueil une seconde fois (même principe que la consommation de
+        # tirage_propose_en_attente=False plus haut dans cette fonction).
+        update_user_silent(phone, tirage_propose_en_attente=True, nb_echanges_decouverte=0)
 
     inspiration_citation = (
         choisir_citation((user_fresh or user).get("theme_dominant"))
         if (not psaume_candidat and not moment_grave and random.random() < 0.3) else ""
     )
     system = get_system_prompt(user_fresh or user, guide_key,
-                                premier_tour_post_onboarding=onboarding_vient_de_finir,
+                                premier_tour_post_onboarding=(decouverte_du_tour or tirage_accueil_du_tour),
                                 proposer_rituel_concret=proposer_tirage_spontane)
     if inspiration_citation:
         system += f"\n\n=== INSPIRATION DU MOMENT ===\nSi cela résonne naturellement avec ce que vit la personne, tu peux t'appuyer sur cette sagesse (sans jamais citer sa source) : {inspiration_citation}"
@@ -2861,7 +2877,23 @@ def get_reply(phone, user_message, depuis_pub=False, user_msg_pre_inserted=False
         )
     if proposer_tirage_spontane:
         system += "\n\n=== PROPOSITION TIRAGE SPONTANÉE ===\nLa conversation stagne depuis plusieurs échanges sans tirage récent. Propose toi-même spontanément un tirage de cartes à la personne, toujours en demandant d'abord la permission comme décrit dans TIRAGE DE CARTES AVEC CONSENTEMENT."
-    if onboarding_vient_de_finir and not moment_grave:
+    if decouverte_du_tour and not moment_grave:
+        signe_zodiaque_profil = (user_fresh or user).get("signe_zodiaque") or ""
+        if signe_zodiaque_profil:
+            chemin_de_vie_profil = (user_fresh or user).get("chemin_de_vie") or 0
+            system += (
+                "\n\n=== PROFIL ===\n"
+                f"Chemin de vie : {chemin_de_vie_profil}. Signe : {signe_zodiaque_profil}.\n"
+                "Restitue ces informations dans TA voix (ton vocabulaire, ta manière), en 2-3 phrases "
+                "MAXIMUM — jamais un pavé numérologique, jamais une formule identique à ce qu'un autre "
+                "conseiller dirait, jamais un vocabulaire de coach."
+            )
+        system += (
+            "\n\n=== DÉCOUVERTE ===\n"
+            "Pose UNE seule question ouverte pour comprendre ce qui l'amène. NE propose PAS encore de "
+            "tirage de cartes ce tour-ci."
+        )
+    if tirage_accueil_du_tour and not moment_grave:
         system += (
             "\n\n=== TIRAGE D'ACCUEIL (PRIORITÉ MAXIMALE — OBLIGATOIRE CE TOUR) ===\n"
             "C'est le tout premier vrai échange avec cette personne : elle vient de raconter, pour la "
