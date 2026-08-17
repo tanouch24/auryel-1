@@ -1556,6 +1556,17 @@ def send_template_message(phone, template_name, variables, language="fr"):
         return False
 
 # ============================================================
+# TELEGRAM (Bloc 1 — canal parallèle, ne touche pas au flux WhatsApp)
+# ============================================================
+def send_message_telegram(chat_id, text):
+    token = os.environ.get("TELEGRAM_BOT_TOKEN", "")
+    url = f"https://api.telegram.org/bot{token}/sendMessage"
+    data = {"chat_id": chat_id, "text": text}
+    r = requests.post(url, json=data, timeout=10)
+    print(f"📤 [telegram] {r.status_code}")
+    return r
+
+# ============================================================
 # CONTEXTE ÉMOTIONNEL
 # ============================================================
 def _terme_present(terme, texte):
@@ -3002,6 +3013,30 @@ def receive():
         print(f"❌ Erreur: {e}")
         import traceback; traceback.print_exc()
     return jsonify({"status":"ok"}), 200
+
+# ============================================================
+# WEBHOOK TELEGRAM (Bloc 1 — minimal, prouve le tuyau, aucun impact WhatsApp)
+# ============================================================
+@app.route("/webhook/telegram", methods=["POST"])
+def receive_telegram():
+    webhook_secret = os.environ.get("TELEGRAM_WEBHOOK_SECRET", "")
+    header_secret = request.headers.get("X-Telegram-Bot-Api-Secret-Token", "")
+    if not webhook_secret or not hmac.compare_digest(header_secret, webhook_secret):
+        return jsonify({"error": "invalid secret"}), 403
+
+    update = request.get_json(silent=True) or {}
+    message = update.get("message") or {}
+    chat = message.get("chat") or {}
+    chat_id = chat.get("id")
+    text = message.get("text")
+
+    if chat_id is None or not text:
+        return jsonify({"status": "ok"}), 200
+
+    phone = "tg_" + str(chat_id)
+    reply = get_reply(phone, text)
+    send_message_telegram(chat_id, reply)
+    return jsonify({"status": "ok"}), 200
 
 # ============================================================
 # STRIPE WEBHOOK — complet avec 5 events
