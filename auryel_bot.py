@@ -431,6 +431,19 @@ def init_db():
     except Exception as e:
         conn.rollback()
         print(f"Migration v18: {e}")
+    # Migration v19 — bascule/liaison WhatsApp→Telegram (Bloc 2)
+    try:
+        c.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS telegram_chat_id TEXT DEFAULT ''")
+        c.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS telegram_link_token TEXT DEFAULT ''")
+        c.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS telegram_link_token_at TEXT DEFAULT ''")
+        c.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS telegram_invite_envoye BOOLEAN DEFAULT FALSE")
+        c.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS premiere_consultation_envoyee BOOLEAN DEFAULT FALSE")
+        c.execute("""CREATE UNIQUE INDEX IF NOT EXISTS idx_tg_chat ON users(telegram_chat_id)
+            WHERE telegram_chat_id <> ''""")
+        conn.commit()
+    except Exception as e:
+        conn.rollback()
+        print(f"Migration v19: {e}")
     conn.close()
 
 def reset_db():
@@ -468,7 +481,9 @@ def get_user(phone):
             dernier_signal_aigu_at,detresse_maj_at,
             retour_j7_envoyee,retour_j15_envoyee,retour_j30_envoyee,
             proactifs_today_count,proactifs_today_date,
-            tirage_propose_en_attente,nb_echanges_dernier_psaume,genre
+            tirage_propose_en_attente,nb_echanges_dernier_psaume,genre,
+            telegram_chat_id,telegram_link_token,telegram_link_token_at,
+            telegram_invite_envoye,premiere_consultation_envoyee
             FROM users WHERE phone=%s""", (phone,))
         row = c.fetchone()
         if row:
@@ -522,6 +537,11 @@ def get_user(phone):
                 "tirage_propose_en_attente":row[61] or False,
                 "nb_echanges_dernier_psaume":row[62] or 0,
                 "genre":row[63] or "",
+                "telegram_chat_id":row[64] or "",
+                "telegram_link_token":row[65] or "",
+                "telegram_link_token_at":row[66] or "",
+                "telegram_invite_envoye":row[67] or False,
+                "premiere_consultation_envoyee":row[68] or False,
             }
         return None
     except Exception as e:
@@ -2523,6 +2543,26 @@ def get_reply(phone, user_message, depuis_pub=False, user_msg_pre_inserted=False
     # on est exactement sur le tout premier vrai message post-onboarding.
     onboarding_vient_de_finir = not user.get("onboarding_done")
 
+    # Bloc 2 — bascule/liaison Telegram : le tirage d'accueil part seul, propre,
+    # au tour où onboarding_vient_de_finir==True (aucune invitation ce tour-ci).
+    if onboarding_vient_de_finir:
+        update_user_silent(phone, premiere_consultation_envoyee=True)
+    elif (user.get("premiere_consultation_envoyee") and
+          not user.get("telegram_invite_envoye") and
+          not user.get("telegram_chat_id") and
+          not phone.startswith("tg_")):
+        telegram_token = secrets.token_urlsafe(32)
+        update_user_silent(phone, telegram_link_token=telegram_token,
+                            telegram_link_token_at=datetime.now().isoformat(),
+                            telegram_invite_envoye=True)
+        bot_username = os.environ.get("BOT_USERNAME", "")
+        invite_telegram = (
+            f"Pour qu'on garde le fil plus tranquillement, je t'invite sur Telegram : "
+            f"https://t.me/{bot_username}?start={telegram_token}"
+        )
+        send_message(phone, invite_telegram)
+        add_message(phone, "assistant", invite_telegram)
+
     email_detecte = detecter_email(user_message)
     if email_detecte and not user.get("email"):
         update_user(phone, email=email_detecte)
@@ -3033,7 +3073,45 @@ def receive_telegram():
     if chat_id is None or not text:
         return jsonify({"status": "ok"}), 200
 
-    phone = "tg_" + str(chat_id)
+    # Bloc 2 — liaison /start TOKEN : rattache ce chat_id à la ligne WhatsApp existante,
+    # ne crée jamais de nouvelle ligne "tg_" pour un token valide.
+    if text.startswith("/start "):
+        token = text[len("/start "):].strip()
+        phone_wa, token_at = None, ""
+        if token:
+            conn = get_conn()
+            c = conn.cursor()
+            c.execute("SELECT phone, telegram_link_token_at FROM users WHERE telegram_link_token=%s", (token,))
+            row = c.fetchone()
+            conn.close()
+            if row:
+                phone_wa, token_at = row[0], row[1]
+
+        token_valide = False
+        if phone_wa:
+            try:
+                token_valide = (datetime.now() - datetime.fromisoformat(token_at)) < timedelta(hours=72)
+            except Exception:
+                token_valide = False
+
+        if phone_wa and token_valide:
+            update_user_silent(phone_wa, telegram_chat_id=str(chat_id),
+                                telegram_link_token="", telegram_link_token_at="")
+            send_message_telegram(chat_id, "C'est fait, on continue ici.")
+        else:
+            send_message_telegram(chat_id,
+                "Ce lien n'est plus valide. Écris-moi depuis WhatsApp pour en recevoir un nouveau.")
+        return jsonify({"status": "ok"}), 200
+
+    # Routage : chat_id déjà lié à une ligne WhatsApp existante → on répond sur CETTE ligne.
+    # Fallback "tg_"+chat_id réservé au cas de bord (arrivée directe Telegram, jamais liée).
+    conn = get_conn()
+    c = conn.cursor()
+    c.execute("SELECT phone FROM users WHERE telegram_chat_id=%s", (str(chat_id),))
+    row = c.fetchone()
+    conn.close()
+    phone = row[0] if row else "tg_" + str(chat_id)
+
     reply = get_reply(phone, text)
     send_message_telegram(chat_id, reply)
     return jsonify({"status": "ok"}), 200
@@ -3814,6 +3892,33 @@ def cron_morning():
                 continue
 
             mode      = choose_morning_send_mode(user, now)
+
+            # Bloc 2 — garde-fou J+2 : si toujours pas basculée sur Telegram, on force
+            # l'invitation pour que l'ask paiement J+3 tombe sur Telegram.
+            _is_trial_active_tg = (
+                not user.get("abonne") and
+                user.get("onboarding_done", False) and
+                user.get("etat", "normal") != "pause"
+            )
+            if (_is_trial_active_tg and not user.get("telegram_chat_id")
+                    and not user.get("telegram_invite_envoye")):
+                try:
+                    _jours_tg = (now - datetime.fromisoformat(user.get("date_premier_contact"))).days
+                except Exception:
+                    _jours_tg = None
+                if _jours_tg is not None and _jours_tg >= 2:
+                    telegram_token = secrets.token_urlsafe(32)
+                    update_user_silent(phone, telegram_link_token=telegram_token,
+                                        telegram_link_token_at=datetime.now().isoformat(),
+                                        telegram_invite_envoye=True)
+                    bot_username = os.environ.get("BOT_USERNAME", "")
+                    invite_telegram = (
+                        f"Pour qu'on garde le fil plus tranquillement, je t'invite sur Telegram : "
+                        f"https://t.me/{bot_username}?start={telegram_token}"
+                    )
+                    send_message(phone, invite_telegram)
+                    add_message(phone, "assistant", invite_telegram)
+
             guide_key = user.get("guide", "selena")
             guide     = GUIDES.get(guide_key, GUIDES["selena"])
             nom       = user.get("nom_affiche") or guide["nom"]

@@ -1135,7 +1135,8 @@ print("=" * 60)
 _src18 = _inspect.getsource(_get_user)
 _select_match18 = _re.search(r"SELECT\s+(.*?)\s+FROM users", _src18, _re.S)
 _cols18 = [c.strip() for c in _select_match18.group(1).replace("\n", " ").split(",") if c.strip()]
-_fake_row18 = tuple([0] * (len(_cols18) - 1) + ["m"])
+_genre_idx18 = _cols18.index("genre")
+_fake_row18 = tuple("m" if i == _genre_idx18 else 0 for i in range(len(_cols18)))
 
 _cur18 = MagicMock()
 _cur18.fetchone.return_value = _fake_row18
@@ -1150,14 +1151,51 @@ def _v18(label, condition):
     v18_results.append(condition)
     print(f"{'✅' if condition else '❌'} {label}")
 
-_v18("genre est la dernière colonne du SELECT (migration v18 bien ajoutée en fin)",
-     _cols18[-1] == "genre")
+_v18("genre présent dans le SELECT (migration v18 toujours intacte)",
+     "genre" in _cols18)
 _v18("get_user() expose genre avec la bonne valeur de colonne",
      _u18.get("genre") == "m")
 
 v18_ok = all(v18_results)
 print(f"\n{'✅' if v18_ok else '❌'} MIGRATION v18 ({len(v18_results)} assertions) : {'PASS' if v18_ok else 'FAIL'}")
 if not v18_ok:
+    raise SystemExit(1)
+
+print("\n" + "=" * 60)
+print("TEST MIGRATION v19 — liaison Telegram exposée par get_user()")
+print("=" * 60)
+
+_src19 = _src18
+_cols19 = _cols18
+_v19_cols = ["telegram_chat_id", "telegram_link_token", "telegram_link_token_at",
+             "telegram_invite_envoye", "premiere_consultation_envoyee"]
+_fake_vals19 = {"telegram_chat_id": "999888", "telegram_link_token": "TOK123",
+                "telegram_link_token_at": "2026-07-15T10:00:00",
+                "telegram_invite_envoye": True, "premiere_consultation_envoyee": True}
+_fake_row19 = tuple(_fake_vals19.get(_cols19[i], 0) for i in range(len(_cols19)))
+
+_cur19 = MagicMock()
+_cur19.fetchone.return_value = _fake_row19
+_conn19 = MagicMock()
+_conn19.cursor.return_value = _cur19
+
+with patch("auryel_bot.get_conn", return_value=_conn19):
+    _u19 = _get_user("+33600000000")
+
+v19_results = []
+def _v19(label, condition):
+    v19_results.append(condition)
+    print(f"{'✅' if condition else '❌'} {label}")
+
+_v19("les 5 colonnes Bloc 2 sont les dernières du SELECT (migration v19 bien ajoutée en fin)",
+     _cols19[-5:] == _v19_cols)
+for _col in _v19_cols:
+    _v19(f"get_user() expose {_col} avec la bonne valeur de colonne",
+         _u19.get(_col) == _fake_vals19[_col])
+
+v19_ok = all(v19_results)
+print(f"\n{'✅' if v19_ok else '❌'} MIGRATION v19 ({len(v19_results)} assertions) : {'PASS' if v19_ok else 'FAIL'}")
+if not v19_ok:
     raise SystemExit(1)
 
 print("\n✅ TESTS CONSULTATION 3 (genre utilisateur) : PASS")
