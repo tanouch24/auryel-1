@@ -1592,10 +1592,12 @@ def send_template_message(phone, template_name, variables, language="fr"):
 # ============================================================
 # TELEGRAM (Bloc 1 — canal parallèle, ne touche pas au flux WhatsApp)
 # ============================================================
-def send_message_telegram(chat_id, text):
+def send_message_telegram(chat_id, text, reply_markup=None):
     token = os.environ.get("TELEGRAM_BOT_TOKEN", "")
     url = f"https://api.telegram.org/bot{token}/sendMessage"
     data = {"chat_id": chat_id, "text": text}
+    if reply_markup is not None:
+        data["reply_markup"] = reply_markup
     r = requests.post(url, json=data, timeout=10)
     print(f"📤 [telegram] {r.status_code}")
     return r
@@ -1606,6 +1608,23 @@ def send_photo_telegram(chat_id, image_url, caption=""):
     data = {"chat_id": chat_id, "photo": image_url, "caption": caption}
     r = requests.post(url, json=data, timeout=10)
     print(f"📤 [telegram] [photo] {r.status_code}")
+    return r
+
+def answer_callback_telegram(callback_query_id):
+    token = os.environ.get("TELEGRAM_BOT_TOKEN", "")
+    url = f"https://api.telegram.org/bot{token}/answerCallbackQuery"
+    data = {"callback_query_id": callback_query_id}
+    r = requests.post(url, json=data, timeout=10)
+    print(f"📤 [telegram] [answer_callback] {r.status_code}")
+    return r
+
+def edit_reply_markup_telegram(chat_id, message_id, reply_markup=None):
+    token = os.environ.get("TELEGRAM_BOT_TOKEN", "")
+    url = f"https://api.telegram.org/bot{token}/editMessageReplyMarkup"
+    data = {"chat_id": chat_id, "message_id": message_id}
+    data["reply_markup"] = reply_markup if reply_markup is not None else {"inline_keyboard": []}
+    r = requests.post(url, json=data, timeout=10)
+    print(f"📤 [telegram] [edit_reply_markup] {r.status_code}")
     return r
 
 # ============================================================
@@ -3087,6 +3106,46 @@ def receive_telegram():
         return jsonify({"error": "invalid secret"}), 403
 
     update = request.get_json(silent=True) or {}
+
+    # Bloc 4 — clic sur bouton inline (consentement au tirage). Traité AVANT le
+    # message texte classique : "message" et "callback_query" sont deux formes
+    # d'update Telegram mutuellement exclusives sur une même requête webhook.
+    callback = update.get("callback_query")
+    if callback:
+        callback_id = callback.get("id")
+        callback_message = callback.get("message") or {}
+        chat_id_cb = (callback_message.get("chat") or {}).get("id")
+        message_id_cb = callback_message.get("message_id")
+        data_cb = callback.get("data")
+
+        if callback_id:
+            answer_callback_telegram(callback_id)
+
+        if chat_id_cb is not None and message_id_cb is not None:
+            # Trou 2 : retire les boutons tout de suite pour empêcher un reclic.
+            # Filet de sécurité seulement — Trou 3 (plus bas) montre que le flag
+            # tirage_propose_en_attente est de toute façon consommé dès le premier
+            # "oui" traité par get_reply, avant même de savoir si le consentement
+            # est reconnu : un second clic ne peut pas redéclencher de tirage.
+            edit_reply_markup_telegram(chat_id_cb, message_id_cb, None)
+
+        if chat_id_cb is not None and data_cb == "consent_oui":
+            conn = get_conn()
+            c = conn.cursor()
+            c.execute("SELECT phone FROM users WHERE telegram_chat_id=%s", (str(chat_id_cb),))
+            row = c.fetchone()
+            conn.close()
+            phone_cb = row[0] if row else "tg_" + str(chat_id_cb)
+
+            # Trou 1 : get_reply() ne fait QUE retourner le texte d'interprétation,
+            # elle ne l'envoie jamais elle-même côté Telegram — l'image, elle, part
+            # déjà toute seule via tirer_cartes() à l'intérieur de get_reply. Sans
+            # cet envoi explicite, l'utilisatrice n'aurait que l'image, jamais le texte.
+            reply_cb = get_reply(phone_cb, "oui")
+            send_message_telegram(chat_id_cb, reply_cb)
+
+        return jsonify({"status": "ok"}), 200
+
     message = update.get("message") or {}
     chat = message.get("chat") or {}
     chat_id = chat.get("id")
@@ -3135,7 +3194,17 @@ def receive_telegram():
     phone = row[0] if row else "tg_" + str(chat_id)
 
     reply = get_reply(phone, text)
-    send_message_telegram(chat_id, reply)
+
+    # Bloc 4 — get_reply() commite tirage_propose_en_attente en DB avant de
+    # retourner (armement inconditionnel, cf. audit) : un re-fetch juste après
+    # l'appel suffit à savoir si CE tour vient d'armer une proposition de tirage,
+    # sans toucher à get_reply ni à sa signature.
+    user_after = get_user(phone)
+    if user_after and user_after.get("tirage_propose_en_attente"):
+        reply_markup = {"inline_keyboard": [[{"text": "Oui, tire les cartes", "callback_data": "consent_oui"}]]}
+        send_message_telegram(chat_id, reply, reply_markup=reply_markup)
+    else:
+        send_message_telegram(chat_id, reply)
     return jsonify({"status": "ok"}), 200
 
 # ============================================================
