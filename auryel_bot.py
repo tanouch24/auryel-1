@@ -444,6 +444,17 @@ def init_db():
     except Exception as e:
         conn.rollback()
         print(f"Migration v19: {e}")
+    # Migration v20 — CONSULTATION point 2 lot A : date de naissance + profil calculé
+    # (chemin de vie, signe), nb_echanges_decouverte préparée pour le lot B.
+    try:
+        c.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS date_naissance TEXT DEFAULT ''")
+        c.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS chemin_de_vie INTEGER DEFAULT 0")
+        c.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS signe_zodiaque TEXT DEFAULT ''")
+        c.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS nb_echanges_decouverte INTEGER DEFAULT 0")
+        conn.commit()
+    except Exception as e:
+        conn.rollback()
+        print(f"Migration v20: {e}")
     conn.close()
 
 def reset_db():
@@ -483,7 +494,8 @@ def get_user(phone):
             proactifs_today_count,proactifs_today_date,
             tirage_propose_en_attente,nb_echanges_dernier_psaume,genre,
             telegram_chat_id,telegram_link_token,telegram_link_token_at,
-            telegram_invite_envoye,premiere_consultation_envoyee
+            telegram_invite_envoye,premiere_consultation_envoyee,
+            date_naissance,chemin_de_vie,signe_zodiaque,nb_echanges_decouverte
             FROM users WHERE phone=%s""", (phone,))
         row = c.fetchone()
         if row:
@@ -542,6 +554,10 @@ def get_user(phone):
                 "telegram_link_token_at":row[66] or "",
                 "telegram_invite_envoye":row[67] or False,
                 "premiere_consultation_envoyee":row[68] or False,
+                "date_naissance":row[69] or "",
+                "chemin_de_vie":row[70] or 0,
+                "signe_zodiaque":row[71] or "",
+                "nb_echanges_decouverte":row[72] or 0,
             }
         return None
     except Exception as e:
@@ -1334,6 +1350,82 @@ def detecter_genre(message):
     if any(_terme_present(m, msg) for m in ["femme", "féminin", "feminin", "fille", "nana", "une femme"]):
         return "f"
     return ""
+
+_MOIS_FR = {
+    "janvier": 1, "février": 2, "fevrier": 2, "mars": 3, "avril": 4, "mai": 5,
+    "juin": 6, "juillet": 7, "août": 8, "aout": 8, "septembre": 9,
+    "octobre": 10, "novembre": 11, "décembre": 12, "decembre": 12,
+}
+
+MOTS_REFUS_DATE_NAISSANCE = ["non", "je préfère pas", "je prefere pas", "plus tard",
+                              "pas envie", "pas maintenant", "je préfère ne pas dire",
+                              "sans dire", "garder ça pour moi"]
+
+def detecter_date_naissance(message):
+    """str -> 'AAAA-MM-JJ' | None. Tente JJ/MM/AAAA, JJ-MM-AAAA, puis "JJ mois AAAA"
+    (mois en toutes lettres). Valide que la date existe réellement (date() lève déjà
+    ValueError sur 32/13/1990 ou 29/02 hors année bissextile) et que l'année est
+    plausible (1900 à l'année courante) — jamais bloquant, retourne None sinon,
+    à charge de l'appelant (étape onboarding) de gérer le skip gracieux."""
+    msg = message.strip().lower()
+    jour = mois = annee = None
+
+    m = re.search(r'\b(\d{1,2})[/\-](\d{1,2})[/\-](\d{4})\b', msg)
+    if m:
+        jour, mois, annee = int(m.group(1)), int(m.group(2)), int(m.group(3))
+    else:
+        m = re.search(r'\b(\d{1,2})\s+([a-zéûàê]+)\s+(\d{4})\b', msg)
+        if m and m.group(2) in _MOIS_FR:
+            jour, mois, annee = int(m.group(1)), _MOIS_FR[m.group(2)], int(m.group(3))
+
+    if jour is None:
+        return None
+    if not (1900 <= annee <= datetime.now().year):
+        return None
+    try:
+        return date(annee, mois, jour).isoformat()
+    except ValueError:
+        return None
+
+def _reduire(n, preserver_maitres=True):
+    """int -> int. Réduit par sommes successives de chiffres jusqu'à un seul chiffre —
+    sauf nombres maîtres 11/22/33 si preserver_maitres, auquel cas la réduction s'arrête
+    dès qu'ils apparaissent dans la chaîne (jamais réduits davantage)."""
+    while n > 9 and not (preserver_maitres and n in (11, 22, 33)):
+        n = sum(int(c) for c in str(n))
+    return n
+
+def calcul_chemin_de_vie(date_iso):
+    """'AAAA-MM-JJ' -> int. Méthode numérologique standard : jour, mois et année sont
+    réduits SÉPARÉMENT (chacun préservant ses propres maîtres 11/22) AVANT d'être
+    additionnés — une somme brute de tous les chiffres de la date, puis réduite,
+    donnerait un résultat faux en aplatissant des maîtres qui existaient au niveau
+    d'une composante mais pas au niveau du total brut."""
+    d = date.fromisoformat(date_iso)
+    jour_reduit = _reduire(d.day)
+    mois_reduit = _reduire(d.month)
+    annee_reduite = _reduire(d.year)
+    total = jour_reduit + mois_reduit + annee_reduite
+    return _reduire(total)
+
+_SIGNES_ZODIAQUE = [
+    (1, 20, "Verseau"), (2, 21, "Poissons"), (3, 21, "Bélier"), (4, 20, "Taureau"),
+    (5, 21, "Gémeaux"), (6, 21, "Cancer"), (7, 23, "Lion"), (8, 23, "Vierge"),
+    (9, 23, "Balance"), (10, 23, "Scorpion"), (11, 22, "Sagittaire"), (12, 22, "Capricorne"),
+]
+
+def calcul_signe(date_iso):
+    """'AAAA-MM-JJ' -> nom du signe (str), plages fixes jour/mois. Capricorne par défaut
+    (avant le 20 janvier) couvre le repli de fin d'année (22 décembre - 19 janvier)."""
+    d = date.fromisoformat(date_iso)
+    mois_jour = (d.month, d.day)
+    signe = _SIGNES_ZODIAQUE[-1][2]
+    for m, j, nom in _SIGNES_ZODIAQUE:
+        if mois_jour >= (m, j):
+            signe = nom
+        else:
+            break
+    return signe
 
 def detecter_pas_les_moyens(message):
     msg = message.lower()
@@ -2502,7 +2594,7 @@ def gerer_onboarding(phone, user, user_message):
             enregistrer_echange_onboarding(phone, user, user_message, reply)
             return reply
 
-        update_user_silent(phone, prenom=prenom, onboarding_step="email")
+        update_user_silent(phone, prenom=prenom, onboarding_step="date_naissance")
         genre = user.get("genre", "")
         if genre == "m":
             salutation = f"Enchanté {prenom}."
@@ -2510,7 +2602,36 @@ def gerer_onboarding(phone, user, user_message):
             salutation = f"Enchantée {prenom}."
         else:
             salutation = f"Bienvenue {prenom}."
-        reply = f"{salutation} Quelle adresse email puis-je garder pour ton suivi ?"
+        reply = f"{salutation} Quelle est ta date de naissance ?"
+        enregistrer_echange_onboarding(phone, user, user_message, reply)
+        return reply
+
+    if step == "date_naissance" or step == "date_naissance_retry":
+        date_detectee = detecter_date_naissance(user_message)
+        if date_detectee:
+            chemin = calcul_chemin_de_vie(date_detectee)
+            signe = calcul_signe(date_detectee)
+            update_user_silent(phone, date_naissance=date_detectee, chemin_de_vie=chemin,
+                                signe_zodiaque=signe, onboarding_step="email")
+            reply = "Quelle adresse email puis-je garder pour ton suivi ?"
+            enregistrer_echange_onboarding(phone, user, user_message, reply)
+            return reply
+
+        msg_norm = user_message.strip().lower().replace("’", "'")
+        refus = any(_terme_present(m, msg_norm) for m in MOTS_REFUS_DATE_NAISSANCE)
+
+        # Skip gracieux OBLIGATOIRE : la date ne doit JAMAIS bloquer l'onboarding.
+        # On lâche prise dès un refus explicite, ou après une seule relance infructueuse
+        # (step == "date_naissance_retry" == on a déjà redemandé une fois).
+        if refus or step == "date_naissance_retry":
+            update_user_silent(phone, date_naissance="", chemin_de_vie=0, signe_zodiaque="",
+                                onboarding_step="email")
+            reply = "Pas de souci. Quelle adresse email puis-je garder pour ton suivi ?"
+            enregistrer_echange_onboarding(phone, user, user_message, reply)
+            return reply
+
+        update_user_silent(phone, onboarding_step="date_naissance_retry")
+        reply = "Je n'ai pas bien saisi ta date de naissance, tu peux me l'écrire comme 12/05/1990 ?"
         enregistrer_echange_onboarding(phone, user, user_message, reply)
         return reply
 

@@ -1069,7 +1069,75 @@ if not cons3a_ok:
     raise SystemExit(1)
 
 print("\n" + "=" * 60)
-print("TEST CONSULTATION 3 — gerer_onboarding, nouvel ordre conseiller→genre→prenom→email")
+print("TEST CONSULTATION 2 — detecter_date_naissance / calcul_chemin_de_vie / calcul_signe")
+print("=" * 60)
+
+from auryel_bot import detecter_date_naissance, calcul_chemin_de_vie, calcul_signe
+
+cons2_results = []
+def _cons2(label, condition):
+    cons2_results.append(condition)
+    print(f"{'✅' if condition else '❌'} {label}")
+
+# Formats reconnus
+_cons2("detecter_date_naissance('12/05/1990') → '1990-05-12'",
+       detecter_date_naissance("12/05/1990") == "1990-05-12")
+_cons2("detecter_date_naissance('12-05-1990') → '1990-05-12'",
+       detecter_date_naissance("12-05-1990") == "1990-05-12")
+_cons2("detecter_date_naissance('12 mai 1990') → '1990-05-12'",
+       detecter_date_naissance("12 mai 1990") == "1990-05-12")
+
+# Rejets : date impossible, 29/02 hors année bissextile, année absurde, refus
+_cons2("detecter_date_naissance('32/13/1990') → None (mois/jour impossibles)",
+       detecter_date_naissance("32/13/1990") is None)
+_cons2("detecter_date_naissance('29/02/1990') → None (1990 non bissextile)",
+       detecter_date_naissance("29/02/1990") is None)
+_cons2("detecter_date_naissance('29/02/2024') → '2024-02-29' (2024 bissextile, non-régression)",
+       detecter_date_naissance("29/02/2024") == "2024-02-29")
+_cons2("detecter_date_naissance('12/05/2090') → None (année future absurde)",
+       detecter_date_naissance("12/05/2090") is None)
+_cons2("detecter_date_naissance('je préfère pas') → None (refus, aucune date à parser)",
+       detecter_date_naissance("je préfère pas") is None)
+
+# calcul_chemin_de_vie : méthode numérologique standard (réduction PAR COMPOSANTE —
+# jour, mois, année réduits séparément avant addition), pas une somme brute de tous
+# les chiffres de la date. Les 3 dates ci-dessous ont été choisies et validées à la
+# main précisément parce que l'ancienne méthode (buguée) aplatissait le maître :
+#
+# '1950-01-22' → jour 22→22 (maître préservé) + mois 1→1 + année 1950→15→6 = 29→11
+#                (ancienne méthode, somme brute de tous les chiffres : donnait 2)
+# '1950-05-29' → jour 29→11 (maître préservé) + mois 5→5 + année 1950→6 = 22
+#                (ancienne méthode : donnait 4)
+# '1950-01-01' → jour 1 + mois 1 + année 1950→6 = 8 (cas normal, témoin de
+#                non-régression : les deux méthodes s'accordent ici)
+_cons2("calcul_chemin_de_vie('1950-01-22') → 11 (maître obtenu par réduction du JOUR "
+       "22→22 puis du total 29→11 ; l'ancienne méthode buguée donnait 2)",
+       calcul_chemin_de_vie("1950-01-22") == 11)
+_cons2("calcul_chemin_de_vie('1950-05-29') → 22 (maître obtenu par réduction du JOUR "
+       "29→11 puis somme directe du total à 22 ; l'ancienne méthode buguée donnait 4)",
+       calcul_chemin_de_vie("1950-05-29") == 22)
+_cons2("calcul_chemin_de_vie('1950-01-01') → 8 (cas normal, sans maître, non-régression)",
+       calcul_chemin_de_vie("1950-01-01") == 8)
+
+# calcul_signe : bornes de signes
+_cons2("calcul_signe('2000-03-21') → 'Bélier' (premier jour du signe)",
+       calcul_signe("2000-03-21") == "Bélier")
+_cons2("calcul_signe('2000-02-20') → 'Verseau' (dernier jour du signe)",
+       calcul_signe("2000-02-20") == "Verseau")
+_cons2("calcul_signe('2000-02-19') → 'Verseau' (non-régression, veille de la borne)",
+       calcul_signe("2000-02-19") == "Verseau")
+_cons2("calcul_signe('2000-01-05') → 'Capricorne' (repli fin d'année, avant le 20 janvier)",
+       calcul_signe("2000-01-05") == "Capricorne")
+_cons2("calcul_signe('2000-12-25') → 'Capricorne' (repli fin d'année, après le 22 décembre)",
+       calcul_signe("2000-12-25") == "Capricorne")
+
+cons2_ok = all(cons2_results)
+print(f"\n{'✅' if cons2_ok else '❌'} CONSULTATION 2 ({len(cons2_results)} assertions) : {'PASS' if cons2_ok else 'FAIL'}")
+if not cons2_ok:
+    raise SystemExit(1)
+
+print("\n" + "=" * 60)
+print("TEST CONSULTATION 3 — gerer_onboarding, nouvel ordre conseiller→genre→prenom→date_naissance→email")
 print("=" * 60)
 
 _GENRE_PHONE = "+33699000077"
@@ -1109,16 +1177,77 @@ for message_genre, genre_attendu in [("un homme", "m"), ("une femme", "f"), ("je
     _cons3b(f"step genre, message « {message_genre} » → question du prénom posée",
             "comment t'appelles-tu" in reply_g.lower())
 
-# step prenom → salutation accordée selon le genre déjà enregistré
+# step prenom → transition vers "date_naissance" (plus "email"), salutation accordée
 for genre_val, reply_attendu in [
-    ("m", "Enchanté Marie. Quelle adresse email puis-je garder pour ton suivi ?"),
-    ("f", "Enchantée Marie. Quelle adresse email puis-je garder pour ton suivi ?"),
-    ("", "Bienvenue Marie. Quelle adresse email puis-je garder pour ton suivi ?"),
+    ("m", "Enchanté Marie. Quelle est ta date de naissance ?"),
+    ("f", "Enchantée Marie. Quelle est ta date de naissance ?"),
+    ("", "Bienvenue Marie. Quelle est ta date de naissance ?"),
 ]:
     user_prenom = {**USER_BASE, "phone": _GENRE_PHONE, "onboarding_step": "prenom",
                    "onboarding_done": False, "nb_echanges": 0, "genre": genre_val, "prenom": ""}
-    reply_p, _ = _run_onboarding_step(user_prenom, "Marie")
+    reply_p, calls_p = _run_onboarding_step(user_prenom, "Marie")
+    steps_p = [c.kwargs.get("onboarding_step") for c in calls_p if "onboarding_step" in c.kwargs]
     _cons3b(f"step prenom, genre='{genre_val}' → « {reply_attendu} »", reply_p == reply_attendu)
+    _cons3b(f"step prenom, genre='{genre_val}' → transition vers 'date_naissance' (pas 'email')",
+            "date_naissance" in steps_p)
+
+# step date_naissance → date reconnue : stocke date/chemin/signe, transition vers "email"
+user_dn_ok = {**USER_BASE, "phone": _GENRE_PHONE, "onboarding_step": "date_naissance",
+              "onboarding_done": False, "nb_echanges": 0}
+reply_dn_ok, calls_dn_ok = _run_onboarding_step(user_dn_ok, "12/05/1990")
+steps_dn_ok = [c.kwargs.get("onboarding_step") for c in calls_dn_ok if "onboarding_step" in c.kwargs]
+dates_dn_ok = [c.kwargs.get("date_naissance") for c in calls_dn_ok if "date_naissance" in c.kwargs]
+chemins_dn_ok = [c.kwargs.get("chemin_de_vie") for c in calls_dn_ok if "chemin_de_vie" in c.kwargs]
+signes_dn_ok = [c.kwargs.get("signe_zodiaque") for c in calls_dn_ok if "signe_zodiaque" in c.kwargs]
+_cons3b("step date_naissance, date reconnue → transition vers 'email'", "email" in steps_dn_ok)
+_cons3b("step date_naissance, date reconnue → date_naissance stockée en ISO",
+        "1990-05-12" in dates_dn_ok)
+_cons3b("step date_naissance, date reconnue → chemin_de_vie calculé et stocké (9)",
+        9 in chemins_dn_ok)
+_cons3b("step date_naissance, date reconnue → signe_zodiaque calculé et stocké (Taureau)",
+        "Taureau" in signes_dn_ok)
+_cons3b("step date_naissance, date reconnue → question email posée",
+        reply_dn_ok == "Quelle adresse email puis-je garder pour ton suivi ?")
+
+# step date_naissance → date NON reconnue, pas de refus : redemande UNE fois, ne bloque pas plus
+user_dn_ko = {**USER_BASE, "phone": _GENRE_PHONE, "onboarding_step": "date_naissance",
+              "onboarding_done": False, "nb_echanges": 0}
+reply_dn_ko, calls_dn_ko = _run_onboarding_step(user_dn_ko, "je sais plus trop")
+steps_dn_ko = [c.kwargs.get("onboarding_step") for c in calls_dn_ko if "onboarding_step" in c.kwargs]
+_cons3b("step date_naissance, date non reconnue (sans refus) → transition vers 'date_naissance_retry'",
+        "date_naissance_retry" in steps_dn_ko)
+_cons3b("step date_naissance, date non reconnue (sans refus) → reclarifie le format attendu",
+        "12/05/1990" in reply_dn_ko)
+
+# step date_naissance → refus explicite : skip immédiat, jamais de blocage
+user_dn_refus = {**USER_BASE, "phone": _GENRE_PHONE, "onboarding_step": "date_naissance",
+                  "onboarding_done": False, "nb_echanges": 0}
+reply_dn_refus, calls_dn_refus = _run_onboarding_step(user_dn_refus, "non, je préfère pas")
+steps_dn_refus = [c.kwargs.get("onboarding_step") for c in calls_dn_refus if "onboarding_step" in c.kwargs]
+dates_dn_refus = [c.kwargs.get("date_naissance") for c in calls_dn_refus if "date_naissance" in c.kwargs]
+_cons3b("step date_naissance, refus explicite → transition directe vers 'email' (pas de retry)",
+        "email" in steps_dn_refus)
+_cons3b("step date_naissance, refus explicite → date_naissance stockée vide",
+        "" in dates_dn_refus)
+
+# step date_naissance_retry → toujours pas reconnue : skip inconditionnel, ne bloque JAMAIS l'onboarding
+user_dnr_ko = {**USER_BASE, "phone": _GENRE_PHONE, "onboarding_step": "date_naissance_retry",
+               "onboarding_done": False, "nb_echanges": 0}
+reply_dnr_ko, calls_dnr_ko = _run_onboarding_step(user_dnr_ko, "toujours pas")
+steps_dnr_ko = [c.kwargs.get("onboarding_step") for c in calls_dnr_ko if "onboarding_step" in c.kwargs]
+_cons3b("step date_naissance_retry, toujours pas reconnue → transition vers 'email' (skip, pas de 3e relance)",
+        "email" in steps_dnr_ko)
+
+# step date_naissance_retry → date reconnue au 2e essai : stocke normalement
+user_dnr_ok = {**USER_BASE, "phone": _GENRE_PHONE, "onboarding_step": "date_naissance_retry",
+               "onboarding_done": False, "nb_echanges": 0}
+reply_dnr_ok, calls_dnr_ok = _run_onboarding_step(user_dnr_ok, "12 mai 1990")
+steps_dnr_ok = [c.kwargs.get("onboarding_step") for c in calls_dnr_ok if "onboarding_step" in c.kwargs]
+dates_dnr_ok = [c.kwargs.get("date_naissance") for c in calls_dnr_ok if "date_naissance" in c.kwargs]
+_cons3b("step date_naissance_retry, date reconnue au 2e essai → transition vers 'email'",
+        "email" in steps_dnr_ok)
+_cons3b("step date_naissance_retry, date reconnue au 2e essai → date_naissance stockée",
+        "1990-05-12" in dates_dnr_ok)
 
 # Non-régression : attente_reponse_presentation bascule toujours onboarding_done=True
 user_presentation = {**USER_BASE, "phone": _GENRE_PHONE, "onboarding_step": "attente_reponse_presentation",
@@ -1194,8 +1323,10 @@ def _v19(label, condition):
     v19_results.append(condition)
     print(f"{'✅' if condition else '❌'} {label}")
 
-_v19("les 5 colonnes Bloc 2 sont les dernières du SELECT (migration v19 bien ajoutée en fin)",
-     _cols19[-5:] == _v19_cols)
+_v19_start = _cols19.index("telegram_chat_id")
+_v19("les 5 colonnes Bloc 2 forment un bloc contigu dans le SELECT, dans l'ordre attendu "
+     "(position devenue non-finale depuis la migration v20, cf. bloc suivant)",
+     _cols19[_v19_start:_v19_start + 5] == _v19_cols)
 for _col in _v19_cols:
     _v19(f"get_user() expose {_col} avec la bonne valeur de colonne",
          _u19.get(_col) == _fake_vals19[_col])
@@ -1203,6 +1334,43 @@ for _col in _v19_cols:
 v19_ok = all(v19_results)
 print(f"\n{'✅' if v19_ok else '❌'} MIGRATION v19 ({len(v19_results)} assertions) : {'PASS' if v19_ok else 'FAIL'}")
 if not v19_ok:
+    raise SystemExit(1)
+
+print("\n" + "=" * 60)
+print("TEST MIGRATION v20 — profil calculé (date de naissance) exposé par get_user()")
+print("=" * 60)
+
+_cols20 = _cols18
+_v20_cols = ["date_naissance", "chemin_de_vie", "signe_zodiaque", "nb_echanges_decouverte"]
+_fake_vals20 = {"date_naissance": "1990-05-12", "chemin_de_vie": 9,
+                "signe_zodiaque": "Taureau", "nb_echanges_decouverte": 2}
+_fake_row20 = tuple(_fake_vals20.get(_cols20[i], 0) for i in range(len(_cols20)))
+
+_cur20 = MagicMock()
+_cur20.fetchone.return_value = _fake_row20
+_conn20 = MagicMock()
+_conn20.cursor.return_value = _cur20
+
+with patch("auryel_bot.get_conn", return_value=_conn20):
+    _u20 = _get_user("+33600000000")
+
+v20_results = []
+def _v20(label, condition):
+    v20_results.append(condition)
+    print(f"{'✅' if condition else '❌'} {label}")
+
+_v20_start = _cols20.index("date_naissance")
+_v20("les 4 colonnes Bloc A sont les dernières du SELECT (migration v20 bien ajoutée en fin)",
+     _cols20[-4:] == _v20_cols)
+_v20("les 4 colonnes Bloc A forment un bloc contigu, dans l'ordre attendu",
+     _cols20[_v20_start:_v20_start + 4] == _v20_cols)
+for _col in _v20_cols:
+    _v20(f"get_user() expose {_col} avec la bonne valeur de colonne",
+         _u20.get(_col) == _fake_vals20[_col])
+
+v20_ok = all(v20_results)
+print(f"\n{'✅' if v20_ok else '❌'} MIGRATION v20 ({len(v20_results)} assertions) : {'PASS' if v20_ok else 'FAIL'}")
+if not v20_ok:
     raise SystemExit(1)
 
 print("\n✅ TESTS CONSULTATION 3 (genre utilisateur) : PASS")
