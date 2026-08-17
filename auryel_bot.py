@@ -3194,17 +3194,7 @@ def receive_telegram():
     phone = row[0] if row else "tg_" + str(chat_id)
 
     reply = get_reply(phone, text)
-
-    # Bloc 4 — get_reply() commite tirage_propose_en_attente en DB avant de
-    # retourner (armement inconditionnel, cf. audit) : un re-fetch juste après
-    # l'appel suffit à savoir si CE tour vient d'armer une proposition de tirage,
-    # sans toucher à get_reply ni à sa signature.
-    user_after = get_user(phone)
-    if user_after and user_after.get("tirage_propose_en_attente"):
-        reply_markup = {"inline_keyboard": [[{"text": "Oui, tire les cartes", "callback_data": "consent_oui"}]]}
-        send_message_telegram(chat_id, reply, reply_markup=reply_markup)
-    else:
-        send_message_telegram(chat_id, reply)
+    send_message_telegram(chat_id, reply)
     return jsonify({"status": "ok"}), 200
 
 # ============================================================
