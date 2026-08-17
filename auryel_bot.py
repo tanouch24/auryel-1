@@ -1540,7 +1540,21 @@ def tirer_cartes(phone):
     cartes = TAROT_MAPPING[fichier]
     image_url = f"{SITE_URL}/images/tarot/{fichier}"
     media_id = TAROT_MEDIA_IDS.get(fichier)
-    send_image(phone, image_url, caption="", media_id=media_id)
+
+    # Bloc 3 — résolution de canal : image envoyée via Telegram si le user y est
+    # basculé (telegram_chat_id) ou y est arrivé directement (phone="tg_"+chat_id),
+    # branche WhatsApp strictement inchangée sinon.
+    user = get_user(phone)
+    tg_chat_id = ""
+    if user and user.get("telegram_chat_id"):
+        tg_chat_id = user["telegram_chat_id"]
+    elif phone.startswith("tg_"):
+        tg_chat_id = phone[3:]
+
+    if tg_chat_id:
+        send_photo_telegram(tg_chat_id, image_url, caption="")
+    else:
+        send_image(phone, image_url, caption="", media_id=media_id)
     return fichier, cartes
 
 def send_template_message(phone, template_name, variables, language="fr"):
@@ -1584,6 +1598,14 @@ def send_message_telegram(chat_id, text):
     data = {"chat_id": chat_id, "text": text}
     r = requests.post(url, json=data, timeout=10)
     print(f"📤 [telegram] {r.status_code}")
+    return r
+
+def send_photo_telegram(chat_id, image_url, caption=""):
+    token = os.environ.get("TELEGRAM_BOT_TOKEN", "")
+    url = f"https://api.telegram.org/bot{token}/sendPhoto"
+    data = {"chat_id": chat_id, "photo": image_url, "caption": caption}
+    r = requests.post(url, json=data, timeout=10)
+    print(f"📤 [telegram] [photo] {r.status_code}")
     return r
 
 # ============================================================

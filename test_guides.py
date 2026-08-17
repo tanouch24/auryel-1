@@ -600,7 +600,14 @@ with patch("auryel_bot.requests.post") as mock_post:
     print("✅ sans media_id → comportement actuel inchangé (link direct)")
 
 # T5 : tirer_cartes() lit bien TAROT_MEDIA_IDS et le transmet à send_image()
-with patch("auryel_bot.requests.post") as mock_post, patch.dict(_ab.TAROT_MEDIA_IDS, {}, clear=True):
+# get_user mocké à None : sans ça, psycopg2 étant un MagicMock global, get_user()
+# renverrait un dict dont "telegram_chat_id" serait un MagicMock (donc truthy),
+# ce qui ferait basculer tirer_cartes() sur la branche Telegram par erreur.
+# "33600000000" est un numéro WhatsApp pur (pas de préfixe "tg_"), c'est bien la
+# branche WhatsApp de tirer_cartes() qui doit être exercée ici.
+with patch("auryel_bot.requests.post") as mock_post, \
+     patch.dict(_ab.TAROT_MEDIA_IDS, {}, clear=True), \
+     patch("auryel_bot.get_user", return_value=None):
     mock_post.return_value = _MM(status_code=200, json=lambda: {}, text="")
     if _ab.TAROT_MAPPING:
         un_fichier = next(iter(_ab.TAROT_MAPPING))
