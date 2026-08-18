@@ -713,7 +713,9 @@ def _run_get_reply_accueil_capture_updates(user_dict, message):
         return system_prompt, m_update.call_args_list
 
 # T1 : tour 0 (decouverte_du_tour), signe_zodiaque renseigné (date de naissance captée
-# au lot A) -> PROFIL et DÉCOUVERTE présents, TIRAGE D'ACCUEIL absent (déplacé au tour 1),
+# au lot A) -> bloc ACCUEIL présent avec profil (chemin+signe) SÉQUENCÉ avant la découverte
+# (fusion PROFIL+DÉCOUVERTE en un seul bloc impératif, BUG 2 : le LLM ignorait le profil
+# quand les deux blocs se concurrençaient), TIRAGE D'ACCUEIL absent (déplacé au tour 1),
 # et l'anti-bruit (PROFIL DE L'AUTRE PERSONNE / RITUELS CONCRETS) s'applique quand même
 # à ce tour puisque premier_tour_post_onboarding = decouverte_du_tour or tirage_accueil_du_tour.
 system_1, _ = _run_get_reply_accueil(
@@ -721,23 +723,27 @@ system_1, _ = _run_get_reply_accueil(
     "je pense qu'elle me trompe")
 assert "PROFIL DE L'AUTRE PERSONNE" not in system_1, "le parasite PROFIL n'a pas été neutralisé au tour 0"
 assert "RITUELS CONCRETS ET VARIÉS" not in system_1, "le parasite RITUELS n'a pas été neutralisé au tour 0"
-assert "=== PROFIL ===" in system_1, "le bloc PROFIL doit apparaître au tour 0 (signe_zodiaque renseigné)"
+assert "=== ACCUEIL" in system_1, "le bloc ACCUEIL doit apparaître au tour 0 (signe_zodiaque renseigné)"
 assert "Taureau" in system_1 and "9" in system_1, "le profil doit donner chemin_de_vie et signe en clair"
-assert "=== DÉCOUVERTE ===" in system_1, "le bloc DÉCOUVERTE doit apparaître au tour 0"
+assert "D'ABORD" in system_1 and "ENSUITE" in system_1, "le bloc ACCUEIL doit séquencer profil puis découverte"
+assert "question ouverte" in system_1, "la partie découverte doit rester présente dans le bloc ACCUEIL"
 assert "TIRAGE D'ACCUEIL" not in system_1, "le tirage d'accueil est déplacé au tour 1, absent au tour 0"
-print("✅ tour 0 (profil renseigné) : PROFIL + DÉCOUVERTE présents, TIRAGE D'ACCUEIL absent, anti-bruit actif")
+print("✅ tour 0 (profil renseigné) : ACCUEIL fusionné (profil séquencé + découverte) présent, TIRAGE D'ACCUEIL absent, anti-bruit actif")
 
-# T1-skip : tour 0, signe_zodiaque VIDE (date de naissance refusée au lot A) -> PROFIL
-# absent (skip gracieux, jamais de profil vide), DÉCOUVERTE toujours présente.
+# T1-skip : tour 0, signe_zodiaque VIDE (date de naissance refusée au lot A) -> partie profil
+# absente (skip gracieux, jamais de profil vide), partie découverte toujours présente dans
+# le bloc ACCUEIL (variante courte, sans chemin de vie/signe ni séquençage D'ABORD/ENSUITE).
 system_1_skip, _ = _run_get_reply_accueil(
     _user_bug1(onboarding_done=False, chemin_de_vie=0, signe_zodiaque=""),
     "je pense qu'elle me trompe")
-assert "=== PROFIL ===" not in system_1_skip, "signe_zodiaque vide -> PROFIL doit être skippé"
-assert "=== DÉCOUVERTE ===" in system_1_skip, "DÉCOUVERTE doit rester présente même sans profil"
-print("✅ tour 0 (date de naissance refusée) : PROFIL skippé, DÉCOUVERTE toujours présente")
+assert "=== ACCUEIL" in system_1_skip, "le bloc ACCUEIL doit rester présent même sans profil (partie découverte seule)"
+assert "D'ABORD" not in system_1_skip and "ENSUITE" not in system_1_skip, "signe_zodiaque vide -> partie profil (séquençage) doit être skippée"
+assert "chemin de vie" not in system_1_skip, "signe_zodiaque vide -> aucune mention de chemin de vie/signe"
+assert "question ouverte" in system_1_skip, "la partie découverte doit rester présente même sans profil"
+print("✅ tour 0 (date de naissance refusée) : partie profil skippée, partie découverte toujours présente")
 
 # T1-bis : tour 1 (tirage_accueil_du_tour — onboarding_done=True, nb_echanges_decouverte=1)
-# -> TIRAGE D'ACCUEIL présent et impératif, PROFIL/DÉCOUVERTE absents (déjà faits au tour 0),
+# -> TIRAGE D'ACCUEIL présent et impératif, ACCUEIL absent (déjà fait au tour 0),
 # anti-bruit toujours actif à ce tour.
 system_1bis, _ = _run_get_reply_accueil(
     _user_bug1(onboarding_done=True, nb_echanges_decouverte=1),
@@ -746,17 +752,15 @@ assert "PROFIL DE L'AUTRE PERSONNE" not in system_1bis, "le parasite PROFIL doit
 assert "RITUELS CONCRETS ET VARIÉS" not in system_1bis, "le parasite RITUELS doit aussi être neutralisé au tour 1"
 assert "TIRAGE D'ACCUEIL" in system_1bis, "le bloc TIRAGE D'ACCUEIL doit apparaître au tour 1 (découverte faite)"
 assert "OBLIGATOIRE" in system_1bis, "le bloc doit être formulé de façon impérative"
-assert "=== PROFIL ===" not in system_1bis, "PROFIL ne doit pas réapparaître au tour 1"
-assert "=== DÉCOUVERTE ===" not in system_1bis, "DÉCOUVERTE ne doit pas réapparaître au tour 1"
-print("✅ tour 1 (découverte faite) : TIRAGE D'ACCUEIL impératif, PROFIL/DÉCOUVERTE absents, anti-bruit actif")
+assert "=== ACCUEIL" not in system_1bis, "ACCUEIL ne doit pas réapparaître au tour 1"
+print("✅ tour 1 (découverte faite) : TIRAGE D'ACCUEIL impératif, ACCUEIL absent, anti-bruit actif")
 
 # T2 : tour normal (onboarding déjà fait, nb_echanges_decouverte=0/absent) -> comportement inchangé
 system_2, _ = _run_get_reply_accueil(_user_bug1(onboarding_done=True), "je pense qu'elle me trompe")
 assert "PROFIL DE L'AUTRE PERSONNE" in system_2, "ne doit pas être supprimé hors tour 0/tour 1"
 assert "RITUELS CONCRETS ET VARIÉS" in system_2, "ne doit pas être supprimé hors tour 0/tour 1"
 assert "TIRAGE D'ACCUEIL" not in system_2, "ne doit apparaître qu'au tour 1 (découverte faite)"
-assert "=== PROFIL ===" not in system_2, "PROFIL ne doit apparaître qu'au tour 0"
-assert "=== DÉCOUVERTE ===" not in system_2, "DÉCOUVERTE ne doit apparaître qu'au tour 0"
+assert "=== ACCUEIL" not in system_2, "ACCUEIL ne doit apparaître qu'au tour 0"
 print("✅ tour normal (hors tour 0/tour 1) : PROFIL/RITUELS toujours présents, rien de nouveau injecté")
 
 # T-consommation : nb_echanges_decouverte armé à 1 au tour 0, remis à 0 au tour 1
@@ -1090,17 +1094,15 @@ def _cons2(label, condition):
     print(f"{'✅' if condition else '❌'} {label}")
 
 # Moment grave au TOUR 0 (decouverte_du_tour) : CONSULTATION point 2 lot B — la sobriété
-# doit primer sur PROFIL et DÉCOUVERTE (plus TIRAGE D'ACCUEIL, qui n'est de toute façon
-# plus atteignable au tour 0 depuis le lot B — le vrai garde-fou pertinent ici est PROFIL/
-# DÉCOUVERTE, testé séparément au tour 1 pour TIRAGE D'ACCUEIL).
+# doit primer sur le bloc ACCUEIL (fusion PROFIL+DÉCOUVERTE) (plus TIRAGE D'ACCUEIL, qui
+# n'est de toute façon plus atteignable au tour 0 depuis le lot B — le vrai garde-fou
+# pertinent ici est ACCUEIL, testé séparément au tour 1 pour TIRAGE D'ACCUEIL).
 system_grave_onboarding, _ = _run_get_reply_accueil(
     _user_bug1(onboarding_done=False, chemin_de_vie=9, signe_zodiaque="Taureau"),
     "ma mère est décédée hier")
 _cons2("deuil au tour 0 → bloc MOMENT GRAVE présent", "MOMENT GRAVE" in system_grave_onboarding)
-_cons2("deuil au tour 0 → bloc PROFIL absent (sobriété prioritaire, même avec signe_zodiaque renseigné)",
-       "=== PROFIL ===" not in system_grave_onboarding)
-_cons2("deuil au tour 0 → bloc DÉCOUVERTE absent (sobriété prioritaire)",
-       "=== DÉCOUVERTE ===" not in system_grave_onboarding)
+_cons2("deuil au tour 0 → bloc ACCUEIL absent (sobriété prioritaire, même avec signe_zodiaque renseigné)",
+       "=== ACCUEIL" not in system_grave_onboarding)
 _cons2("deuil au tour 0 → bloc TIRAGE D'ACCUEIL absent (de toute façon plus atteignable au tour 0)",
        "TIRAGE D'ACCUEIL" not in system_grave_onboarding)
 _cons2("deuil au tour 0 → PSAUME EN APPUI absent", "PSAUME EN APPUI" not in system_grave_onboarding)

@@ -2908,24 +2908,26 @@ def get_reply(phone, user_message, depuis_pub=False, user_msg_pre_inserted=False
     if proposer_tirage_spontane:
         system += "\n\n=== PROPOSITION TIRAGE SPONTANÉE ===\nLa conversation stagne depuis plusieurs échanges sans tirage récent. Propose toi-même spontanément un tirage de cartes à la personne, toujours en demandant d'abord la permission comme décrit dans TIRAGE DE CARTES AVEC CONSENTEMENT."
     if decouverte_du_tour and not moment_grave:
-        # DIAG TEMPORAIRE — à retirer après diagnostic BUG 2
-        diag = f"signe={(user_fresh or user).get('signe_zodiaque')!r} chemin={(user_fresh or user).get('chemin_de_vie')!r} tg={(user_fresh or user).get('telegram_chat_id')!r} fresh={user_fresh is not None}"
-        update_user_silent(phone, debug_diag=diag)
         signe_zodiaque_profil = (user_fresh or user).get("signe_zodiaque") or ""
         if signe_zodiaque_profil:
             chemin_de_vie_profil = (user_fresh or user).get("chemin_de_vie") or 0
             system += (
-                "\n\n=== PROFIL ===\n"
-                f"Chemin de vie : {chemin_de_vie_profil}. Signe : {signe_zodiaque_profil}.\n"
-                "Restitue ces informations dans TA voix (ton vocabulaire, ta manière), en 2-3 phrases "
-                "MAXIMUM — jamais un pavé numérologique, jamais une formule identique à ce qu'un autre "
-                "conseiller dirait, jamais un vocabulaire de coach."
+                "\n\n=== ACCUEIL (OBLIGATOIRE CE TOUR, DANS CET ORDRE) ===\n"
+                "Ta réponse DOIT faire deux choses, dans cet ordre exact, en un seul message :\n"
+                f"1) D'ABORD, restitue son profil : chemin de vie {chemin_de_vie_profil} et signe "
+                f"{signe_zodiaque_profil}. Donne-lui un éclairage court et incarné là-dessus (2-3 phrases), "
+                "dans TA voix de conseiller — jamais un vocabulaire de coach, jamais une formule qu'un "
+                "autre conseiller dirait à l'identique. Ce n'est pas optionnel : tu DOIS nommer son chemin "
+                "de vie et son signe.\n"
+                "2) ENSUITE seulement, enchaîne avec UNE question ouverte pour comprendre ce qui l'amène. "
+                "NE propose PAS de tirage de cartes ce tour-ci."
             )
-        system += (
-            "\n\n=== DÉCOUVERTE ===\n"
-            "Pose UNE seule question ouverte pour comprendre ce qui l'amène. NE propose PAS encore de "
-            "tirage de cartes ce tour-ci."
-        )
+        else:
+            system += (
+                "\n\n=== ACCUEIL (OBLIGATOIRE CE TOUR) ===\n"
+                "Pose UNE seule question ouverte pour comprendre ce qui l'amène. NE propose PAS encore de "
+                "tirage de cartes ce tour-ci."
+            )
     if tirage_accueil_du_tour and not moment_grave:
         system += (
             "\n\n=== TIRAGE D'ACCUEIL (PRIORITÉ MAXIMALE — OBLIGATOIRE CE TOUR) ===\n"
