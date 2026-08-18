@@ -2928,6 +2928,9 @@ def get_reply(phone, user_message, depuis_pub=False, user_msg_pre_inserted=False
                 "Pose UNE seule question ouverte pour comprendre ce qui l'amène. NE propose PAS encore de "
                 "tirage de cartes ce tour-ci."
             )
+        # DIAG TEMPORAIRE — à retirer : preuve directe que le bloc ACCUEIL s'exécute et
+        # que le marqueur est bien injecté dans le system prompt final de ce tour.
+        update_user_silent(phone, debug_diag=f"ACCUEIL_injecte={'=== ACCUEIL' in system} signe={signe_zodiaque_profil!r} len_system={len(system)}")
     if tirage_accueil_du_tour and not moment_grave:
         system += (
             "\n\n=== TIRAGE D'ACCUEIL (PRIORITÉ MAXIMALE — OBLIGATOIRE CE TOUR) ===\n"
