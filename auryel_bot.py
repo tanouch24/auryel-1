@@ -455,6 +455,14 @@ def init_db():
     except Exception as e:
         conn.rollback()
         print(f"Migration v20: {e}")
+    # Migration v21 — DIAG TEMPORAIRE (BUG 2, bloc découverte) : colonne debug_diag
+    # lisible via SELECT, à retirer une fois le diagnostic terminé.
+    try:
+        c.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS debug_diag TEXT DEFAULT ''")
+        conn.commit()
+    except Exception as e:
+        conn.rollback()
+        print(f"Migration v21: {e}")
     conn.close()
 
 def reset_db():
@@ -2836,6 +2844,12 @@ def get_reply(phone, user_message, depuis_pub=False, user_msg_pre_inserted=False
     decouverte_du_tour = onboarding_vient_de_finir
     tirage_accueil_du_tour = (not onboarding_vient_de_finir) and (user.get("nb_echanges_decouverte", 0) or 0) >= 1
 
+    # DIAG TEMPORAIRE — à retirer : capture inconditionnelle des conditions AVANT le
+    # bloc découverte, pour savoir si ce bloc est même atteint (écrasé plus bas par la
+    # version détaillée signe/chemin si le bloc découverte s'exécute réellement).
+    diag_pre = f"decouverte={decouverte_du_tour} moment_grave={moment_grave} onboarding_vdf={onboarding_vient_de_finir}"
+    update_user_silent(phone, debug_diag=diag_pre)
+
     psaume_candidat = (
         None if moment_grave else
         choisir_psaume(registre_courant, user_fresh or user, onboarding_vient_de_finir, nb_echanges_actuel)
@@ -2895,7 +2909,8 @@ def get_reply(phone, user_message, depuis_pub=False, user_msg_pre_inserted=False
         system += "\n\n=== PROPOSITION TIRAGE SPONTANÉE ===\nLa conversation stagne depuis plusieurs échanges sans tirage récent. Propose toi-même spontanément un tirage de cartes à la personne, toujours en demandant d'abord la permission comme décrit dans TIRAGE DE CARTES AVEC CONSENTEMENT."
     if decouverte_du_tour and not moment_grave:
         # DIAG TEMPORAIRE — à retirer après diagnostic BUG 2
-        print(f"[DIAG decouverte] phone={phone} signe_fresh={(user_fresh or user).get('signe_zodiaque')!r} chemin_fresh={(user_fresh or user).get('chemin_de_vie')!r} tg_chat_id={(user_fresh or user).get('telegram_chat_id')!r} user_is_fresh={user_fresh is not None}")
+        diag = f"signe={(user_fresh or user).get('signe_zodiaque')!r} chemin={(user_fresh or user).get('chemin_de_vie')!r} tg={(user_fresh or user).get('telegram_chat_id')!r} fresh={user_fresh is not None}"
+        update_user_silent(phone, debug_diag=diag)
         signe_zodiaque_profil = (user_fresh or user).get("signe_zodiaque") or ""
         if signe_zodiaque_profil:
             chemin_de_vie_profil = (user_fresh or user).get("chemin_de_vie") or 0
