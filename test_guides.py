@@ -764,6 +764,84 @@ print("✅ prompt de base (endroit A) : wording juriste présent, ancien wording
 print("\n✅ TESTS OBJECTION IDENTITÉ — wording juriste (CONSULTATION point 5) : PASS")
 
 # ============================================================
+# TESTS — Telegram Bloc 5 : confirmation paiement routée + bouton S'abonner
+# ============================================================
+print("\n" + "=" * 60)
+print("TEST TELEGRAM BLOC 5 — paiement (confirmation routée, bouton S'abonner)")
+print("=" * 60)
+
+from auryel_bot import extraire_lien_paiement, SITE_URL
+
+class _ImmediateThread:
+    """Fait tourner threading.Thread(...).start() de façon synchrone, dans le thread
+    du test — évite d'attendre le vrai time.sleep(3) de send_retour() et les races
+    d'un thread daemon réel pendant les assertions."""
+    def __init__(self, target=None, args=(), kwargs=None, daemon=None):
+        self.target = target
+        self.args = args
+        self.kwargs = kwargs or {}
+    def start(self):
+        self.target(*self.args, **self.kwargs)
+
+def _run_stripe_webhook_checkout_completed(phone, user_dict):
+    event = {
+        "type": "checkout.session.completed",
+        "data": {"object": {
+            "customer": "cus_test123",
+            "client_reference_id": phone,
+            "metadata": {"phone": phone},
+        }},
+    }
+    with patch("auryel_bot.stripe.Webhook.construct_event", return_value=event), \
+         patch("auryel_bot.get_user", return_value=user_dict), \
+         patch("auryel_bot.create_user"), \
+         patch("auryel_bot.update_user_silent"), \
+         patch("auryel_bot.add_message"), \
+         patch("auryel_bot.send_message") as m_send_wa, \
+         patch("auryel_bot.send_message_telegram") as m_send_tg, \
+         patch("auryel_bot.threading.Thread", _ImmediateThread), \
+         patch("auryel_bot.time.sleep"):
+        with flask_app.test_client() as wc:
+            r = wc.post("/stripe/webhook", data=b"{}", headers={"Stripe-Signature": "fake"})
+        return r, m_send_wa, m_send_tg
+
+# T-paiement-a : user WhatsApp (telegram_chat_id vide) -> send_message, PAS send_message_telegram
+r_wa, m_send_wa_a, m_send_tg_a = _run_stripe_webhook_checkout_completed(
+    "+33600000001",
+    {"guide": "selena", "nom_affiche": "Séléna", "prenom": "Marie", "telegram_chat_id": ""})
+assert r_wa.status_code == 200, "le webhook doit répondre 200"
+assert m_send_wa_a.called, "user WhatsApp (telegram_chat_id vide) -> send_message doit être appelé"
+assert not m_send_tg_a.called, "user WhatsApp -> send_message_telegram ne doit PAS être appelé"
+print("✅ confirmation paiement — user WhatsApp : routée via send_message, pas send_message_telegram")
+
+# T-paiement-b : user Telegram (telegram_chat_id renseigné) -> send_message_telegram, PAS send_message
+r_tg, m_send_wa_b, m_send_tg_b = _run_stripe_webhook_checkout_completed(
+    "+33600000002",
+    {"guide": "selena", "nom_affiche": "Séléna", "prenom": "Julie", "telegram_chat_id": "987654321"})
+assert r_tg.status_code == 200, "le webhook doit répondre 200"
+assert m_send_tg_b.called, "user Telegram (telegram_chat_id renseigné) -> send_message_telegram doit être appelé"
+assert m_send_tg_b.call_args[0][0] == "987654321", "send_message_telegram doit recevoir le bon tg_chat_id"
+assert not m_send_wa_b.called, "user Telegram -> send_message ne doit PAS être appelé"
+print("✅ confirmation paiement — user Telegram : routée via send_message_telegram, pas send_message")
+
+# T-lien-a : détection du lien de paiement dans reply -> lien extrait (pour attacher le bouton)
+_texte_avec_lien = (
+    f"Je comprends. Pour continuer : {SITE_URL}/payer?source=whatsapp&phone=%2B33600000001 "
+    "Je reste là si tu as des questions."
+)
+_lien_detecte = extraire_lien_paiement(_texte_avec_lien)
+assert _lien_detecte == f"{SITE_URL}/payer?source=whatsapp&phone=%2B33600000001", \
+    f"le lien de paiement doit être détecté et extrait tel quel, obtenu : {_lien_detecte!r}"
+print("✅ extraire_lien_paiement : lien présent dans reply -> détecté et extrait")
+
+# T-lien-b : pas de lien de paiement dans reply -> aucune détection (pas de bouton)
+assert extraire_lien_paiement("Je pense que ça va s'arranger, prends soin de toi.") is None, \
+    "sans lien de paiement dans reply, aucune détection ne doit avoir lieu"
+print("✅ extraire_lien_paiement : pas de lien dans reply -> aucune détection (pas de bouton)")
+
+print("\n✅ TESTS TELEGRAM BLOC 5 — paiement : PASS")
+
+# ============================================================
 # TESTS — priorité au tirage d'accueil, consentement par mot entier
 # ============================================================
 print("\n" + "=" * 60)

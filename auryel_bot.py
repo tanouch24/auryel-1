@@ -1475,6 +1475,15 @@ def get_stripe_links(phone):
         "mensuel": f"{base}?source=whatsapp&phone={phone}",
     }
 
+def extraire_lien_paiement(texte):
+    """Cherche le lien de paiement (celui produit par get_stripe_links, {SITE_URL}/payer...)
+    dans un texte de réponse — utilisé côté Telegram pour attacher un bouton inline
+    "S'abonner". On cherche {SITE_URL}/payer et PAS "buy.stripe.com"/"checkout.stripe.com" :
+    à l'ask paiement, la vraie session Stripe n'existe pas encore, elle n'est créée que
+    plus tard côté site (create_checkout_session) quand l'utilisateur clique sur /payer."""
+    m = re.search(re.escape(f"{SITE_URL}/payer") + r"[^\s]*", texte)
+    return m.group(0) if m else None
+
 # ============================================================
 # MESSAGES
 # ============================================================
@@ -3385,7 +3394,16 @@ def receive_telegram():
     phone = row[0] if row else "tg_" + str(chat_id)
 
     reply = get_reply(phone, text)
-    send_message_telegram(chat_id, reply)
+    lien_paiement = extraire_lien_paiement(reply)
+    if lien_paiement:
+        # Bouton URL Telegram : ouvre directement la page paiement côté client, aucun
+        # aller-retour serveur — ne touche pas la branche callback_query (Bloc 4). Le
+        # lien reste aussi dans le texte (redondance volontaire : rassurante, et sans
+        # coût si le bouton ne s'affiche pas sur un client Telegram ancien).
+        reply_markup = {"inline_keyboard": [[{"text": "✨ M'abonner", "url": lien_paiement}]]}
+        send_message_telegram(chat_id, reply, reply_markup=reply_markup)
+    else:
+        send_message_telegram(chat_id, reply)
     return jsonify({"status": "ok"}), 200
 
 # ============================================================
@@ -3426,6 +3444,16 @@ def stripe_webhook():
 
             def send_retour(num, u):
                 time.sleep(3)
+                # BUG Bloc 5 — résolution de canal, même pattern que tirer_cartes (Bloc 3)
+                # et send_connexion_puis_presentation (BUG 1) : sans ça, la confirmation
+                # part en dur vers WhatsApp et n'arrive jamais côté Telegram.
+                user_canal = get_user(num)
+                tg_chat_id = ""
+                if user_canal and user_canal.get("telegram_chat_id"):
+                    tg_chat_id = user_canal["telegram_chat_id"]
+                elif num.startswith("tg_"):
+                    tg_chat_id = num[3:]
+
                 g      = GUIDES.get(u["guide"] if u else "selena", GUIDES["selena"])
                 nom    = u.get("nom_affiche") or g["nom"] if u else "Séléna"
                 prenom = u["prenom"] if u else ""
@@ -3437,7 +3465,11 @@ Je suis {nom}, ton conseiller personnel sur Auryel.
 Avant de commencer, je m'adresse à toi au masculin ou au féminin ? 🌙"""
                 else:
                     msg = msg_retour_paiement(nom, prenom)
-                send_message(num, msg)
+
+                if tg_chat_id:
+                    send_message_telegram(tg_chat_id, msg)
+                else:
+                    send_message(num, msg)
                 add_message(num, "assistant", msg)
             threading.Thread(target=send_retour, args=(phone, user), daemon=True).start()
         else:
