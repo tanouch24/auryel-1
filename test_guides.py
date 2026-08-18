@@ -665,6 +665,65 @@ with patch("auryel_bot.requests.post") as mock_post, \
 print("\n✅ TESTS TIRAGE media_id + refresh : PASS")
 
 # ============================================================
+# TESTS — CONSULTATION point 4 : tirage ancré dans les mots exacts
+# ============================================================
+print("\n" + "=" * 60)
+print("TEST TIRAGE TAROT — reprise impérative des mots exacts (CONSULTATION point 4)")
+print("=" * 60)
+
+def _run_get_reply_tirage(user_dict, message, history=None):
+    """Comme _run_get_reply_capture_system (BUG 1), mais permet de fournir un
+    historique (get_history) non vide et mocke tirer_cartes() — nécessaire pour
+    tester la voie consentement différé, où le contenu réel de la personne est
+    dans un tour PRÉCÉDENT, pas dans user_message (qui n'est qu'un « oui »)."""
+    with patch("auryel_bot.get_user", return_value=user_dict), \
+         patch("auryel_bot.check_and_increment_daily_limit", return_value=False), \
+         patch("auryel_bot.gerer_onboarding", return_value=None), \
+         patch("auryel_bot.get_history", return_value=history or []), \
+         patch("auryel_bot.add_message"), \
+         patch("auryel_bot.update_user"), \
+         patch("auryel_bot.update_user_silent"), \
+         patch("auryel_bot.choisir_citation", return_value=""), \
+         patch("auryel_bot.log_event"), \
+         patch("auryel_bot.tirer_cartes", return_value=(None, ["La Lune", "Le Pape", "Le Pendu"])), \
+         patch("auryel_bot.call_llm", return_value="réponse factice") as m_llm:
+        get_reply(_BUG1_PHONE, message)
+        return m_llm.call_args[0][0][0]["content"]
+
+# T-tirage-a : demande directe — user_message courant a du contenu réel
+# ("tire-moi les cartes" déclenche outil_demande="carte" -> tirage immédiat).
+system_tirage_a = _run_get_reply_tirage(
+    _user_bug1(),
+    "tire-moi les cartes, il ne me répond plus depuis une semaine")
+assert "=== TIRAGE TAROT (déjà effectué) ===" in system_tirage_a, \
+    "le bloc tirage doit apparaître (demande directe)"
+assert "IMPÉRATIF" in system_tirage_a and "mot ou une expression EXACTE" in system_tirage_a, \
+    "l'instruction impérative de reprise des mots exacts doit être présente (voie demande directe)"
+assert "message juste avant dans la conversation" in system_tirage_a, \
+    "l'instruction doit couvrir les deux voies (message courant OU message précédent), même quand le courant a du contenu"
+print("✅ voie demande directe (message courant riche en contenu) : instruction impérative présente")
+
+# T-tirage-b : consentement différé — user_message courant = "oui" (aucun contenu),
+# le contenu réel est dans l'historique (tour précédent : la proposition de tirage
+# répondait à ce que la personne venait de raconter).
+system_tirage_b = _run_get_reply_tirage(
+    _user_bug1(tirage_propose_en_attente=True),
+    "oui",
+    history=[
+        {"role": "user", "content": "il ne me répond plus depuis une semaine"},
+        {"role": "assistant", "content": "Je comprends, veux-tu que je tire les cartes pour éclairer ça ?"},
+    ])
+assert "=== TIRAGE TAROT (déjà effectué) ===" in system_tirage_b, \
+    "le bloc tirage doit apparaître (consentement différé)"
+assert "IMPÉRATIF" in system_tirage_b and "mot ou une expression EXACTE" in system_tirage_b, \
+    "l'instruction impérative de reprise des mots exacts doit être présente (voie consentement différé)"
+assert "message juste avant dans la conversation" in system_tirage_b, \
+    "l'instruction doit prévoir explicitement le cas où user_message n'est qu'un accord (« oui »)"
+print("✅ voie consentement différé (message = « oui », contenu réel dans l'historique) : instruction impérative présente, renvoie explicitement vers le tour précédent")
+
+print("\n✅ TESTS TIRAGE TAROT — reprise des mots exacts (CONSULTATION point 4) : PASS")
+
+# ============================================================
 # TESTS — priorité au tirage d'accueil, consentement par mot entier
 # ============================================================
 print("\n" + "=" * 60)
