@@ -724,6 +724,46 @@ print("✅ voie consentement différé (message = « oui », contenu réel dans 
 print("\n✅ TESTS TIRAGE TAROT — reprise des mots exacts (CONSULTATION point 4) : PASS")
 
 # ============================================================
+# TESTS — CONSULTATION point 5 : wording juriste "IA" (identité)
+# ============================================================
+print("\n" + "=" * 60)
+print("TEST OBJECTION IDENTITÉ — wording juriste (CONSULTATION point 5)")
+print("=" * 60)
+
+from auryel_bot import detecter_objection_ia
+
+# (c) detecter_objection_ia : formulation existante + nouvelles ajoutées avec prudence
+assert detecter_objection_ia("tu es une IA ?"), "détection existante 'tu es une ia' doit continuer de fonctionner"
+assert detecter_objection_ia("c'est automatisé ?"), "nouvelle détection 'automatisé' doit fonctionner"
+assert detecter_objection_ia("c'est un bot"), "nouvelle détection 'c'est un bot' doit fonctionner"
+print("✅ detecter_objection_ia : détection existante + nouvelles ('automatisé', 'c'est un bot') OK")
+
+# (d) formulations volontairement PAS ajoutées (trop ambiguës, gérées au cas par cas par le LLM)
+assert not detecter_objection_ia("y'a quelqu'un ?"), "'y'a quelqu'un ?' ne doit PAS déclencher (trop ambigu, exclu volontairement)"
+print("✅ detecter_objection_ia : 'y'a quelqu'un ?' n'est PAS détecté (exclusion volontaire)")
+
+# (a) le wording juriste doit être présent dans le bloc dynamique === OBJECTION IDENTITÉ ===
+system_obj_ia = _run_get_reply_tirage(_user_bug1(), "tu es une IA ?")
+assert "=== OBJECTION IDENTITÉ ===" in system_obj_ia, "le bloc doit apparaître quand obj_ia est vrai"
+assert "une partie de nos échanges sont gérés par une IA" in system_obj_ia, \
+    "le wording juriste validé doit être présent dans le bloc OBJECTION IDENTITÉ"
+
+# (b) l'ancien wording trompeur doit être absent (bloc dynamique + prompt de base, capturés dans le même appel)
+assert "encadré par une équipe humaine" not in system_obj_ia, \
+    "l'ancien wording 'encadré par une équipe humaine' ne doit plus apparaître"
+print("✅ bloc === OBJECTION IDENTITÉ === : wording juriste présent, ancien wording absent")
+
+# (b, suite) le prompt de base (endroit A) porte aussi le wording juriste, même sans obj_ia déclenché
+system_base = _run_get_reply_tirage(_user_bug1(), "je pense à lui tout le temps")
+assert "une partie de nos échanges sont gérés par une IA" in system_base, \
+    "le wording juriste doit être présent dans le prompt de base (endroit A), même sans obj_ia déclenché"
+assert "encadré par une équipe humaine" not in system_base, \
+    "l'ancien wording ne doit plus apparaître dans le prompt de base"
+print("✅ prompt de base (endroit A) : wording juriste présent, ancien wording absent")
+
+print("\n✅ TESTS OBJECTION IDENTITÉ — wording juriste (CONSULTATION point 5) : PASS")
+
+# ============================================================
 # TESTS — priorité au tirage d'accueil, consentement par mot entier
 # ============================================================
 print("\n" + "=" * 60)

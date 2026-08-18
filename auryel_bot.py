@@ -1306,6 +1306,8 @@ def detecter_objection_ia(message):
         "t'es une ia", "tu es une ia", "t'es un robot", "tu es un robot",
         "c'est un programme", "c'est une intelligence artificielle",
         "t'es chatgpt", "t'es pas humaine", "t'es pas réelle", "t'es pas réel",
+        "automatisé", "c'est automatique", "c'est un bot", "t'es un bot",
+        "tu es un bot", "c'est un robot",
     ])
 
 def detecter_objection_inutile(message):
@@ -2326,12 +2328,10 @@ Tu veux savoir ce qui la bloque le plus ?"
 UTILISATEUR QUI DIT "TU ES UNE IA"
 
 Ne prétends jamais être humaine. Ne mens pas.
-Tu n'annonces jamais ça de toi-même. Mais si on te le demande directement, réponds vrai, en une phrase, puis reviens aussitôt à elle.
-Dis que tu es un accompagnement par intelligence artificielle, encadré par une équipe humaine. Rien de plus : pas de modèle, pas de société, pas de détail technique.
+Tu n'annonces jamais ça de toi-même. Mais si on te le demande directement, réponds franchement, en une phrase, avec "une partie de nos échanges sont gérés par une IA" — rien de plus : pas de modèle, pas de société, pas de détail technique.
 Pas d'excuse, pas de dévalorisation. Ne casse pas l'ambiance. Ne dis jamais "en tant qu'IA".
-"Je suis un accompagnement par intelligence artificielle, encadré par une équipe humaine.
-Mais ce que je ressens de ta situation, là, reste juste.
-Qu'est-ce qui te fait me poser la question maintenant ?"
+Reviens AUSSITÔT à sa situation, dans ta voix — jamais une phrase figée identique à ce qu'un autre conseiller dirait.
+Exemple de ton à adapter : "Une partie de nos échanges sont gérés par une IA — mais ce que je perçois de ta situation reste juste. Qu'est-ce qui te fait poser la question maintenant ?"
 
 RELATION TOXIQUE / EMPRISE
 
@@ -2959,7 +2959,7 @@ def get_reply(phone, user_message, depuis_pub=False, user_msg_pre_inserted=False
             "ou son entourage (par exemple si elle est entourée) — jamais une série de questions."
         )
     if appel:       system += "\n\n=== DEMANDE D'APPEL ===\nLa personne demande un appel ou un vocal. Ramène calmement vers l'écrit, sans dramatiser."
-    if obj_ia:      system += "\n\n=== OBJECTION IDENTITÉ ===\nLa personne te demande si tu es une IA. Ne prétends jamais être une personne humaine, ne mens pas. Tu n'annonces pas de toi-même que tu es une IA, mais là on te pose la question : réponds vrai, en une phrase, dans ta voix, puis reviens aussitôt à elle. Dis que tu es un accompagnement par intelligence artificielle, encadré par une équipe humaine. Pas de détail technique (ni modèle, ni société, ni fonctionnement), pas d'excuse, pas de dévalorisation. Exemple de ton à adapter à ta voix : 'Je suis un accompagnement par intelligence artificielle, encadré par une équipe humaine — mais ce que je ressens de ta situation, là, reste juste. Qu'est-ce qui te fait me poser la question maintenant ?'"
+    if obj_ia:      system += "\n\n=== OBJECTION IDENTITÉ ===\nLa personne te demande si tu es une IA. Ne prétends jamais être une personne humaine, ne mens pas. Tu n'annonces pas de toi-même que tu es une IA, mais là on te pose la question : réponds franchement, en une phrase, dans ta voix, avec \"une partie de nos échanges sont gérés par une IA\". Pas de détail technique (ni modèle, ni société, ni fonctionnement), pas d'excuse, pas de dévalorisation. Reviens AUSSITÔT à sa situation. Exemple de ton à adapter à ta voix : 'Une partie de nos échanges sont gérés par une IA — mais ce que je perçois de ta situation, là, reste juste. Qu'est-ce qui te fait me poser la question maintenant ?'"
     if obj_inutile: system += "\n\n=== OBJECTION DÉCEPTION ===\nLa personne exprime une déception ou un doute sur l'utilité de l'échange. Reconnais sans te justifier, puis recadre sur la vraie question derrière le doute. Exemple de ton : 'Je comprends. Mais souvent, quand on dit que ça ne sert à rien, c'est qu'on a peur d'entendre une vérité qui oblige à bouger.' Termine par une question qui distingue le vrai motif."
     if obj_arret:   system += "\n\n=== OBJECTION ARRÊT ===\nLa personne a peut-être exprimé une envie d'arrêter — mais ça peut aussi concerner sa relation ou son ex ('j'arrête de l'attendre', 'je laisse tomber avec lui'), pas la conversation avec toi. Vérifie d'abord le contexte réel. Si c'est à propos de sa situation personnelle, continue normalement la lecture sans traiter ça comme une objection. Si c'est bien à propos d'arrêter cet échange avec toi, alors : respecte sans retenir de force, mais distingue si c'est de la paix ou de l'épuisement. Exemple de ton : 'D'accord, je respecte ça. Mais avant de fermer, regarde bien : tu veux arrêter parce que tu es en paix... ou parce que tu es épuisée d'attendre ? C'est très différent.' Ne pousse jamais à continuer si la personne insiste après cette question."
     if demande_paiement:
