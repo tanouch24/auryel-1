@@ -2652,15 +2652,31 @@ def gerer_onboarding(phone, user, user_message):
         presentation_template = PRESENTATIONS_GUIDES.get(guide_key_now, PRESENTATIONS_GUIDES["selena"])
         presentation = presentation_template.format(prenom=prenom)
         def send_connexion_puis_presentation(num, nom, prez):
+            # BUG 1 — résolution de canal : même pattern que tirer_cartes (Bloc 3),
+            # sinon ces 3 messages partent en dur vers WhatsApp et n'arrivent jamais
+            # côté Telegram.
+            user_canal = get_user(num)
+            tg_chat_id = ""
+            if user_canal and user_canal.get("telegram_chat_id"):
+                tg_chat_id = user_canal["telegram_chat_id"]
+            elif num.startswith("tg_"):
+                tg_chat_id = num[3:]
+
+            def _envoyer(texte):
+                if tg_chat_id:
+                    send_message_telegram(tg_chat_id, texte)
+                else:
+                    send_message(num, texte)
+
             time.sleep(1)
-            send_message(num, "Connexion en cours...")
+            _envoyer("Connexion en cours...")
             add_message(num, "assistant", "Connexion en cours...")
             time.sleep(2)
             msg2 = f"Connexion établie avec {nom}"
-            send_message(num, msg2)
+            _envoyer(msg2)
             add_message(num, "assistant", msg2)
             time.sleep(2)
-            send_message(num, prez)
+            _envoyer(prez)
             add_message(num, "assistant", prez)
         threading.Thread(target=send_connexion_puis_presentation, args=(phone, nom_now, presentation), daemon=True).start()
         return ""
@@ -2878,6 +2894,8 @@ def get_reply(phone, user_message, depuis_pub=False, user_msg_pre_inserted=False
     if proposer_tirage_spontane:
         system += "\n\n=== PROPOSITION TIRAGE SPONTANÉE ===\nLa conversation stagne depuis plusieurs échanges sans tirage récent. Propose toi-même spontanément un tirage de cartes à la personne, toujours en demandant d'abord la permission comme décrit dans TIRAGE DE CARTES AVEC CONSENTEMENT."
     if decouverte_du_tour and not moment_grave:
+        # DIAG TEMPORAIRE — à retirer après diagnostic BUG 2
+        print(f"[DIAG decouverte] phone={phone} signe_fresh={(user_fresh or user).get('signe_zodiaque')!r} chemin_fresh={(user_fresh or user).get('chemin_de_vie')!r} tg_chat_id={(user_fresh or user).get('telegram_chat_id')!r} user_is_fresh={user_fresh is not None}")
         signe_zodiaque_profil = (user_fresh or user).get("signe_zodiaque") or ""
         if signe_zodiaque_profil:
             chemin_de_vie_profil = (user_fresh or user).get("chemin_de_vie") or 0
