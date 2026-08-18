@@ -455,10 +455,14 @@ def init_db():
     except Exception as e:
         conn.rollback()
         print(f"Migration v20: {e}")
-    # Migration v21 — DIAG TEMPORAIRE (BUG 2, bloc découverte) : colonne debug_diag
-    # lisible via SELECT, à retirer une fois le diagnostic terminé.
+    # Migration v21 — nettoyage : colonne debug_diag (diagnostic temporaire BUG 2, bloc
+    # découverte) retirée. Diagnostic terminé et validé en réel (profil restitué : signe
+    # + chemin de vie). DROP COLUMN IF EXISTS au lieu de bumper vers v22 : v21 couvre tout
+    # le cycle de vie de cette colonne (ajout puis suppression), donc son état final —
+    # colonne absente — est ce que cette migration doit produire, idempotent que la colonne
+    # ait ou non déjà été créée en prod.
     try:
-        c.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS debug_diag TEXT DEFAULT ''")
+        c.execute("ALTER TABLE users DROP COLUMN IF EXISTS debug_diag")
         conn.commit()
     except Exception as e:
         conn.rollback()
@@ -2844,12 +2848,6 @@ def get_reply(phone, user_message, depuis_pub=False, user_msg_pre_inserted=False
     decouverte_du_tour = onboarding_vient_de_finir
     tirage_accueil_du_tour = (not onboarding_vient_de_finir) and (user.get("nb_echanges_decouverte", 0) or 0) >= 1
 
-    # DIAG TEMPORAIRE — à retirer : capture inconditionnelle des conditions AVANT le
-    # bloc découverte, pour savoir si ce bloc est même atteint (écrasé plus bas par la
-    # version détaillée signe/chemin si le bloc découverte s'exécute réellement).
-    diag_pre = f"decouverte={decouverte_du_tour} moment_grave={moment_grave} onboarding_vdf={onboarding_vient_de_finir}"
-    update_user_silent(phone, debug_diag=diag_pre)
-
     psaume_candidat = (
         None if moment_grave else
         choisir_psaume(registre_courant, user_fresh or user, onboarding_vient_de_finir, nb_echanges_actuel)
@@ -2928,9 +2926,6 @@ def get_reply(phone, user_message, depuis_pub=False, user_msg_pre_inserted=False
                 "Pose UNE seule question ouverte pour comprendre ce qui l'amène. NE propose PAS encore de "
                 "tirage de cartes ce tour-ci."
             )
-        # DIAG TEMPORAIRE — à retirer : preuve directe que le bloc ACCUEIL s'exécute et
-        # que le marqueur est bien injecté dans le system prompt final de ce tour.
-        update_user_silent(phone, debug_diag=f"ACCUEIL_injecte={'=== ACCUEIL' in system} signe={signe_zodiaque_profil!r} len_system={len(system)}")
     if tirage_accueil_du_tour and not moment_grave:
         system += (
             "\n\n=== TIRAGE D'ACCUEIL (PRIORITÉ MAXIMALE — OBLIGATOIRE CE TOUR) ===\n"
