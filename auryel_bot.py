@@ -3300,6 +3300,9 @@ def receive():
 # ============================================================
 @app.route("/webhook/telegram", methods=["POST"])
 def receive_telegram():
+    # COUPÉ (neutralisation Telegram, réversible) — retour immédiat avant tout
+    # traitement, désactive le webhook entrant. Rien en dessous n'est modifié.
+    return "", 404
     webhook_secret = os.environ.get("TELEGRAM_WEBHOOK_SECRET", "")
     header_secret = request.headers.get("X-Telegram-Bot-Api-Secret-Token", "")
     if not webhook_secret or not hmac.compare_digest(header_secret, webhook_secret):
@@ -3920,6 +3923,11 @@ def cron_daily():
     if not hmac.compare_digest(body.get("secret", ""), DAILY_SECRET or ""):
         return jsonify({"error":"unauthorized"}), 401
 
+    # COUPÉ (neutralisation relances, réversible) — court-circuit après l'auth,
+    # aucun envoi. Logique existante inchangée en dessous.
+    print("[cron/daily] désactivé — aucun envoi")
+    return jsonify({"status": "disabled"}), 200
+
     conn = get_conn()
     c = conn.cursor()
     c.execute("SELECT phone FROM users")
@@ -4161,6 +4169,11 @@ def cron_morning():
     body = request.get_json(silent=True) or {}
     if not hmac.compare_digest(body.get("secret", ""), DAILY_SECRET or ""):
         return jsonify({"error": "unauthorized"}), 401
+
+    # COUPÉ (neutralisation relances, réversible) — court-circuit après l'auth,
+    # aucun envoi. Logique existante inchangée en dessous.
+    print("[cron/morning] désactivé — aucun envoi")
+    return jsonify({"status": "disabled"}), 200
 
     now = datetime.now()
     conn = get_conn()
@@ -4923,7 +4936,9 @@ def check_and_increment_daily_limit(phone, user):
 
 # Démarrage APScheduler
 scheduler = BackgroundScheduler(timezone="Europe/Paris")
-scheduler.add_job(cron_relances_intraday, 'interval', hours=1, id='relances_intraday')
+# COUPÉ (neutralisation relances, réversible) — job intraday non enregistré,
+# cron_relances_intraday() reste en place mais n'est plus planifié.
+# scheduler.add_job(cron_relances_intraday, 'interval', hours=1, id='relances_intraday')
 scheduler.start()
 import atexit
 atexit.register(lambda: scheduler.shutdown())
