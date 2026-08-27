@@ -1,11 +1,9 @@
 """
-test_app_chat.py — B3.2 + B4.2 : POST /api/consultation/message -> cerveau Auryel
-(sans phone), désormais adossé au moteur de consultations 2 h (open_or_get_consultation).
+test_app_consultation.py — B4.2 : câblage du moteur de consultations 2 h dans
+l'API mobile (POST /api/consultation/message + GET /api/consultation/state).
 
-100 % local : psycopg2 mocké, get_conn -> fausse DB en mémoire (tables app + moteur
-B4.1), call_llm mocké, aucun réseau, aucune vraie API OpenAI. Style aligné sur test_auth.py.
-Les scénarios B4.2 dédiés (402 no_credit, opened_now, /state, expiration, payload,
-consultation_id) sont dans test_app_consultation.py.
+100 % local : psycopg2 mocké, get_conn -> fausse DB en mémoire (tables app +
+moteur B4.1), call_llm mocké, aucun réseau. Style aligné sur test_app_chat.py.
 """
 
 import sys
@@ -34,9 +32,6 @@ for _k, _v in {
 }.items():
     os.environ.setdefault(_k, _v)
 
-import hashlib
-import inspect
-
 import auryel_bot as A
 
 _STATE = {"pass": 0, "fail": 0}
@@ -52,15 +47,15 @@ def check(cond, label):
 
 
 # ---------------------------------------------------------------------------
-# Fausse base de données en mémoire
+# Fausse base de données en mémoire (tables app + moteur consultations B4.1)
 # ---------------------------------------------------------------------------
 FAKE = {"accounts": [], "app_profiles": [], "app_sessions": [], "messages": [],
-        "users": [], "consultations": [], "consultation_allowance": [],
-        "earned_credits": [], "seq": [0]}
+        "consultations": [], "consultation_allowance": [], "earned_credits": [],
+        "seq": [0]}
 
 
 def reset_db():
-    for key in ("accounts", "app_profiles", "app_sessions", "messages", "users",
+    for key in ("accounts", "app_profiles", "app_sessions", "messages",
                 "consultations", "consultation_allowance", "earned_credits"):
         FAKE[key].clear()
     FAKE["seq"][0] = 0
@@ -119,7 +114,7 @@ class FakeCursor:
             r = next((a for a in FAKE["accounts"] if a["user_id"] == uid), None)
             self._result = (r["email"],) if r else None
 
-        # ---- app_sessions (B2.1) ----
+        # ---- app_sessions ----
         elif k == ("INSERT INTO app_sessions (id, user_id, token_hash, created_at, expires_at, "
                    "platform, device_label) VALUES (%s, %s, %s, %s, %s, %s, %s)"):
             sid, uid, th, ca, ea, pf, dl = p
@@ -178,10 +173,6 @@ class FakeCursor:
             rows = sorted([m for m in FAKE["messages"] if m["user_id"] == uid],
                           key=lambda m: m["id"], reverse=True)
             self._rows = [(m["role"], m["content"]) for m in rows[:limit]]
-        elif k == "SELECT role,content,timestamp FROM messages WHERE user_id=%s ORDER BY id ASC":
-            (uid,) = p
-            rows = sorted([m for m in FAKE["messages"] if m["user_id"] == uid], key=lambda m: m["id"])
-            self._rows = [(m["role"], m["content"], m["timestamp"]) for m in rows]
 
         # ---- moteur consultations 2 h / crédits (B4.1) ----
         elif k == ("SELECT user_id FROM accounts WHERE user_id=%s AND deleted_at IS NULL "
@@ -296,7 +287,7 @@ class FakeCursor:
             self.rowcount = 1
 
         else:
-            raise AssertionError("SQL non géré par le fake : " + k)
+            raise AssertionError("SQL non géré par le fake B4.2 : " + k)
 
 
 class FakeConn:
@@ -321,193 +312,234 @@ client = A.app.test_client()
 
 UID1 = "11111111-1111-4111-8111-111111111111"
 UID2 = "22222222-2222-4222-8222-222222222222"
-REPLY = "Je te vois clairement, et je sens un mouvement autour de toi."
+REPLY = "Je te vois clairement, et un mouvement se dessine autour de toi."
 
 
 def _seed_premium(uid, monthly_limit=4):
-    """Allowance active pour l'utilisateur : entitlement Premium en B4.2."""
     now = A._utcnow()
     A.provision_allowance(uid, now - timedelta(days=1), now + timedelta(days=29),
                           monthly_limit=monthly_limit)
 
 
-def fresh(uid=UID1, premium=True):
+def fresh(uid=UID1, premium=True, monthly_limit=4):
     reset_db()
     seed_account(uid)
     if premium:
-        _seed_premium(uid)
+        _seed_premium(uid, monthly_limit=monthly_limit)
     return A.create_app_session(uid)
 
 
-print("=" * 60)
-print("TEST APP CHAT — B3.2  (POST /api/consultation/message)")
-print("=" * 60)
+def _post(tok, message="j'ai besoin d'y voir clair"):
+    return client.post("/api/consultation/message", json={"message": message},
+                       headers={"Authorization": f"Bearer {tok}"})
 
-# 1/2. auth
-tok = fresh()
-r = client.post("/api/consultation/message", json={"message": "bonjour"})
-check(r.status_code == 401, "1 sans Bearer -> 401")
-r = client.post("/api/consultation/message", json={"message": "bonjour"},
-                headers={"Authorization": "Bearer not-a-token"})
-check(r.status_code == 401, "2 Bearer invalide -> 401")
 
-# 3/4/5/6. flux nominal
+def _expire_active_consultations():
+    past = A._utcnow() - timedelta(hours=1)
+    for c in FAKE["consultations"]:
+        c["expires_at"] = past
+
+
+print("=" * 64)
+print("TEST APP CONSULTATION — B4.2  (route message + route state)")
+print("=" * 64)
+
+# --- 1. premier message premium : ouverture + débit + LLM + messages liés -------
 tok = fresh()
 with patch.object(A, "call_llm", return_value=REPLY) as m_llm, \
      patch("auryel_bot.random.random", return_value=1.0):
-    r = client.post("/api/consultation/message", json={"message": "j'ai besoin d'y voir clair"},
-                    headers={"Authorization": f"Bearer {tok}"})
-check(r.status_code == 200, "3 Bearer valide + message -> 200")
-check(r.get_json().get("reply") == REPLY, "4 JSON contient 'reply'")
-check(m_llm.call_count == 1, "5 call_llm appelé une fois")
-_sys = m_llm.call_args[0][0][0]["content"]
-check(A.GUIDES["selena"].get("nom", "selena") in _sys, "6 persona selena dans le system prompt")
+    r = _post(tok)
+j = r.get_json()
+check(r.status_code == 200, "1a premier message premium -> 200")
+check(j["reply"] == REPLY and m_llm.call_count == 1, "1b reply renvoyé, call_llm appelé 1x")
+check(j["consultation"]["opened_now"] is True, "1c opened_now = true")
+check(j["consultation"]["credit_source"] == "monthly", "1d credit_source = monthly")
+check(j["consultation"]["advisor_id"] == "selena", "1e advisor_id = selena (guide du profil)")
+check(j["quota"]["monthly_used"] == 1 and j["quota"]["monthly_remaining"] == 3,
+      "1f monthly_used 0 -> 1, remaining 3")
+check(j["quota"]["is_premium"] is True, "1g is_premium = true")
+_cid = j["consultation"]["id"]
+_msgs = FAKE["messages"]
+check(any(m["role"] == "user" and m["content"] == "j'ai besoin d'y voir clair"
+          and m["consultation_id"] == _cid for m in _msgs),
+      "1h message user rattaché à consultation_id")
+check(any(m["role"] == "assistant" and m["content"] == REPLY
+          and m["consultation_id"] == _cid for m in _msgs),
+      "1i message assistant rattaché au MÊME consultation_id")
+check("no-store" in r.headers.get("Cache-Control", ""), "1j Cache-Control: no-store")
 
-# 7. conseiller FIGÉ : changer app_profiles.guide pendant une consultation active
-#    ne change PAS le persona du tour (consultation.advisor_id prime).
-A.update_app_profile(UID1, guide="maia")
-with patch.object(A, "call_llm", return_value=REPLY) as m_llm2, \
-     patch("auryel_bot.random.random", return_value=1.0):
-    r7 = client.post("/api/consultation/message", json={"message": "et maintenant"},
-                     headers={"Authorization": f"Bearer {tok}"})
-_sys2 = m_llm2.call_args[0][0][0]["content"]
-check(A.GUIDES["selena"].get("nom", "selena") in _sys2
-      and A.GUIDES["maia"].get("nom", "maia") not in _sys2,
-      "7 consultation active : persona reste selena malgré app_profiles.guide=maia")
-check(r7.get_json()["consultation"]["advisor_id"] == "selena"
-      and r7.get_json()["consultation"]["opened_now"] is False
-      and A.get_app_profile(UID1)["guide"] == "maia",
-      "7b advisor_id session=selena, opened_now=false, app_profiles.guide bien passé à maia")
-
-# 8/9/10/11. persistance messages
-tok = fresh()
+# --- 2. deuxième message < 2 h : même consultation, aucun débit, opened_now=false
 with patch.object(A, "call_llm", return_value=REPLY):
-    client.post("/api/consultation/message", json={"message": "coucou"},
-                headers={"Authorization": f"Bearer {tok}"})
-_msgs = [m for m in FAKE["messages"]]
-check(any(m["role"] == "user" and m["content"] == "coucou" and m["user_id"] == UID1 for m in _msgs),
-      "8 message user stocké avec messages.user_id")
-check(any(m["role"] == "assistant" and m["content"] == REPLY and m["user_id"] == UID1 for m in _msgs),
-      "9 réponse assistant stockée avec messages.user_id")
-check(all(m["phone"] is None for m in _msgs), "10 messages.phone reste NULL")
-check(A.get_history_for_user_id(UID1) ==
-      [{"role": "user", "content": "coucou"}, {"role": "assistant", "content": REPLY}],
-      "11 historique app contient le tour (user puis assistant)")
+    r2 = _post(tok, "et ensuite ?")
+j2 = r2.get_json()
+check(r2.status_code == 200 and j2["consultation"]["id"] == _cid,
+      "2a 2e message -> même consultation")
+check(j2["consultation"]["opened_now"] is False, "2b opened_now = false")
+check(j2["quota"]["monthly_used"] == 1, "2c aucun nouveau débit (monthly_used reste 1)")
+check(len(FAKE["consultations"]) == 1, "2d une seule consultation en base")
+check(all(m["consultation_id"] == _cid for m in FAKE["messages"]),
+      "2e tous les messages de la session portent le même consultation_id")
+check(isinstance(j2["consultation"]["seconds_remaining"], int)
+      and 0 < j2["consultation"]["seconds_remaining"] <= 7200,
+      "2f seconds_remaining recalculé côté serveur (0 < x <= 7200)")
 
-# 12. jamais mélangé avec un autre user_id
-seed_account(UID2)
-_seed_premium(UID2)
-tok2 = A.create_app_session(UID2)
-with patch.object(A, "call_llm", return_value="autre"):
-    client.post("/api/consultation/message", json={"message": "moi c'est différent"},
-                headers={"Authorization": f"Bearer {tok2}"})
-check(len(A.get_history_for_user_id(UID1)) == 2
-      and A.get_history_for_user_id(UID2) ==
-      [{"role": "user", "content": "moi c'est différent"}, {"role": "assistant", "content": "autre"}],
-      "12 historiques de deux user_id jamais mélangés")
-
-# 13. nb_echanges augmente
-check(A.get_app_profile(UID1)["nb_echanges"] == 1, "13 nb_echanges passe à 1 après un tour")
-
-# 14/15/16/17/18/19. ce que l'app NE fait PAS
-tok = fresh()
-with patch.object(A, "call_llm", return_value=REPLY), \
-     patch.object(A, "create_user") as m_cu, \
-     patch.object(A, "get_stripe_links") as m_sl, \
-     patch.object(A, "send_message") as m_sm, \
-     patch.object(A, "check_and_increment_daily_limit") as m_dl, \
-     patch.object(A, "gerer_onboarding") as m_ob:
-    client.post("/api/consultation/message", json={"message": "je veux payer, donne-moi le lien"},
-                headers={"Authorization": f"Bearer {tok}"})
-check(len(FAKE["users"]) == 0, "14 aucune ligne users créée")
-check(m_cu.call_count == 0, "15 create_user jamais appelé côté app")
-check(m_sl.call_count == 0, "16 get_stripe_links jamais appelé côté app")
-check(m_sm.call_count == 0, "17 send_message WhatsApp jamais appelé côté app")
-check(m_dl.call_count == 0, "18 check_and_increment_daily_limit jamais appelé côté app")
-check(m_ob.call_count == 0, "19 gerer_onboarding legacy jamais appelé côté app")
-
-# 20/21. contexte émotionnel + garde-fou détresse
-tok = fresh()
+# --- 3. no_credit : 402, aucun LLM, aucun message, aucun contexte émotionnel ----
+tok = fresh(premium=False)           # ni allowance ni earned credit
 with patch.object(A, "call_llm", return_value=REPLY) as m_llm3, \
+     patch.object(A, "_app_persist_emotional_context") as m_emo:
+    r3 = _post(tok)
+j3 = r3.get_json()
+check(r3.status_code == 402, "3a sans crédit -> HTTP 402")
+check(j3["error"] == "no_credit" and j3["consultation"] is None, "3b payload { error, consultation:null }")
+check(j3["quota"]["is_premium"] is False and j3["quota"]["monthly_remaining"] == 0,
+      "3c quota présent : is_premium=false, remaining 0")
+check(m_llm3.call_count == 0, "3d call_llm jamais appelé")
+check(m_emo.call_count == 0, "3e _app_persist_emotional_context jamais appelé")
+check(len(FAKE["messages"]) == 0 and len(FAKE["consultations"]) == 0,
+      "3f aucun message, aucune consultation créés")
+check("no-store" in r3.headers.get("Cache-Control", ""), "3g 402 -> Cache-Control: no-store")
+
+# --- 4. earned credit : ouvre une consultation ---------------------------------
+tok = fresh(premium=False)
+A.grant_earned_credit(UID1, "referral")
+with patch.object(A, "call_llm", return_value=REPLY):
+    r4 = _post(tok)
+j4 = r4.get_json()
+check(r4.status_code == 200 and j4["consultation"]["credit_source"] == "referral",
+      "4a earned credit -> ouverture via referral")
+check(j4["quota"]["is_premium"] is False and j4["quota"]["earned_available"] == 0,
+      "4b gratuit : is_premium=false, earned_available 1 -> 0")
+
+# --- 5. utilisateur gratuit sans earned -> 402 --------------------------------
+tok = fresh(premium=False)
+with patch.object(A, "call_llm", return_value=REPLY) as m_llm5:
+    r5 = _post(tok)
+check(r5.status_code == 402 and m_llm5.call_count == 0,
+      "5 gratuit sans earned -> 402, aucun LLM")
+
+# --- 6. conseiller FIGÉ 2 h sans modifier app_profiles.guide -----------------
+tok = fresh()
+with patch.object(A, "call_llm", return_value=REPLY) as m_llm6a, \
      patch("auryel_bot.random.random", return_value=1.0):
-    client.post("/api/consultation/message",
-                json={"message": "j'ai envie de mourir, je n'en peux plus"},
-                headers={"Authorization": f"Bearer {tok}"})
-_prof = A.get_app_profile(UID1)
-check(_prof["niveau_detresse"] not in ("", "0") and _prof["dernier_signal_aigu_at"] != "",
-      "20 contexte émotionnel app persisté (niveau_detresse + dernier_signal_aigu_at)")
-_sys3 = m_llm3.call_args[0][0][0]["content"]
-check("3114" in _sys3,
-      "21 garde-fou détresse atteint get_system_prompt (prompt 3114) côté app")
+    _post(tok, "bonjour selena")
+_sys_a = m_llm6a.call_args[0][0][0]["content"]
+A.update_app_profile(UID1, guide="maia")          # l'app change de conseiller pendant la session
+with patch.object(A, "call_llm", return_value=REPLY) as m_llm6b, \
+     patch("auryel_bot.random.random", return_value=1.0):
+    r6 = _post(tok, "et là ?")
+_sys_b = m_llm6b.call_args[0][0][0]["content"]
+check(A.GUIDES["selena"].get("nom", "selena") in _sys_a
+      and A.GUIDES["selena"].get("nom", "selena") in _sys_b
+      and A.GUIDES["maia"].get("nom", "maia") not in _sys_b,
+      "6a persona reste selena sur les 2 tours malgré guide=maia")
+check(r6.get_json()["consultation"]["advisor_id"] == "selena", "6b consultation.advisor_id = selena")
+check(A.get_app_profile(UID1)["guide"] == "maia",
+      "6c app_profiles.guide vaut maia (jamais réécrit par la route)")
 
-# 22. body user_id malveillant ignoré
+# --- 7. GET /api/consultation/state -----------------------------------------
+# 7a. inactif (aucune consultation, allowance active)
+tok = fresh()
+rs = client.get("/api/consultation/state", headers={"Authorization": f"Bearer {tok}"})
+js = rs.get_json()
+check(rs.status_code == 200 and js["consultation"] is None, "7a state : consultation = null si inactif")
+check(js["quota"]["is_premium"] is True and js["quota"]["monthly_used"] == 0
+      and js["quota"]["monthly_remaining"] == 4, "7b state : quota renvoyé, rien consommé")
+check(len(FAKE["consultations"]) == 0, "7c state n'ouvre AUCUNE consultation")
+
+# 7d. actif après un message
+with patch.object(A, "call_llm", return_value=REPLY):
+    _post(tok, "on commence")
+A.grant_earned_credit(UID1, "share_30d")
+rs = client.get("/api/consultation/state", headers={"Authorization": f"Bearer {tok}"})
+js = rs.get_json()
+check(js["consultation"] is not None and js["consultation"]["advisor_id"] == "selena",
+      "7d state : consultation active renvoyée")
+check(isinstance(js["consultation"]["seconds_remaining"], int)
+      and 0 < js["consultation"]["seconds_remaining"] <= 7200,
+      "7e state : seconds_remaining cohérent")
+check(js["quota"]["monthly_used"] == 1 and js["quota"]["earned_available"] == 1,
+      "7f state : quota + earned credits reflétés, aucune consommation par le GET")
+_snap = (len(FAKE["consultations"]), FAKE["consultation_allowance"][0]["monthly_used"],
+         sum(1 for e in FAKE["earned_credits"] if e["consumed_at"] is None))
+client.get("/api/consultation/state", headers={"Authorization": f"Bearer {tok}"})
+check((len(FAKE["consultations"]), FAKE["consultation_allowance"][0]["monthly_used"],
+       sum(1 for e in FAKE["earned_credits"] if e["consumed_at"] is None)) == _snap,
+      "7g deux appels state consécutifs : état inchangé")
+
+# --- 8. session expirée : le message suivant tente une NOUVELLE ouverture -----
 tok = fresh()
 with patch.object(A, "call_llm", return_value=REPLY):
-    r = client.post("/api/consultation/message",
-                    json={"message": "identité falsifiée ?", "user_id": UID2},
-                    headers={"Authorization": f"Bearer {tok}"})
-check(r.status_code == 200
-      and all(m["user_id"] == UID1 for m in FAKE["messages"])
-      and not any(m["user_id"] == UID2 for m in FAKE["messages"]),
-      "22 user_id du body ignoré, tout est rattaché au user_id de la session")
+    r8a = _post(tok, "premier")
+_cid8 = r8a.get_json()["consultation"]["id"]
+_expire_active_consultations()
+with patch.object(A, "call_llm", return_value=REPLY):
+    r8b = _post(tok, "deuxième, bien plus tard")
+j8b = r8b.get_json()
+check(j8b["consultation"]["id"] != _cid8 and j8b["consultation"]["opened_now"] is True,
+      "8a session expirée -> nouvelle consultation ouverte")
+check(j8b["quota"]["monthly_used"] == 2, "8b nouveau débit (monthly_used 1 -> 2)")
 
-# 23/24. validation message
-tok = fresh()
-r = client.post("/api/consultation/message", json={"message": "   "},
-                headers={"Authorization": f"Bearer {tok}"})
-check(r.status_code == 400, "23 message vide -> 400")
-r = client.post("/api/consultation/message", json={"message": "x" * 4001},
-                headers={"Authorization": f"Bearer {tok}"})
-check(r.status_code == 400, "24 message > 4000 caractères -> 400")
-
-# 25. Cache-Control no-store
+# --- 9. payload JSON exact / cohérent --------------------------------------
 tok = fresh()
 with patch.object(A, "call_llm", return_value=REPLY):
-    r = client.post("/api/consultation/message", json={"message": "et voilà"},
-                    headers={"Authorization": f"Bearer {tok}"})
-check("no-store" in r.headers.get("Cache-Control", ""), "25 réponse -> Cache-Control: no-store")
+    j9 = _post(tok).get_json()
+check(set(j9.keys()) == {"reply", "consultation", "quota"}, "9a clés racine = reply/consultation/quota")
+check(set(j9["consultation"].keys()) == {"id", "advisor_id", "started_at", "expires_at",
+                                          "seconds_remaining", "credit_source", "opened_now"},
+      "9b clés consultation exactes")
+check(set(j9["quota"].keys()) == {"is_premium", "monthly_limit", "monthly_used",
+                                   "monthly_remaining", "earned_available",
+                                   "period_start", "period_end"},
+      "9c clés quota exactes")
+check(j9["quota"]["monthly_limit"] - j9["quota"]["monthly_used"] == j9["quota"]["monthly_remaining"],
+      "9d monthly_remaining cohérent avec limit - used")
+check(isinstance(j9["consultation"]["started_at"], str)
+      and isinstance(j9["consultation"]["expires_at"], str),
+      "9e started_at / expires_at sérialisés en ISO string")
 
-# 26. rate-limit présent (anti-abus technique)
+# --- 10. messages.consultation_id : user + assistant sur la même session -----
 tok = fresh()
-A.app.config["RATELIMIT_ENABLED"] = True
-A.limiter.enabled = True
-try:
-    A.limiter.reset()
-except Exception:
-    pass
 with patch.object(A, "call_llm", return_value=REPLY):
-    _codes = [client.post("/api/consultation/message", json={"message": "spam"},
-                          headers={"Authorization": f"Bearer {tok}"}).status_code
-              for _ in range(31)]
-A.app.config["RATELIMIT_ENABLED"] = False
-A.limiter.enabled = False
-try:
-    A.limiter.reset()
-except Exception:
-    pass
-check(_codes.count(200) == 30 and _codes[-1] == 429,
-      "26 rate-limit anti-abus : 30 OK puis 429")
+    jc = _post(tok, "rattachement").get_json()
+_cid10 = jc["consultation"]["id"]
+_sess_msgs = [m for m in FAKE["messages"] if m["user_id"] == UID1]
+check(len(_sess_msgs) == 2 and {m["role"] for m in _sess_msgs} == {"user", "assistant"},
+      "10a un tour = 2 messages (user + assistant)")
+check(all(m["consultation_id"] == _cid10 for m in _sess_msgs),
+      "10b les deux portent le consultation_id de la session")
 
-# 27/28. get_reply legacy préservé
+# --- 11. compte supprimé -> 401 (require_app_auth), aucune consultation ------
+tok = fresh()
+FAKE["accounts"][0]["deleted_at"] = A._utcnow()
+with patch.object(A, "call_llm", return_value=REPLY) as m_llm11:
+    r11 = _post(tok)
+check(r11.status_code == 401 and m_llm11.call_count == 0
+      and len(FAKE["consultations"]) == 0,
+      "11 compte supprimé -> 401, aucun LLM, aucune consultation")
+
+# --- 12. validation message inchangée (avant le moteur) ---------------------
+tok = fresh()
+r12a = client.post("/api/consultation/message", json={"message": "   "},
+                   headers={"Authorization": f"Bearer {tok}"})
+r12b = client.post("/api/consultation/message", json={"message": "x" * 4001},
+                   headers={"Authorization": f"Bearer {tok}"})
+check(r12a.status_code == 400 and r12b.status_code == 400
+      and len(FAKE["consultations"]) == 0,
+      "12 message vide / trop long -> 400 AVANT toute ouverture de consultation")
+
+# --- 13. routes enregistrées ----------------------------------------------
+_rules = {r.rule for r in A.app.url_map.iter_rules()}
+check({"/api/consultation/message", "/api/consultation/state"}.issubset(_rules),
+      "13a routes message + state enregistrées")
+check("/api/consultation/start" not in _rules, "13b PAS de route /start")
+
+# --- 14. get_reply legacy strictement inchangé ---------------------------
+import inspect
 check(str(inspect.signature(A.get_reply)) ==
       "(phone, user_message, depuis_pub=False, user_msg_pre_inserted=False)",
-      "27 get_reply : signature legacy inchangée")
-_src = inspect.getsource(A.get_reply)
-check("get_user(phone)" in _src and "check_and_increment_daily_limit(phone" in _src
-      and "gerer_onboarding(phone" in _src,
-      "28 get_reply legacy continue d'utiliser phone (quota + onboarding)")
+      "14 get_reply(phone, ...) : signature legacy inchangée")
 
-# 29. routes auth B2
-_rules = {r.rule for r in A.app.url_map.iter_rules()}
-check({"/api/auth/request-code", "/api/auth/verify-code", "/api/auth/logout",
-       "/api/account"}.issubset(_rules), "29 routes auth B2 toujours présentes")
-
-# 30. WhatsApp / Stripe / Telegram toujours présents
-check({"/webhook", "/stripe/webhook", "/webhook/telegram"}.issubset(_rules),
-      "30 routes WhatsApp / Stripe / Telegram toujours présentes")
-
-# ---------------------------------------------------------------------------
-print()
+print("-" * 64)
 _total = _STATE["pass"] + _STATE["fail"]
 if _STATE["fail"] == 0:
     print(f"✅ {_STATE['pass']}/{_total} tests passés")

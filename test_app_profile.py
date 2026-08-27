@@ -128,11 +128,13 @@ class FakeCursor:
                     for col, val in zip(cols, values):
                         r[col] = val
 
-        elif k == "INSERT INTO messages (user_id, phone, role, content, timestamp) VALUES (%s, NULL, %s, %s, %s)":
-            uid, role, content, ts = p
+        elif k == ("INSERT INTO messages (user_id, phone, role, content, timestamp, consultation_id) "
+                   "VALUES (%s, NULL, %s, %s, %s, %s)"):
+            uid, role, content, ts, consultation_id = p
             FAKE["seq"][0] += 1
             FAKE["messages"].append({"id": FAKE["seq"][0], "user_id": uid, "phone": None,
-                                     "role": role, "content": content, "timestamp": ts})
+                                     "role": role, "content": content, "timestamp": ts,
+                                     "consultation_id": consultation_id})
 
         elif k == "SELECT role,content FROM messages WHERE user_id=%s ORDER BY id DESC LIMIT %s":
             uid, limit = p

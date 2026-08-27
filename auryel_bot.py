@@ -1221,15 +1221,19 @@ def _app_profile_to_user_dict(profile, account=None):
     }
 
 
-def add_message_for_user_id(user_id, role, content):
-    """Écrit un message app : messages.user_id renseigné, messages.phone = NULL."""
+def add_message_for_user_id(user_id, role, content, consultation_id=None):
+    """Écrit un message app : messages.user_id renseigné, messages.phone = NULL.
+    consultation_id (B4.2) rattache le message à sa session de 2 h — NULL si absent.
+    Le chemin legacy `phone` passe par add_message() et n'utilise jamais ce paramètre."""
     conn = None
     try:
         conn = get_conn()
         c = conn.cursor()
         c.execute(
-            "INSERT INTO messages (user_id, phone, role, content, timestamp) VALUES (%s, NULL, %s, %s, %s)",
-            (str(user_id), role, content, datetime.now().isoformat()),
+            "INSERT INTO messages (user_id, phone, role, content, timestamp, consultation_id) "
+            "VALUES (%s, NULL, %s, %s, %s, %s)",
+            (str(user_id), role, content, datetime.now().isoformat(),
+             str(consultation_id) if consultation_id else None),
         )
         conn.commit()
     except Exception as e:
@@ -2594,13 +2598,57 @@ def api_account():
 _APP_MESSAGE_MAX_LEN = 4000
 
 
+def _ts_iso(dt):
+    """datetime -> ISO 8601 ; laisse passer None / str tel quel."""
+    return dt.isoformat() if hasattr(dt, "isoformat") else dt
+
+
+def _quota_json(quota):
+    """Bloc quota public (get_consultation_state -> JSON mobile)."""
+    return {
+        "is_premium": quota["is_premium"],
+        "monthly_limit": quota["monthly_limit"],
+        "monthly_used": quota["monthly_used"],
+        "monthly_remaining": quota["monthly_remaining"],
+        "earned_available": quota["earned_available"],
+        "period_start": _ts_iso(quota["period_start"]),
+        "period_end": _ts_iso(quota["period_end"]),
+    }
+
+
+def _consultation_json(slot_consultation, opened_now, state):
+    """Objet consultation public. Identité (id, advisor figé, credit_source,
+    opened_now) issue de open_or_get_consultation ; seconds_remaining TOUJOURS
+    recalculé côté serveur au plus frais via get_consultation_state."""
+    sc = (state or {}).get("consultation")
+    if sc and sc.get("id") == slot_consultation["id"]:
+        started_at, expires_at = sc["started_at"], sc["expires_at"]
+        seconds_remaining = sc["seconds_remaining"]
+    else:
+        started_at = slot_consultation["started_at"]
+        expires_at = slot_consultation["expires_at"]
+        seconds_remaining = max(0, int((expires_at - _utcnow()).total_seconds()))
+    return {
+        "id": slot_consultation["id"],
+        "advisor_id": slot_consultation["advisor_id"],
+        "started_at": _ts_iso(started_at),
+        "expires_at": _ts_iso(expires_at),
+        "seconds_remaining": seconds_remaining,
+        "credit_source": slot_consultation["credit_source"],
+        "opened_now": bool(opened_now),
+    }
+
+
 @app.route("/api/consultation/message", methods=["POST"])
 @limiter.limit("30 per 10 minutes")
 @require_app_auth
 def api_consultation_message():
     """Chat mobile -> cerveau Auryel. Identité = jeton Bearer uniquement.
-    Rate-limit purement anti-abus technique (PAS le futur quota commercial :
-    ni fenêtre 2h, ni 10 consultations/mois, ni crédits, ni IAP)."""
+
+    B4.2 : la consultation de 2 h démarre au 1er message réellement envoyé
+    (open_or_get_consultation) ; les suivants réutilisent la session active, même
+    conseiller. Le rate-limit `30 per 10 minutes` reste un garde anti-abus
+    TECHNIQUE — jamais le quota commercial (= allowance + earned credits)."""
     data = request.get_json(silent=True) or {}
     msg = data.get("message")
     if not isinstance(msg, str):
@@ -2612,9 +2660,72 @@ def api_consultation_message():
         return _auth_json({"error": "message_too_long"}, 400)
 
     user_id = g.app_account["user_id"]   # jamais lu dans le body
+
+    # C. conseiller CHOISI dans le profil — sert uniquement à OUVRIR une session.
+    #    Une fois ouverte, c'est consultation.advisor_id qui prime (conseiller figé).
+    profile = get_or_create_app_profile(user_id)
+    if profile is None:
+        return _auth_json({"error": "unauthorized"}, 401)
+    advisor_choisi = profile.get("guide") or "selena"
+
+    # D. ouverture atomique (1er message) OU récupération de la session active.
+    slot = open_or_get_consultation(user_id, advisor_choisi)
+
+    if slot["status"] == "unknown_account":
+        return _auth_json({"error": "unauthorized"}, 401)                      # F.
+
+    if slot["status"] == "no_credit":
+        # E. aucun LLM, aucun message persisté, aucun contexte émotionnel persisté.
+        state = get_consultation_state(user_id)
+        return _auth_json({
+            "error": "no_credit",
+            "consultation": None,
+            "quota": _quota_json(state["quota"]),
+        }, 402)
+
+    consultation = slot["consultation"]
+    advisor_session = consultation["advisor_id"]      # G. conseiller figé de la session
+
+    # 3. contexte émotionnel : SEULEMENT après avoir une consultation active/ouverte.
     _app_persist_emotional_context(user_id, msg)
-    reply = get_reply_for_user_id(user_id, msg)
-    return _auth_json({"reply": reply}, 200)
+
+    reply = get_reply_for_user_id(
+        user_id, msg,
+        advisor_override=advisor_session,
+        consultation_id=consultation["id"],
+    )
+
+    state = get_consultation_state(user_id)
+    return _auth_json({
+        "reply": reply,
+        "consultation": _consultation_json(consultation, slot.get("opened_now", False), state),
+        "quota": _quota_json(state["quota"]),
+    }, 200)
+
+
+@app.route("/api/consultation/state", methods=["GET"])
+@require_app_auth
+def api_consultation_state():
+    """État de la consultation courante + quota. Lecture seule stricte : aucune
+    ouverture, aucune consommation de crédit, aucun appel LLM. La consultation ne
+    démarre QUE via /api/consultation/message (1er message) — pas de route /start."""
+    user_id = g.app_account["user_id"]
+    state = get_consultation_state(user_id)
+    sc = state["consultation"]
+    consultation = None
+    if sc is not None:
+        consultation = {
+            "id": sc["id"],
+            "advisor_id": sc["advisor_id"],
+            "started_at": _ts_iso(sc["started_at"]),
+            "expires_at": _ts_iso(sc["expires_at"]),
+            "seconds_remaining": sc["seconds_remaining"],
+            "credit_source": sc["credit_source"],
+        }
+    return _auth_json({
+        "consultation": consultation,
+        "quota": _quota_json(state["quota"]),
+    }, 200)
 
 # ============================================================
 # WHATSAPP
@@ -3749,14 +3860,18 @@ def gerer_onboarding(phone, user, user_message):
 # ============================================================
 def _reply_core(user, key, user_message, io, *, depuis_pub=False,
                 user_msg_pre_inserted=False, onboarding_vient_de_finir=False,
-                channel="whatsapp"):
+                channel="whatsapp", advisor_override=None):
     """Cœur PARTAGÉ de get_reply : détecteurs, assemblage du system prompt,
     personas, garde-fous détresse/sécurité, appel LLM, persistance de l'historique.
     `io` injecte les accès données/canal (legacy = phone ; app = user_id).
     La logique SPÉCIFIQUE au legacy (quota 150/jour, onboarding conversationnel,
     envoi WhatsApp, liens Stripe, branche Telegram) reste dans get_reply() —
-    elle n'entre jamais ici pour un appelant `channel="app"`."""
-    guide_key = user.get("guide", "selena")
+    elle n'entre jamais ici pour un appelant `channel="app"`.
+
+    advisor_override (B4.2) : conseiller de la consultation 2 h en cours. Force le
+    persona de CE tour sans jamais modifier le conseiller global du profil
+    (app_profiles.guide). Toujours None pour le chemin legacy `phone`."""
+    guide_key = advisor_override or user.get("guide", "selena")
 
     # Bloc 2 — bascule/liaison Telegram : le tirage d'accueil part seul, propre,
     # au tour où onboarding_vient_de_finir==True (aucune invitation ce tour-ci).
@@ -4091,12 +4206,16 @@ def _app_persist_emotional_context(user_id, message):
     )
 
 
-def get_reply_for_user_id(user_id, user_message):
+def get_reply_for_user_id(user_id, user_message, advisor_override=None, consultation_id=None):
     """Chemin APP (utilisateur = accounts.user_id, sans phone). Réutilise
     intégralement _reply_core (prompts / personas / détecteurs / garde-fous).
     AUCUN quota DAILY_LIMIT, AUCUN onboarding legacy, AUCUN WhatsApp/Telegram,
     AUCUN Stripe, AUCUN faux phone. Profil via app_profiles, historique via
-    messages.user_id."""
+    messages.user_id.
+
+    B4.2 : advisor_override = conseiller de la consultation 2 h (persona figé pour
+    ce tour, app_profiles.guide jamais modifié). consultation_id = session à
+    laquelle rattacher les messages user + assistant de ce tour."""
     profile = get_or_create_app_profile(user_id)
     if not profile:
         return "Je suis là..."
@@ -4116,7 +4235,7 @@ def get_reply_for_user_id(user_id, user_message):
         except Exception: pass
 
     user = _app_profile_to_user_dict(profile, account=account)
-    guide_key = user.get("guide", "selena")
+    guide_key = advisor_override or user.get("guide", "selena")
     log_event("user_message_received", phone_hash=_user_hash(user_id), guide=guide_key)
 
     def _app_reload(_):
@@ -4127,7 +4246,8 @@ def get_reply_for_user_id(user_id, user_message):
         "update": lambda _, **kw: update_app_profile(user_id, **kw),
         "update_silent": lambda _, **kw: update_app_profile_silent(user_id, **kw),
         "reload": _app_reload,
-        "add_message": lambda _, role, content: add_message_for_user_id(user_id, role, content),
+        "add_message": lambda _, role, content: add_message_for_user_id(
+            user_id, role, content, consultation_id=consultation_id),
         "get_history": lambda _, limit=20: get_history_for_user_id(user_id, limit),
         "do_tirage": lambda _: (None, []),          # pas de tirage image en app (lot ultérieur)
         "stripe_links": None,                       # aucun lien Stripe côté app
@@ -4136,7 +4256,8 @@ def get_reply_for_user_id(user_id, user_message):
     }
     return _reply_core(user, str(user_id), user_message, _io,
                        depuis_pub=False, user_msg_pre_inserted=False,
-                       onboarding_vient_de_finir=False, channel="app")
+                       onboarding_vient_de_finir=False, channel="app",
+                       advisor_override=advisor_override)
 
 # ============================================================
 # MOTEUR DE CONSULTATIONS 2 h / CRÉDITS (B4.1)
