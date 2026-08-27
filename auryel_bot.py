@@ -1,4 +1,4 @@
-import os, time, requests, threading, psycopg2, stripe, re, random, hmac, hashlib, unicodedata, secrets, html
+import os, time, requests, threading, psycopg2, stripe, re, random, hmac, hashlib, unicodedata, secrets, html, uuid
 from datetime import datetime, date, timezone, timedelta
 from flask import Flask, request, jsonify, session, redirect
 from flask_cors import CORS
@@ -522,6 +522,69 @@ def init_db():
     except Exception as e:
         conn.rollback()
         print(f"Migration v22 (FK): {e}")
+    # Migration v23 — schéma auth app (connexion email + code à usage unique).
+    # PUREMENT ADDITIF : tables auth_codes (codes OTP, seul le hash est stocké) et
+    # app_sessions (jetons de session opaques, seul le hash est stocké). Aucune
+    # colonne modifiée sur users / messages / accounts, aucun endpoint ici.
+    try:
+        c.execute("""
+            CREATE TABLE IF NOT EXISTS auth_codes (
+                id               BIGSERIAL  PRIMARY KEY,
+                email_normalized TEXT       NOT NULL,
+                code_hash        TEXT       NOT NULL,
+                expires_at       TIMESTAMP  NOT NULL,
+                attempts         INTEGER    DEFAULT 0,
+                consumed_at      TIMESTAMP  NULL,
+                created_at       TIMESTAMP  NOT NULL,
+                request_ip_hash  TEXT       NULL,
+                user_id          UUID       NULL
+            )
+        """)
+        c.execute("""
+            CREATE INDEX IF NOT EXISTS idx_auth_codes_email_recent
+            ON auth_codes (email_normalized, id DESC)
+        """)
+        c.execute("""
+            CREATE INDEX IF NOT EXISTS idx_auth_codes_active
+            ON auth_codes (email_normalized)
+            WHERE consumed_at IS NULL
+        """)
+        c.execute("""
+            CREATE TABLE IF NOT EXISTS app_sessions (
+                id            UUID       PRIMARY KEY,
+                user_id       UUID       NOT NULL,
+                token_hash    TEXT       NOT NULL UNIQUE,
+                created_at    TIMESTAMP  NOT NULL,
+                expires_at    TIMESTAMP  NOT NULL,
+                revoked_at    TIMESTAMP  NULL,
+                last_used_at  TIMESTAMP  NULL,
+                platform      TEXT       NULL,
+                device_label  TEXT       NULL
+            )
+        """)
+        c.execute("""
+            CREATE INDEX IF NOT EXISTS idx_app_sessions_user
+            ON app_sessions (user_id, revoked_at)
+        """)
+        conn.commit()
+    except Exception as e:
+        conn.rollback()
+        print(f"Migration v23: {e}")
+    # Migration v23 (suite) — FK app_sessions.user_id -> accounts.user_id, SANS
+    # ON DELETE CASCADE (une session se révoque via revoked_at, jamais par
+    # suppression en cascade). Bloc séparé car ADD CONSTRAINT n'accepte pas
+    # IF NOT EXISTS : au second passage l'erreur « already exists » est attrapée
+    # et sans effet (même idiome que les Migrations v8 / v22).
+    try:
+        c.execute("""
+            ALTER TABLE app_sessions
+                ADD CONSTRAINT fk_app_sessions_account
+                FOREIGN KEY (user_id) REFERENCES accounts(user_id)
+        """)
+        conn.commit()
+    except Exception as e:
+        conn.rollback()
+        print(f"Migration v23 (FK): {e}")
     conn.close()
 
 def reset_db():
@@ -1661,6 +1724,212 @@ def send_email_relance(email, prenom, links):
         print(f"✉️ Email J+7 envoyé à {email}")
     except Exception as e:
         print(f"❌ Email J+7 error: {e}")
+
+# ============================================================
+# AUTH APP — connexion email + code à usage unique
+# (B2.1 : schéma + helpers internes uniquement, AUCUN endpoint /api)
+# ============================================================
+# Le code OTP en clair n'existe qu'au moment de sa génération, le temps de l'envoi
+# par email : la DB ne stocke qu'un HMAC-SHA256(SECRET_KEY, "email:code"). Le jeton
+# de session opaque (>= 256 bits) n'est stocké qu'en SHA-256. Ni le code, ni le
+# jeton, ni l'email en clair ne sont écrits dans les logs.
+
+_AUTH_CODE_TTL_MIN      = 10   # durée de validité du code OTP
+_AUTH_CODE_MAX_ATTEMPTS = 5    # essais de vérification avant blocage du code
+_APP_SESSION_TTL_DAYS   = 90   # durée de vie d'une session app
+
+_EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]{2,}$")
+
+
+def _normalize_email(raw):
+    """NFKC + strip + lower + validation basique. Retourne l'email normalisé ou
+    None si l'entrée n'est pas un email plausible. Ne logge jamais la valeur."""
+    if not isinstance(raw, str):
+        return None
+    e = unicodedata.normalize("NFKC", raw).strip().lower()
+    if not e or len(e) > 254 or _EMAIL_RE.match(e) is None:
+        return None
+    return e
+
+
+def _hash_auth_code(email_normalized, code):
+    """HMAC-SHA256(SECRET_KEY, "email:code"). Lie le code à l'email, non réversible,
+    comparé en temps constant à la vérification. SECRET_KEY = app.secret_key, déjà
+    obligatoire au démarrage (_REQUIRED_ENV)."""
+    secret = (app.secret_key or "").encode("utf-8")
+    msg = f"{email_normalized}:{code}".encode("utf-8")
+    return hmac.new(secret, msg, hashlib.sha256).hexdigest()
+
+
+def _hash_session_token(token):
+    """SHA-256 hex du jeton de session opaque (seule forme stockée en DB)."""
+    return hashlib.sha256((token or "").encode("utf-8")).hexdigest()
+
+
+def create_auth_code(email_normalized, request_ip_hash=None):
+    """Génère un code à 6 chiffres cryptographiquement sûr, invalide les codes non
+    consommés antérieurs du même email, stocke UNIQUEMENT le hash (expiration
+    10 min, attempts=0 par défaut). Retourne le code EN CLAIR pour l'envoi email —
+    il n'est écrit nulle part ailleurs et n'est pas loggé."""
+    code = f"{secrets.randbelow(1_000_000):06d}"
+    code_hash = _hash_auth_code(email_normalized, code)
+    now = datetime.utcnow()
+    expires = now + timedelta(minutes=_AUTH_CODE_TTL_MIN)
+    conn = get_conn()
+    try:
+        c = conn.cursor()
+        c.execute("UPDATE auth_codes SET consumed_at=%s WHERE email_normalized=%s AND consumed_at IS NULL", (now, email_normalized))
+        c.execute("INSERT INTO auth_codes (email_normalized, code_hash, expires_at, created_at, request_ip_hash) VALUES (%s, %s, %s, %s, %s)", (email_normalized, code_hash, expires, now, request_ip_hash))
+        conn.commit()
+    finally:
+        conn.close()
+    return code
+
+
+def verify_auth_code(email_normalized, code):
+    """Retourne True seulement si le DERNIER code de cet email correspond, n'est
+    pas expiré, pas déjà consommé et sous la limite de tentatives. Chaque échec
+    incrémente attempts ; un succès marque consumed_at. Comparaison en temps
+    constant. Ne renvoie qu'un booléen (aucun détail exploitable pour énumérer)."""
+    expected = _hash_auth_code(email_normalized, code or "")
+    now = datetime.utcnow()
+    conn = get_conn()
+    try:
+        c = conn.cursor()
+        c.execute("SELECT id, code_hash, expires_at, attempts, consumed_at FROM auth_codes WHERE email_normalized=%s ORDER BY id DESC LIMIT 1", (email_normalized,))
+        row = c.fetchone()
+        if not row:
+            hmac.compare_digest(expected, expected)  # coût ~constant même sans code
+            return False
+        cid, code_hash, expires_at, attempts, consumed_at = row
+        if consumed_at is not None:
+            return False
+        if attempts is not None and attempts >= _AUTH_CODE_MAX_ATTEMPTS:
+            return False
+        if expires_at is not None and expires_at <= now:
+            return False
+        if not hmac.compare_digest(str(code_hash), expected):
+            c.execute("UPDATE auth_codes SET attempts = attempts + 1 WHERE id=%s", (cid,))
+            conn.commit()
+            return False
+        c.execute("UPDATE auth_codes SET consumed_at=%s WHERE id=%s", (now, cid))
+        conn.commit()
+        return True
+    finally:
+        conn.close()
+
+
+def get_or_create_account(email_normalized, original_email=None):
+    """Retourne le user_id (str UUID) rattaché à cet email : l'existant s'il y en a
+    un vivant, sinon un nouveau (uuid.uuid4()). Un email rattaché uniquement à un
+    compte soft-supprimé (deleted_at non NULL) -> None : on ne crée pas de doublon
+    (index unique partiel de la Migration v22) et on ne réactive pas ici.
+    Ne crée AUCUNE ligne users, n'invente AUCUN numéro de téléphone."""
+    conn = get_conn()
+    try:
+        c = conn.cursor()
+        c.execute("SELECT user_id, deleted_at FROM accounts WHERE email_normalized=%s", (email_normalized,))
+        row = c.fetchone()
+        if row is not None:
+            user_id, deleted_at = row
+            if deleted_at is not None:
+                return None
+            return str(user_id)
+        new_id = str(uuid.uuid4())
+        c.execute("INSERT INTO accounts (user_id, email, email_normalized, auth_provider, created_at) VALUES (%s, %s, %s, 'email', %s)", (new_id, original_email or email_normalized, email_normalized, datetime.utcnow()))
+        conn.commit()
+        return new_id
+    finally:
+        conn.close()
+
+
+def create_app_session(user_id, platform=None, device_label=None):
+    """Crée une session (90 j), stocke UNIQUEMENT le SHA-256 du jeton. Retourne le
+    jeton opaque EN CLAIR (>= 256 bits) — à renvoyer une seule fois à l'appelant,
+    jamais loggé."""
+    token = secrets.token_urlsafe(32)
+    token_hash = _hash_session_token(token)
+    sid = str(uuid.uuid4())
+    now = datetime.utcnow()
+    expires = now + timedelta(days=_APP_SESSION_TTL_DAYS)
+    conn = get_conn()
+    try:
+        c = conn.cursor()
+        c.execute("INSERT INTO app_sessions (id, user_id, token_hash, created_at, expires_at, platform, device_label) VALUES (%s, %s, %s, %s, %s, %s, %s)", (sid, user_id, token_hash, now, expires, platform, device_label))
+        conn.commit()
+    finally:
+        conn.close()
+    return token
+
+
+def resolve_app_session(token):
+    """Retourne {"session_id", "user_id", "email"} si la session est valide :
+    non révoquée, non expirée, compte non supprimé. Sinon None. Rafraîchit
+    last_used_at. Aucun log."""
+    if not token:
+        return None
+    token_hash = _hash_session_token(token)
+    now = datetime.utcnow()
+    conn = get_conn()
+    try:
+        c = conn.cursor()
+        c.execute("SELECT s.id, s.user_id, s.expires_at, s.revoked_at, a.email, a.deleted_at FROM app_sessions s JOIN accounts a ON a.user_id = s.user_id WHERE s.token_hash=%s", (token_hash,))
+        row = c.fetchone()
+        if not row:
+            return None
+        sid, user_id, expires_at, revoked_at, email, deleted_at = row
+        if revoked_at is not None or deleted_at is not None:
+            return None
+        if expires_at is not None and expires_at <= now:
+            return None
+        c.execute("UPDATE app_sessions SET last_used_at=%s WHERE id=%s", (now, sid))
+        conn.commit()
+        return {"session_id": str(sid), "user_id": str(user_id), "email": email}
+    finally:
+        conn.close()
+
+
+def revoke_app_session(token):
+    """Révoque la session correspondant au jeton (idempotent). Aucun log."""
+    if not token:
+        return
+    token_hash = _hash_session_token(token)
+    conn = get_conn()
+    try:
+        c = conn.cursor()
+        c.execute("UPDATE app_sessions SET revoked_at=%s WHERE token_hash=%s AND revoked_at IS NULL", (datetime.utcnow(), token_hash))
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def send_email_code(email, code):
+    """Envoie le code de connexion via Resend (même pattern que send_email_j6). Le
+    code n'apparaît QUE dans le corps de l'email. Ne pas confondre avec les helpers
+    marketing : ici l'erreur N'EST PAS avalée, un statut exploitable est renvoyé
+    ({"ok": bool, "error": str|None}). Ne logge ni l'email, ni le code."""
+    if not RESEND_API_KEY:
+        return {"ok": False, "error": "resend_not_configured"}
+    try:
+        import resend
+        resend.api_key = RESEND_API_KEY
+        resend.Emails.send({
+            "from": f"Auryel <{FROM_EMAIL}>",
+            "to": [email],
+            "subject": "Ton code de connexion Auryel",
+            "html": f"""<!DOCTYPE html><html><body style="background:#05040A;color:#F0EBE0;font-family:Georgia,serif;margin:0;padding:0">
+<div style="max-width:560px;margin:0 auto;padding:60px 40px">
+  <p style="font-size:11px;letter-spacing:4px;color:#C8A96E;text-transform:uppercase;text-align:center">Auryel</p>
+  <p style="font-size:15px;line-height:1.85;color:#BDB5A6;margin:32px 0 12px">Voici ton code de connexion. Il expire dans {_AUTH_CODE_TTL_MIN} minutes.</p>
+  <p style="font-size:34px;letter-spacing:10px;color:#E2C98A;text-align:center;font-weight:bold;margin:24px 0">{code}</p>
+  <p style="font-size:13px;color:#8A7E6A;margin-top:24px">Si tu n'es pas à l'origine de cette demande, ignore cet email.</p>
+  <p style="font-size:10px;color:#4A4060;text-align:center;margin-top:32px">© 2026 AURYEL</p>
+</div></body></html>"""
+        })
+        return {"ok": True, "error": None}
+    except Exception as e:
+        print(f"[auth] send_email_code : echec envoi ({type(e).__name__})")
+        return {"ok": False, "error": "send_failed"}
 
 # ============================================================
 # WHATSAPP
