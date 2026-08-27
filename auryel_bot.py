@@ -641,6 +641,128 @@ def init_db():
     except Exception as e:
         conn.rollback()
         print(f"Migration v24 (FK): {e}")
+    # Migration v25 — moteur de consultations 2 h / crédits (B4.1). PUREMENT ADDITIF :
+    # 3 nouvelles tables (consultations, consultation_allowance, earned_credits) + une
+    # colonne nullable messages.consultation_id. Aucune colonne touchée sur users /
+    # accounts / app_profiles / app_sessions, aucun backfill, aucun DROP. Le legacy
+    # (users.phone, abonne, Stripe, DAILY_LIMIT, WhatsApp/Telegram) est hors de portée.
+    # Horodatages en TIMESTAMPTZ (contrairement au legacy naïf) : le moteur écrit des
+    # datetime timezone-aware UTC (cf. _utcnow / open_or_get_consultation).
+    try:
+        c.execute("""
+            CREATE TABLE IF NOT EXISTS consultations (
+                id            UUID         PRIMARY KEY,
+                user_id       UUID         NOT NULL,
+                advisor_id    TEXT         NOT NULL,
+                started_at    TIMESTAMPTZ  NOT NULL,
+                expires_at    TIMESTAMPTZ  NOT NULL,
+                credit_source TEXT         NOT NULL,
+                created_at    TIMESTAMPTZ  NOT NULL
+            )
+        """)
+        c.execute("""
+            CREATE INDEX IF NOT EXISTS idx_consultations_user_active
+            ON consultations (user_id, expires_at DESC)
+        """)
+        # Une période d'abonnement RÉELLE (pas un mois calendaire) : period_start /
+        # period_end sont fournis explicitement (tests, admin, plus tard IAP Store).
+        # PK (user_id, period_start) : interdit deux allowances pour la même période.
+        c.execute("""
+            CREATE TABLE IF NOT EXISTS consultation_allowance (
+                user_id       UUID         NOT NULL,
+                period_start  TIMESTAMPTZ  NOT NULL,
+                period_end    TIMESTAMPTZ  NOT NULL,
+                monthly_limit INTEGER      NOT NULL DEFAULT 4,
+                monthly_used  INTEGER      NOT NULL DEFAULT 0,
+                created_at    TIMESTAMPTZ  NOT NULL,
+                PRIMARY KEY (user_id, period_start)
+            )
+        """)
+        c.execute("""
+            CREATE TABLE IF NOT EXISTS earned_credits (
+                id              UUID         PRIMARY KEY,
+                user_id         UUID         NOT NULL,
+                source          TEXT         NOT NULL,
+                granted_at      TIMESTAMPTZ  NOT NULL,
+                consumed_at     TIMESTAMPTZ  NULL,
+                consultation_id UUID         NULL,
+                metadata        JSONB        NULL
+            )
+        """)
+        c.execute("""
+            CREATE INDEX IF NOT EXISTS idx_earned_credits_available
+            ON earned_credits (user_id, granted_at)
+            WHERE consumed_at IS NULL
+        """)
+        # B4.1 pose UNIQUEMENT la colonne + l'index. Le flux de persistance des
+        # messages n'est PAS touché ici : le passage de consultation_id à
+        # add_message_for_user_id se fera en B4.2 (aucun UPDATE rétroactif).
+        c.execute("ALTER TABLE messages ADD COLUMN IF NOT EXISTS consultation_id UUID")
+        c.execute("CREATE INDEX IF NOT EXISTS idx_messages_consultation ON messages (consultation_id)")
+        conn.commit()
+    except Exception as e:
+        conn.rollback()
+        print(f"Migration v25: {e}")
+    # Migration v25 (suite) — FK vers accounts(user_id), SANS ON DELETE CASCADE.
+    # Blocs séparés car ADD CONSTRAINT n'accepte pas IF NOT EXISTS (même idiome que
+    # v8 / v22 / v23 / v24) : au second passage l'erreur « already exists » est
+    # attrapée et sans effet.
+    try:
+        c.execute("""
+            ALTER TABLE consultations
+                ADD CONSTRAINT fk_consultations_account
+                FOREIGN KEY (user_id) REFERENCES accounts(user_id)
+        """)
+        conn.commit()
+    except Exception as e:
+        conn.rollback()
+        print(f"Migration v25 (FK consultations): {e}")
+    try:
+        c.execute("""
+            ALTER TABLE consultation_allowance
+                ADD CONSTRAINT fk_allowance_account
+                FOREIGN KEY (user_id) REFERENCES accounts(user_id)
+        """)
+        conn.commit()
+    except Exception as e:
+        conn.rollback()
+        print(f"Migration v25 (FK allowance): {e}")
+    try:
+        c.execute("""
+            ALTER TABLE earned_credits
+                ADD CONSTRAINT fk_earned_credits_account
+                FOREIGN KEY (user_id) REFERENCES accounts(user_id)
+        """)
+        conn.commit()
+    except Exception as e:
+        conn.rollback()
+        print(f"Migration v25 (FK earned account): {e}")
+    # FK earned_credits.consultation_id -> consultations(id). Nullable, renseignée
+    # seulement APRÈS création de la consultation, dans la même transaction que la
+    # consommation du crédit (cf. open_or_get_consultation étape G).
+    try:
+        c.execute("""
+            ALTER TABLE earned_credits
+                ADD CONSTRAINT fk_earned_credits_consultation
+                FOREIGN KEY (consultation_id) REFERENCES consultations(id)
+        """)
+        conn.commit()
+    except Exception as e:
+        conn.rollback()
+        print(f"Migration v25 (FK earned consultation): {e}")
+    # FK messages.consultation_id -> consultations(id), SANS ON DELETE CASCADE. Sûr :
+    # toutes les lignes messages ont consultation_id NULL (colonne juste ajoutée,
+    # aucun backfill) et PostgreSQL ne vérifie pas les FK sur une valeur NULL.
+    try:
+        c.execute("""
+            ALTER TABLE messages
+                ADD CONSTRAINT fk_messages_consultation
+                FOREIGN KEY (consultation_id) REFERENCES consultations(id)
+        """)
+        conn.commit()
+    except Exception as e:
+        conn.rollback()
+        print(f"Migration v25 (FK messages consultation): {e}")
     conn.close()
 
 def reset_db():
@@ -4015,6 +4137,292 @@ def get_reply_for_user_id(user_id, user_message):
     return _reply_core(user, str(user_id), user_message, _io,
                        depuis_pub=False, user_msg_pre_inserted=False,
                        onboarding_vient_de_finir=False, channel="app")
+
+# ============================================================
+# MOTEUR DE CONSULTATIONS 2 h / CRÉDITS (B4.1)
+# ============================================================
+# Modèle produit canonique :
+#   - Premium = 7,99 €/mois, 4 consultations par PÉRIODE D'ABONNEMENT
+#   - 1 consultation = fenêtre de 2 h, démarrée au 1er message réellement envoyé
+#   - messages illimités pendant les 2 h ; même conseiller (advisor_id figé ICI,
+#     jamais via app_profiles.guide)
+#   - earned credits séparés du quota (utilisables même sans allowance active)
+#   - source 'extra_paid' réservée (achat unitaire futur, hors B4) ; IAP hors B4
+# Entitlement Premium en B4 = présence d'une consultation_allowance ACTIVE
+#   (period_start <= now < period_end). Aucune colonne d'abonnement sur accounts :
+#   on ne duplique pas la future table subscription_state.
+# B4.1 ne câble PAS /api/consultation/message (ce sera B4.2) et ne touche PAS
+# le flux de persistance des messages (messages.consultation_id reste NULL).
+
+_CONSULTATION_DUREE = timedelta(hours=2)
+
+
+def _utcnow():
+    """Instant présent timezone-aware UTC. Les tables B4 sont en TIMESTAMPTZ ;
+    on ne perpétue pas le datetime.utcnow() naïf du legacy."""
+    return datetime.now(timezone.utc)
+
+
+def _consultation_row_to_dict(row):
+    cid, advisor_id, started_at, expires_at, credit_source = row
+    return {
+        "id": str(cid),
+        "advisor_id": advisor_id,
+        "started_at": started_at,
+        "expires_at": expires_at,
+        "credit_source": credit_source,
+    }
+
+
+def provision_allowance(user_id, period_start, period_end, monthly_limit=4, now=None):
+    """Crée une allowance pour une PÉRIODE D'ABONNEMENT donnée (fournie explicitement
+    par les tests / l'admin / plus tard l'IAP Store — le moteur n'en crée jamais
+    tout seul, pas de mois calendaire). Idempotent sur (user_id, period_start).
+    Retourne True si une ligne a été insérée, False si elle existait déjà."""
+    if now is None:
+        now = _utcnow()
+    uid = str(user_id)
+    conn = get_conn()
+    try:
+        c = conn.cursor()
+        c.execute(
+            """INSERT INTO consultation_allowance
+                   (user_id, period_start, period_end, monthly_limit, monthly_used, created_at)
+               VALUES (%s, %s, %s, %s, 0, %s)
+               ON CONFLICT (user_id, period_start) DO NOTHING""",
+            (uid, period_start, period_end, monthly_limit, now),
+        )
+        inserted = (c.rowcount == 1)
+        conn.commit()
+        return inserted
+    finally:
+        conn.close()
+
+
+def grant_earned_credit(user_id, source, metadata=None, now=None):
+    """Ajoute un crédit gagné non consommé (source : referral / share_30d /
+    support_grant / extra_paid). Séparé du quota mensuel : consommable même sans
+    allowance active. Retourne l'id (str)."""
+    if now is None:
+        now = _utcnow()
+    uid = str(user_id)
+    new_id = str(uuid.uuid4())
+    payload = _json.dumps(metadata) if metadata is not None else None
+    conn = get_conn()
+    try:
+        c = conn.cursor()
+        c.execute(
+            """INSERT INTO earned_credits
+                   (id, user_id, source, granted_at, consumed_at, consultation_id, metadata)
+               VALUES (%s, %s, %s, %s, NULL, NULL, %s)""",
+            (new_id, uid, source, now, payload),
+        )
+        conn.commit()
+        return new_id
+    finally:
+        conn.close()
+
+
+def open_or_get_consultation(user_id, advisor_id, now=None):
+    """Ouvre atomiquement une consultation de 2 h au 1er message, OU retourne la
+    consultation active s'il y en a une (sans rien consommer).
+
+    Une seule connexion, une seule transaction. Ordre :
+      A. SELECT accounts ... FOR UPDATE        -> mutex transactionnel par utilisateur
+      B. consultation active ? (expires_at > now) -> la renvoyer, 0 consommation
+      C. allowance ACTIVE (period_start <= now < period_end) FOR UPDATE :
+            si monthly_used < monthly_limit -> source='monthly', monthly_used += 1
+      D. sinon earned_credit non consommé le plus ancien, FOR UPDATE SKIP LOCKED
+            -> source = source du crédit
+      E. aucune source -> rollback, status='no_credit', rien créé, rien consommé
+      F. INSERT consultation (started_at = now, expires_at = now + 2 h)
+      G. si crédit earned : UPDATE consumed_at + consultation_id APRÈS le INSERT
+      H. commit
+
+    Le verrou (A) garantit que deux premiers messages concurrents ne créent
+    qu'UNE consultation et ne débitent qu'UNE fois. Aucun appel LLM ici.
+
+    Retour : dict {status, opened_now?, consultation?} — status dans
+    {'opened', 'active', 'no_credit', 'unknown_account'}.
+    """
+    if now is None:
+        now = _utcnow()
+    uid = str(user_id)
+    conn = get_conn()
+    try:
+        c = conn.cursor()
+
+        # A. mutex par utilisateur — sérialise les "premiers messages" concurrents
+        c.execute(
+            "SELECT user_id FROM accounts WHERE user_id=%s AND deleted_at IS NULL FOR UPDATE",
+            (uid,),
+        )
+        if c.fetchone() is None:
+            conn.rollback()
+            return {"status": "unknown_account"}
+
+        # B. consultation déjà active -> réutilisée, AUCUNE consommation
+        c.execute(
+            """SELECT id, advisor_id, started_at, expires_at, credit_source
+               FROM consultations
+               WHERE user_id=%s AND expires_at > %s
+               ORDER BY started_at DESC
+               LIMIT 1""",
+            (uid, now),
+        )
+        row = c.fetchone()
+        if row is not None:
+            conn.commit()
+            return {"status": "active", "opened_now": False,
+                    "consultation": _consultation_row_to_dict(row)}
+
+        # C. allowance active (période d'abonnement réelle, pas un mois calendaire)
+        source = None
+        c.execute(
+            """SELECT period_start, monthly_limit, monthly_used
+               FROM consultation_allowance
+               WHERE user_id=%s AND period_start <= %s AND period_end > %s
+               ORDER BY period_start DESC
+               LIMIT 1
+               FOR UPDATE""",
+            (uid, now, now),
+        )
+        arow = c.fetchone()
+        if arow is not None:
+            period_start, monthly_limit, monthly_used = arow
+            if monthly_used < monthly_limit:
+                c.execute(
+                    """UPDATE consultation_allowance
+                       SET monthly_used = monthly_used + 1
+                       WHERE user_id=%s AND period_start=%s""",
+                    (uid, period_start),
+                )
+                source = "monthly"
+
+        # D. sinon : crédit gagné le plus ancien encore disponible
+        earned_id = None
+        if source is None:
+            c.execute(
+                """SELECT id, source
+                   FROM earned_credits
+                   WHERE user_id=%s AND consumed_at IS NULL
+                   ORDER BY granted_at ASC
+                   LIMIT 1
+                   FOR UPDATE SKIP LOCKED""",
+                (uid,),
+            )
+            ec = c.fetchone()
+            if ec is not None:
+                earned_id, source = ec[0], ec[1]
+
+        # E. aucune source -> refus, rien écrit
+        if source is None:
+            conn.rollback()
+            return {"status": "no_credit"}
+
+        # F. création de la consultation
+        cid = str(uuid.uuid4())
+        started_at = now
+        expires_at = now + _CONSULTATION_DUREE
+        c.execute(
+            """INSERT INTO consultations
+                   (id, user_id, advisor_id, started_at, expires_at, credit_source, created_at)
+               VALUES (%s, %s, %s, %s, %s, %s, %s)""",
+            (cid, uid, advisor_id, started_at, expires_at, source, now),
+        )
+
+        # G. le crédit earned n'est marqué consommé QU'APRÈS que la consultation existe
+        #    (FK earned_credits.consultation_id -> consultations.id).
+        if earned_id is not None:
+            c.execute(
+                "UPDATE earned_credits SET consumed_at=%s, consultation_id=%s WHERE id=%s",
+                (now, cid, earned_id),
+            )
+
+        # H.
+        conn.commit()
+        return {
+            "status": "opened",
+            "opened_now": True,
+            "consultation": {
+                "id": cid,
+                "advisor_id": advisor_id,
+                "started_at": started_at,
+                "expires_at": expires_at,
+                "credit_source": source,
+            },
+        }
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        conn.close()
+
+
+def get_consultation_state(user_id, now=None):
+    """Lecture seule : consultation active (+ secondes restantes) et état du quota
+    (allowance de la période courante, crédits gagnés disponibles). Aucun verrou,
+    aucune écriture. Destiné à B4.2 (GET /api/consultation/state)."""
+    if now is None:
+        now = _utcnow()
+    uid = str(user_id)
+    conn = get_conn()
+    try:
+        c = conn.cursor()
+        c.execute(
+            """SELECT id, advisor_id, started_at, expires_at, credit_source
+               FROM consultations
+               WHERE user_id=%s AND expires_at > %s
+               ORDER BY started_at DESC
+               LIMIT 1""",
+            (uid, now),
+        )
+        row = c.fetchone()
+        consultation = None
+        if row is not None:
+            consultation = _consultation_row_to_dict(row)
+            consultation["seconds_remaining"] = max(
+                0, int((consultation["expires_at"] - now).total_seconds())
+            )
+
+        c.execute(
+            """SELECT period_start, period_end, monthly_limit, monthly_used
+               FROM consultation_allowance
+               WHERE user_id=%s AND period_start <= %s AND period_end > %s
+               ORDER BY period_start DESC
+               LIMIT 1""",
+            (uid, now, now),
+        )
+        arow = c.fetchone()
+        if arow is not None:
+            period_start, period_end, monthly_limit, monthly_used = arow
+            quota = {
+                "is_premium": True,
+                "period_start": period_start,
+                "period_end": period_end,
+                "monthly_limit": monthly_limit,
+                "monthly_used": monthly_used,
+                "monthly_remaining": max(0, monthly_limit - monthly_used),
+            }
+        else:
+            quota = {
+                "is_premium": False,
+                "period_start": None,
+                "period_end": None,
+                "monthly_limit": 0,
+                "monthly_used": 0,
+                "monthly_remaining": 0,
+            }
+
+        c.execute(
+            "SELECT COUNT(*) FROM earned_credits WHERE user_id=%s AND consumed_at IS NULL",
+            (uid,),
+        )
+        quota["earned_available"] = int(c.fetchone()[0])
+        conn.commit()
+        return {"consultation": consultation, "quota": quota}
+    finally:
+        conn.close()
 
 # ============================================================
 # RITUEL AUTOMATIQUE (abonnés)
