@@ -467,6 +467,61 @@ def init_db():
     except Exception as e:
         conn.rollback()
         print(f"Migration v21: {e}")
+    # Migration v22 — fondation identité additive (app mobile). PUREMENT ADDITIF :
+    # nouvelle table accounts + colonnes user_id nullables sur users/messages. La PK
+    # users.phone reste inchangée, aucun backfill, aucune ligne existante impactée
+    # (user_id NULL partout). Aucune génération d'UUID, aucun OTP/JWT/endpoint ici :
+    # cette migration ne fait que poser le schéma pour les lots suivants.
+    try:
+        c.execute("""
+            CREATE TABLE IF NOT EXISTS accounts (
+                user_id          UUID       PRIMARY KEY,
+                email            TEXT,
+                email_normalized TEXT,
+                auth_provider    TEXT       DEFAULT 'email',
+                provider_sub     TEXT,
+                created_at       TIMESTAMP,
+                last_login_at    TIMESTAMP  NULL,
+                deleted_at       TIMESTAMP  NULL
+            )
+        """)
+        # Unicité de l'email seulement quand il est renseigné (même idiome que
+        # idx_unique_stripe_customer) : tolère d'éventuelles lignes sans email.
+        c.execute("""
+            CREATE UNIQUE INDEX IF NOT EXISTS idx_accounts_email_normalized
+            ON accounts (email_normalized)
+            WHERE email_normalized IS NOT NULL AND email_normalized <> ''
+        """)
+        c.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS user_id UUID")
+        # Unique partiel : deux users ne peuvent pas partager un user_id, mais les
+        # lignes legacy (user_id NULL) ne sont pas contraintes entre elles.
+        c.execute("""
+            CREATE UNIQUE INDEX IF NOT EXISTS idx_users_user_id
+            ON users (user_id)
+            WHERE user_id IS NOT NULL
+        """)
+        c.execute("ALTER TABLE messages ADD COLUMN IF NOT EXISTS user_id UUID")
+        c.execute("CREATE INDEX IF NOT EXISTS idx_messages_user_id ON messages (user_id)")
+        conn.commit()
+    except Exception as e:
+        conn.rollback()
+        print(f"Migration v22: {e}")
+    # Migration v22 (suite) — FK nullable users.user_id -> accounts.user_id, SANS
+    # ON DELETE CASCADE. Sûr avec le schéma actuel : toutes les lignes users ont
+    # user_id NULL (colonne juste ajoutée, aucun backfill) et PostgreSQL n'applique
+    # aucune vérification de FK sur une valeur NULL. Bloc séparé car ADD CONSTRAINT
+    # n'accepte pas IF NOT EXISTS : au second passage l'erreur « already exists »
+    # est attrapée et sans effet (même idiome que la Migration v8).
+    try:
+        c.execute("""
+            ALTER TABLE users
+                ADD CONSTRAINT fk_users_account
+                FOREIGN KEY (user_id) REFERENCES accounts(user_id)
+        """)
+        conn.commit()
+    except Exception as e:
+        conn.rollback()
+        print(f"Migration v22 (FK): {e}")
     conn.close()
 
 def reset_db():
