@@ -585,6 +585,62 @@ def init_db():
     except Exception as e:
         conn.rollback()
         print(f"Migration v23 (FK): {e}")
+    # Migration v24 — profil app (app_profiles) : profil "cerveau" d'un utilisateur
+    # identifié UNIQUEMENT par accounts.user_id, sans phone. PUREMENT ADDITIF :
+    # aucune colonne touchée sur users / messages / accounts (messages.user_id
+    # existe déjà depuis la v22). Pas de quota, pas d'abonnement, pas de relances ici.
+    try:
+        c.execute("""
+            CREATE TABLE IF NOT EXISTS app_profiles (
+                user_id                          UUID       PRIMARY KEY REFERENCES accounts(user_id),
+                guide                            TEXT       DEFAULT 'selena',
+                prenom                           TEXT       DEFAULT '',
+                genre                            TEXT       DEFAULT '',
+                nom_affiche                      TEXT       DEFAULT '',
+                date_naissance                   TEXT       DEFAULT '',
+                chemin_de_vie                    TEXT       DEFAULT '',
+                signe_zodiaque                   TEXT       DEFAULT '',
+                nb_echanges                      INTEGER    DEFAULT 0,
+                nb_echanges_decouverte           INTEGER    DEFAULT 0,
+                nb_echanges_dernier_tirage       INTEGER    DEFAULT 0,
+                date_derniere_proposition_tirage TEXT       DEFAULT '',
+                nb_echanges_dernier_psaume       INTEGER    DEFAULT 0,
+                tirage_propose_en_attente        BOOLEAN    DEFAULT FALSE,
+                dernier_outil                    TEXT       DEFAULT '',
+                niveau_detresse                  TEXT       DEFAULT '',
+                detresse_maj_at                  TEXT       DEFAULT '',
+                dernier_signal_aigu_at           TEXT       DEFAULT '',
+                theme_dominant                   TEXT       DEFAULT '',
+                douleur_principale               TEXT       DEFAULT '',
+                peur_dominante                   TEXT       DEFAULT '',
+                prenoms_importants               TEXT       DEFAULT '',
+                dernier_sujet_sensible           TEXT       DEFAULT '',
+                derniere_intention               TEXT       DEFAULT '',
+                niveau_attachement               TEXT       DEFAULT '',
+                date_premier_contact             TEXT       DEFAULT '',
+                date_dernier_contact             TEXT       DEFAULT '',
+                onboarding_done                  BOOLEAN    DEFAULT FALSE
+            )
+        """)
+        conn.commit()
+    except Exception as e:
+        conn.rollback()
+        print(f"Migration v24: {e}")
+    # Migration v24 (suite) — FK nullable messages.user_id -> accounts(user_id),
+    # SANS ON DELETE CASCADE. Sûr : toutes les lignes messages legacy ont user_id
+    # NULL (colonne ajoutée en v22, aucun backfill) et PostgreSQL ne vérifie pas
+    # les FK sur une valeur NULL. Bloc séparé (ADD CONSTRAINT non idempotent) —
+    # même idiome que les Migrations v8 / v22 / v23.
+    try:
+        c.execute("""
+            ALTER TABLE messages
+                ADD CONSTRAINT fk_messages_account
+                FOREIGN KEY (user_id) REFERENCES accounts(user_id)
+        """)
+        conn.commit()
+    except Exception as e:
+        conn.rollback()
+        print(f"Migration v24 (FK): {e}")
     conn.close()
 
 def reset_db():
@@ -829,6 +885,258 @@ def get_conversation(phone):
     rows = c.fetchall()
     conn.close()
     return rows
+
+
+# ============================================================
+# PROFIL APP (app_profiles) — utilisateur identifié par accounts.user_id, sans phone
+# ------------------------------------------------------------
+# Monde séparé du legacy `users`/`phone` : aucune de ces fonctions ne touche
+# `users`, `create_user`, ni `get_reply`. L'adaptateur _app_profile_to_user_dict
+# rend un dict à la forme EXACTE de get_user() pour que get_system_prompt et les
+# détecteurs existants fonctionnent sans modification.
+# ============================================================
+
+# Ordre stable des colonnes (SELECT + zip). user_id en tête, jamais modifiable.
+_APP_PROFILE_FIELDS = (
+    "user_id",
+    "guide", "prenom", "genre", "nom_affiche", "date_naissance", "chemin_de_vie",
+    "signe_zodiaque", "nb_echanges", "nb_echanges_decouverte", "nb_echanges_dernier_tirage",
+    "date_derniere_proposition_tirage", "nb_echanges_dernier_psaume", "tirage_propose_en_attente",
+    "dernier_outil", "niveau_detresse", "detresse_maj_at", "dernier_signal_aigu_at",
+    "theme_dominant", "douleur_principale", "peur_dominante", "prenoms_importants",
+    "dernier_sujet_sensible", "derniere_intention", "niveau_attachement",
+    "date_premier_contact", "date_dernier_contact", "onboarding_done",
+)
+# Whitelist STRICTE des colonnes modifiables (tout sauf user_id). Aucun nom de
+# colonne libre venant d'un appelant n'est accepté.
+_APP_PROFILE_COLS = frozenset(_APP_PROFILE_FIELDS[1:])
+
+
+def _user_hash(user_id):
+    return hashlib.sha256((str(user_id) or "").encode()).hexdigest()[:8]
+
+
+def get_app_profile(user_id):
+    """Retourne le profil app (dict colonne->valeur) ou None s'il n'existe pas."""
+    conn = None
+    try:
+        conn = get_conn()
+        c = conn.cursor()
+        c.execute("SELECT " + ", ".join(_APP_PROFILE_FIELDS) + " FROM app_profiles WHERE user_id=%s", (str(user_id),))
+        row = c.fetchone()
+        return dict(zip(_APP_PROFILE_FIELDS, row)) if row else None
+    except Exception as e:
+        print(f"[DB] get_app_profile erreur {_user_hash(user_id)}: {e}")
+        return None
+    finally:
+        if conn:
+            try: conn.close()
+            except Exception: pass
+
+
+def get_or_create_app_profile(user_id):
+    """Retourne le profil app de cet user_id, en le créant s'il n'existe pas.
+    Exige un accounts.user_id existant et non supprimé (deleted_at IS NULL) —
+    sinon None. Ne crée AUCUNE ligne users, n'écrit AUCUN phone."""
+    uid = str(user_id)
+    conn = None
+    try:
+        conn = get_conn()
+        c = conn.cursor()
+        c.execute("SELECT deleted_at FROM accounts WHERE user_id=%s", (uid,))
+        acc = c.fetchone()
+        if acc is None or acc[0] is not None:
+            return None
+        c.execute("SELECT " + ", ".join(_APP_PROFILE_FIELDS) + " FROM app_profiles WHERE user_id=%s", (uid,))
+        row = c.fetchone()
+        if row:
+            return dict(zip(_APP_PROFILE_FIELDS, row))
+        now = datetime.utcnow().isoformat()
+        c.execute(
+            "INSERT INTO app_profiles (user_id, guide, onboarding_done, date_premier_contact, date_dernier_contact) "
+            "VALUES (%s, 'selena', FALSE, %s, %s) ON CONFLICT (user_id) DO NOTHING",
+            (uid, now, now),
+        )
+        conn.commit()
+        c.execute("SELECT " + ", ".join(_APP_PROFILE_FIELDS) + " FROM app_profiles WHERE user_id=%s", (uid,))
+        row = c.fetchone()
+        return dict(zip(_APP_PROFILE_FIELDS, row)) if row else None
+    except Exception as e:
+        print(f"[DB] get_or_create_app_profile erreur {_user_hash(user_id)}: {e}")
+        return None
+    finally:
+        if conn:
+            try: conn.close()
+            except Exception: pass
+
+
+def _update_app_profile(user_id, fields, touch):
+    if not fields:
+        return
+    bad = [k for k in fields if k not in _APP_PROFILE_COLS]
+    if bad:
+        raise ValueError(f"colonnes non autorisées pour app_profiles : {sorted(bad)}")
+    data = dict(fields)
+    if touch:
+        data["date_dernier_contact"] = datetime.utcnow().isoformat()
+    cols = list(data.keys())
+    sets = ", ".join(f"{k}=%s" for k in cols)
+    vals = [data[k] for k in cols] + [str(user_id)]
+    conn = None
+    try:
+        conn = get_conn()
+        c = conn.cursor()
+        c.execute(f"UPDATE app_profiles SET {sets} WHERE user_id=%s", vals)
+        conn.commit()
+    except Exception as e:
+        print(f"[DB] update_app_profile erreur {_user_hash(user_id)}: {e}")
+    finally:
+        if conn:
+            try: conn.close()
+            except Exception: pass
+
+
+def update_app_profile(user_id, **kwargs):
+    """Met à jour le profil app ET date_dernier_contact. Whitelist stricte."""
+    _update_app_profile(user_id, kwargs, touch=True)
+
+
+def update_app_profile_silent(user_id, **kwargs):
+    """Met à jour le profil app SANS toucher date_dernier_contact. Whitelist stricte."""
+    _update_app_profile(user_id, kwargs, touch=False)
+
+
+def _app_profile_to_user_dict(profile, account=None):
+    """Adapte un profil app -> le dict EXACT que get_user() renvoie, pour que
+    get_system_prompt et les détecteurs existants fonctionnent sans modification.
+    Les clés legacy non pertinentes reçoivent une valeur neutre compatible."""
+    p = profile or {}
+    acc = account or {}
+
+    def _i(x):
+        try:
+            return int(str(x).strip())
+        except Exception:
+            return 0
+
+    def _ts(x):
+        return x if (isinstance(x, str) and x.strip()) else None
+
+    return {
+        "phone": None,
+        "email": acc.get("email") or p.get("email") or "",
+        "prenom": p.get("prenom") or "",
+        "guide": p.get("guide") or "selena",
+        "nom_affiche": p.get("nom_affiche") or "",
+        "nb_echanges": _i(p.get("nb_echanges")),
+        "dernier_outil": p.get("dernier_outil") or "",
+        "date_premier_contact": p.get("date_premier_contact") or "",
+        "date_dernier_contact": p.get("date_dernier_contact") or "",
+        "etat": "normal",
+        "abonne": False,
+        "date_abonnement": "",
+        "stripe_customer_id": "",
+        "relance_j6_envoyee": False,
+        "relance_j8_envoyee": False,
+        "dernier_relance_abonne_at": "",
+        "relance_abonne_count": 0,
+        "dernier_rituel_date": "",
+        "dernier_rituel_type": "",
+        "depuis_site": False,
+        "prenoms_importants": p.get("prenoms_importants") or "",
+        "theme_dominant": p.get("theme_dominant") or "",
+        "douleur_principale": p.get("douleur_principale") or "",
+        "peur_dominante": p.get("peur_dominante") or "",
+        "niveau_detresse": _i(p.get("niveau_detresse")),
+        "niveau_attachement": _i(p.get("niveau_attachement")),
+        "dernier_sujet_sensible": p.get("dernier_sujet_sensible") or "",
+        "derniere_intention": p.get("derniere_intention") or "",
+        "relance_j7_envoyee": False,
+        "onboarding_step": "prenom",
+        "onboarding_done": bool(p.get("onboarding_done")),
+        "profil_initial": "",
+        "onboarding_question": "",
+        "onboarding_psaume": None,
+        "derniere_relance_conversationnelle_at": "",
+        "derniere_relance_conversationnelle_type": "",
+        "relance_hebdo_envoyee": False,
+        "derniere_relance_hebdo_at": "",
+        "stop_relances": False,
+        "derniere_verif_stripe_at": "",
+        "last_morning_message_at": "",
+        "last_template_message_at": "",
+        "templates_sans_reponse": 0,
+        "morning_messages_enabled": True,
+        "free_entry_expires_at": "",
+        "source_channel": "",
+        "last_h4_relance_at": "",
+        "last_h22_relance_at": "",
+        "messages_today_count": 0,
+        "messages_today_date": "",
+        "categorie_principale": "",
+        "relances_ids_envoyes": "",
+        "date_derniere_proposition_tirage": p.get("date_derniere_proposition_tirage") or "",
+        "nb_echanges_dernier_tirage": _i(p.get("nb_echanges_dernier_tirage")),
+        "dernier_signal_aigu_at": _ts(p.get("dernier_signal_aigu_at")),
+        "detresse_maj_at": _ts(p.get("detresse_maj_at")),
+        "retour_j7_envoyee": False,
+        "retour_j15_envoyee": False,
+        "retour_j30_envoyee": False,
+        "proactifs_today_count": 0,
+        "proactifs_today_date": "",
+        "tirage_propose_en_attente": bool(p.get("tirage_propose_en_attente")),
+        "nb_echanges_dernier_psaume": _i(p.get("nb_echanges_dernier_psaume")),
+        "genre": p.get("genre") or "",
+        "telegram_chat_id": "",
+        "telegram_link_token": "",
+        "telegram_link_token_at": "",
+        "telegram_invite_envoye": False,
+        "premiere_consultation_envoyee": False,
+        "date_naissance": p.get("date_naissance") or "",
+        "chemin_de_vie": _i(p.get("chemin_de_vie")),
+        "signe_zodiaque": p.get("signe_zodiaque") or "",
+        "nb_echanges_decouverte": _i(p.get("nb_echanges_decouverte")),
+    }
+
+
+def add_message_for_user_id(user_id, role, content):
+    """Écrit un message app : messages.user_id renseigné, messages.phone = NULL."""
+    conn = None
+    try:
+        conn = get_conn()
+        c = conn.cursor()
+        c.execute(
+            "INSERT INTO messages (user_id, phone, role, content, timestamp) VALUES (%s, NULL, %s, %s, %s)",
+            (str(user_id), role, content, datetime.now().isoformat()),
+        )
+        conn.commit()
+    except Exception as e:
+        print(f"[DB] add_message_for_user_id erreur {_user_hash(user_id)}: {e}")
+    finally:
+        if conn:
+            try: conn.close()
+            except Exception: pass
+
+
+def get_history_for_user_id(user_id, limit=20):
+    """Même forme que get_history(phone,...) mais filtrée sur messages.user_id."""
+    conn = get_conn()
+    c = conn.cursor()
+    c.execute("SELECT role,content FROM messages WHERE user_id=%s ORDER BY id DESC LIMIT %s", (str(user_id), limit))
+    rows = c.fetchall()
+    conn.close()
+    return [{"role": r[0], "content": r[1]} for r in reversed(rows)]
+
+
+def get_conversation_for_user_id(user_id):
+    """Même forme que get_conversation(phone) mais filtrée sur messages.user_id."""
+    conn = get_conn()
+    c = conn.cursor()
+    c.execute("SELECT role,content,timestamp FROM messages WHERE user_id=%s ORDER BY id ASC", (str(user_id),))
+    rows = c.fetchall()
+    conn.close()
+    return rows
+
 
 def get_all_users():
     conn = get_conn()
