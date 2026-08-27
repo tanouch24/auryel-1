@@ -1,6 +1,6 @@
 import os, time, requests, threading, psycopg2, stripe, re, random, hmac, hashlib, unicodedata, secrets, html, uuid
 from datetime import datetime, date, timezone, timedelta
-from flask import Flask, request, jsonify, session, redirect
+from flask import Flask, request, jsonify, session, redirect, g
 from flask_cors import CORS
 from flask_limiter import Limiter
 from flask_limiter.util import get_remote_address
@@ -1786,11 +1786,12 @@ def create_auth_code(email_normalized, request_ip_hash=None):
     return code
 
 
-def verify_auth_code(email_normalized, code):
-    """Retourne True seulement si le DERNIER code de cet email correspond, n'est
-    pas expiré, pas déjà consommé et sous la limite de tentatives. Chaque échec
-    incrémente attempts ; un succès marque consumed_at. Comparaison en temps
-    constant. Ne renvoie qu'un booléen (aucun détail exploitable pour énumérer)."""
+def check_auth_code(email_normalized, code):
+    """Vérifie le DERNIER code de cet email SANS le consommer. Retourne son id
+    (int) si valide — correspondance HMAC en temps constant, non expiré (10 min),
+    non consommé, sous la limite de 5 tentatives —, sinon None. Chaque échec de
+    correspondance incrémente attempts. La consommation définitive est faite à
+    part, par claim_auth_code(), après création réussie de la session."""
     expected = _hash_auth_code(email_normalized, code or "")
     now = datetime.utcnow()
     conn = get_conn()
@@ -1800,23 +1801,62 @@ def verify_auth_code(email_normalized, code):
         row = c.fetchone()
         if not row:
             hmac.compare_digest(expected, expected)  # coût ~constant même sans code
-            return False
+            return None
         cid, code_hash, expires_at, attempts, consumed_at = row
         if consumed_at is not None:
-            return False
+            return None
         if attempts is not None and attempts >= _AUTH_CODE_MAX_ATTEMPTS:
-            return False
+            return None
         if expires_at is not None and expires_at <= now:
-            return False
+            return None
         if not hmac.compare_digest(str(code_hash), expected):
             c.execute("UPDATE auth_codes SET attempts = attempts + 1 WHERE id=%s", (cid,))
             conn.commit()
-            return False
-        c.execute("UPDATE auth_codes SET consumed_at=%s WHERE id=%s", (now, cid))
-        conn.commit()
-        return True
+            return None
+        return cid
     finally:
         conn.close()
+
+
+def claim_auth_code(code_id):
+    """Consomme le code de façon atomique et exclusive : l'UPDATE ne porte que si
+    consumed_at était NULL. Retourne True si CET appel a effectué la consommation
+    (il gagne la course), False si un autre appel l'avait déjà consommé. Sert de
+    verrou avant la création de session : deux validations concurrentes du même
+    code ne peuvent pas produire deux sessions."""
+    conn = get_conn()
+    try:
+        c = conn.cursor()
+        c.execute("UPDATE auth_codes SET consumed_at=%s WHERE id=%s AND consumed_at IS NULL", (datetime.utcnow(), code_id))
+        claimed = (c.rowcount == 1)
+        conn.commit()
+        return claimed
+    finally:
+        conn.close()
+
+
+def release_auth_code(code_id):
+    """Compensation : relâche un code revendiqué juste avant, si la création du
+    compte ou de la session échoue ensuite. Sûr car la revendication est atomique
+    et exclusive — le code n'a été remis à personne d'autre entre-temps."""
+    conn = get_conn()
+    try:
+        c = conn.cursor()
+        c.execute("UPDATE auth_codes SET consumed_at=NULL WHERE id=%s", (code_id,))
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def verify_auth_code(email_normalized, code):
+    """Compat B2.1 : valide ET consomme le code en un seul pas (True/False). Le
+    flux /api/auth/verify-code utilise désormais check_auth_code() +
+    claim_auth_code() séparément pour ne consommer qu'après création réussie de
+    la session."""
+    cid = check_auth_code(email_normalized, code)
+    if cid is None:
+        return False
+    return claim_auth_code(cid)
 
 
 def get_or_create_account(email_normalized, original_email=None):
@@ -1930,6 +1970,195 @@ def send_email_code(email, code):
     except Exception as e:
         print(f"[auth] send_email_code : echec envoi ({type(e).__name__})")
         return {"ok": False, "error": "send_failed"}
+
+
+# ------------------------------------------------------------
+# AUTH APP — endpoints (B2.2). Consommés par l'app Flutter.
+# Aucune identité ne vient jamais du body d'une route authentifiée :
+# elle provient uniquement du jeton Bearer validé (flask.g.app_account).
+# Toutes ces réponses portent Cache-Control: no-store.
+# ------------------------------------------------------------
+
+_REQUEST_CODE_MAX_PER_HOUR = 5   # plafond applicatif par email (indépendant du Limiter IP)
+
+
+def _auth_json(payload, status=200):
+    """Réponse JSON auth : ajoute systématiquement Cache-Control: no-store."""
+    resp = jsonify(payload)
+    resp.headers["Cache-Control"] = "no-store"
+    return resp, status
+
+
+def _client_ip_hash():
+    """SHA-256 tronqué de l'IP appelante (jamais l'IP en clair). None si indisponible."""
+    try:
+        ip = get_remote_address() or ""
+    except Exception:
+        ip = ""
+    return hashlib.sha256(ip.encode("utf-8")).hexdigest()[:16] if ip else None
+
+
+def _count_recent_auth_codes(email_normalized, since_dt):
+    """Nombre de codes demandés pour cet email depuis since_dt (limite anti-abus
+    par email, ne dépend pas du stockage in-memory de Flask-Limiter)."""
+    conn = get_conn()
+    try:
+        c = conn.cursor()
+        c.execute("SELECT COUNT(*) FROM auth_codes WHERE email_normalized=%s AND created_at >= %s", (email_normalized, since_dt))
+        row = c.fetchone()
+        return int(row[0]) if row and row[0] is not None else 0
+    finally:
+        conn.close()
+
+
+def _invalidate_active_auth_codes(email_normalized):
+    """Marque consommés tous les codes actifs de cet email (utilisé si l'email de
+    livraison échoue : un code jamais reçu ne doit pas rester valable)."""
+    conn = get_conn()
+    try:
+        c = conn.cursor()
+        c.execute("UPDATE auth_codes SET consumed_at=%s WHERE email_normalized=%s AND consumed_at IS NULL", (datetime.utcnow(), email_normalized))
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def _touch_last_login(user_id):
+    """Met à jour accounts.last_login_at après une connexion réussie."""
+    conn = get_conn()
+    try:
+        c = conn.cursor()
+        c.execute("UPDATE accounts SET last_login_at=%s WHERE user_id=%s", (datetime.utcnow(), user_id))
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def require_app_auth(f):
+    """Décorateur : exige un en-tête `Authorization: Bearer <token>` valide.
+    L'identité résolue (session_id / user_id / email) est déposée dans flask.g ;
+    la route ne doit jamais lire d'identité dans le body. 401 générique sinon.
+    Ne logge jamais le jeton."""
+    from functools import wraps
+
+    @wraps(f)
+    def wrapper(*args, **kwargs):
+        authz = request.headers.get("Authorization", "")
+        parts = authz.split(" ", 1)
+        if len(parts) != 2 or parts[0] != "Bearer" or not parts[1].strip():
+            return _auth_json({"error": "unauthorized"}, 401)
+        token = parts[1].strip()
+        account = resolve_app_session(token)
+        if not account:
+            return _auth_json({"error": "unauthorized"}, 401)
+        g.app_account = account          # {"session_id", "user_id", "email"}
+        g.app_bearer = token
+        return f(*args, **kwargs)
+
+    return wrapper
+
+
+@app.route("/api/auth/request-code", methods=["POST"])
+@limiter.limit("3 per 10 minutes")
+def api_auth_request_code():
+    data = request.get_json(silent=True) or {}
+    email = _normalize_email(data.get("email"))
+    if not email:
+        return _auth_json({"error": "invalid_request"}, 400)
+    # Plafond applicatif par email : au-delà, on renvoie la réponse générique SANS
+    # créer ni envoyer de code — ne révèle pas si un compte existe.
+    since = datetime.utcnow() - timedelta(hours=1)
+    if _count_recent_auth_codes(email, since) >= _REQUEST_CODE_MAX_PER_HOUR:
+        return _auth_json({"status": "ok"}, 200)
+    code = create_auth_code(email, request_ip_hash=_client_ip_hash())
+    sent = send_email_code(email, code)
+    if not sent.get("ok"):
+        # Livraison impossible : invalider tout de suite ce code non reçu.
+        _invalidate_active_auth_codes(email)
+        return _auth_json({"error": "temporarily_unavailable"}, 503)
+    # Réponse identique que l'email corresponde ou non à un compte existant.
+    return _auth_json({"status": "ok"}, 200)
+
+
+@app.route("/api/auth/verify-code", methods=["POST"])
+@limiter.limit("10 per 10 minutes")
+def api_auth_verify_code():
+    data = request.get_json(silent=True) or {}
+    email = _normalize_email(data.get("email"))
+    code = data.get("code")
+    if not email or not isinstance(code, str) or re.fullmatch(r"\d{6}", code) is None:
+        return _auth_json({"error": "invalid_request"}, 400)
+
+    # 1) Vérifier le code SANS le consommer.
+    code_id = check_auth_code(email, code)
+    if code_id is None:
+        return _auth_json({"error": "invalid_code"}, 401)
+
+    # 2) Revendication atomique : sérialise deux validations concurrentes du même
+    #    code (l'autre repart en invalid_code) et sert de verrou avant la session.
+    if not claim_auth_code(code_id):
+        return _auth_json({"error": "invalid_code"}, 401)
+
+    # 3) Créer / récupérer le compte puis la session. En cas d'échec ICI, on
+    #    relâche le code (il n'a été donné à personne d'autre) pour permettre un
+    #    nouvel essai. consumed_at ne reste posé QUE si la session est bien créée.
+    try:
+        user_id = get_or_create_account(email)
+        if not user_id:
+            # Email rattaché uniquement à un compte supprimé : décision définitive,
+            # refus générique, on NE relâche PAS le code. Réinscription = lot dédié.
+            return _auth_json({"error": "invalid_code"}, 401)
+        platform = data.get("platform")
+        platform = platform[:64] if isinstance(platform, str) and platform else None
+        device_label = data.get("device_label")
+        device_label = device_label[:120] if isinstance(device_label, str) and device_label else None
+        token = create_app_session(user_id, platform=platform, device_label=device_label)
+    except Exception:
+        release_auth_code(code_id)
+        print("[auth] verify-code : echec creation compte/session, code relache")
+        return _auth_json({"error": "temporarily_unavailable"}, 503)
+
+    # 4) Session créée : le code reste consommé. last_login = best-effort.
+    try:
+        _touch_last_login(user_id)
+    except Exception:
+        pass
+
+    return _auth_json({
+        "token": token,
+        "token_type": "Bearer",
+        "user_id": user_id,
+        "expires_in": _APP_SESSION_TTL_DAYS * 24 * 3600,
+    }, 200)
+
+
+@app.route("/api/auth/logout", methods=["POST"])
+@require_app_auth
+def api_auth_logout():
+    revoke_app_session(g.app_bearer)
+    return _auth_json({"status": "ok"}, 200)
+
+
+@app.route("/api/account", methods=["GET"])
+@require_app_auth
+def api_account():
+    user_id = g.app_account["user_id"]     # identité issue du Bearer, jamais du body
+    conn = get_conn()
+    try:
+        c = conn.cursor()
+        c.execute("SELECT email, created_at, last_login_at FROM accounts WHERE user_id=%s", (user_id,))
+        row = c.fetchone()
+    finally:
+        conn.close()
+    if not row:
+        return _auth_json({"error": "unauthorized"}, 401)
+    email, created_at, last_login_at = row
+    return _auth_json({
+        "user_id": user_id,
+        "email": email,
+        "created_at": created_at.isoformat() if hasattr(created_at, "isoformat") else created_at,
+        "last_login_at": last_login_at.isoformat() if hasattr(last_login_at, "isoformat") else last_login_at,
+    }, 200)
 
 # ============================================================
 # WHATSAPP
