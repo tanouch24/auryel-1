@@ -2468,6 +2468,32 @@ def api_account():
         "last_login_at": last_login_at.isoformat() if hasattr(last_login_at, "isoformat") else last_login_at,
     }, 200)
 
+
+_APP_MESSAGE_MAX_LEN = 4000
+
+
+@app.route("/api/consultation/message", methods=["POST"])
+@limiter.limit("30 per 10 minutes")
+@require_app_auth
+def api_consultation_message():
+    """Chat mobile -> cerveau Auryel. Identité = jeton Bearer uniquement.
+    Rate-limit purement anti-abus technique (PAS le futur quota commercial :
+    ni fenêtre 2h, ni 10 consultations/mois, ni crédits, ni IAP)."""
+    data = request.get_json(silent=True) or {}
+    msg = data.get("message")
+    if not isinstance(msg, str):
+        return _auth_json({"error": "invalid_request"}, 400)
+    msg = msg.strip()
+    if not msg:
+        return _auth_json({"error": "invalid_request"}, 400)
+    if len(msg) > _APP_MESSAGE_MAX_LEN:
+        return _auth_json({"error": "message_too_long"}, 400)
+
+    user_id = g.app_account["user_id"]   # jamais lu dans le body
+    _app_persist_emotional_context(user_id, msg)
+    reply = get_reply_for_user_id(user_id, msg)
+    return _auth_json({"reply": reply}, 200)
+
 # ============================================================
 # WHATSAPP
 # ============================================================
@@ -3599,37 +3625,27 @@ def gerer_onboarding(phone, user, user_message):
 # ============================================================
 # GET REPLY
 # ============================================================
-def get_reply(phone, user_message, depuis_pub=False, user_msg_pre_inserted=False):
-    user = get_user(phone)
-    if not user: return "Je suis là..."
-
-    if check_and_increment_daily_limit(phone, user):
-        return "On a beaucoup avancé aujourd'hui.\nJe préfère te répondre avec justesse plutôt que de te laisser tourner en boucle.\nOn reprend demain matin, et je garde le fil de ton histoire."
-
+def _reply_core(user, key, user_message, io, *, depuis_pub=False,
+                user_msg_pre_inserted=False, onboarding_vient_de_finir=False,
+                channel="whatsapp"):
+    """Cœur PARTAGÉ de get_reply : détecteurs, assemblage du system prompt,
+    personas, garde-fous détresse/sécurité, appel LLM, persistance de l'historique.
+    `io` injecte les accès données/canal (legacy = phone ; app = user_id).
+    La logique SPÉCIFIQUE au legacy (quota 150/jour, onboarding conversationnel,
+    envoi WhatsApp, liens Stripe, branche Telegram) reste dans get_reply() —
+    elle n'entre jamais ici pour un appelant `channel="app"`."""
     guide_key = user.get("guide", "selena")
-    log_event("user_message_received", phone_hash=_phone_hash(phone), guide=guide_key)
-
-    onboarding_reply = gerer_onboarding(phone, user, user_message)
-    if onboarding_reply is not None:
-        return onboarding_reply
-
-    # Repère fiable (audit validé) : `user` est l'instantané chargé AVANT gerer_onboarding()
-    # (jamais muté en mémoire par cette fonction). S'il montre encore onboarding_done=False
-    # alors que gerer_onboarding vient de rendre la main sans réponse d'onboarding, c'est que
-    # la DB vient de basculer à True À L'INSTANT (branche attente_reponse_presentation) :
-    # on est exactement sur le tout premier vrai message post-onboarding.
-    onboarding_vient_de_finir = not user.get("onboarding_done")
 
     # Bloc 2 — bascule/liaison Telegram : le tirage d'accueil part seul, propre,
     # au tour où onboarding_vient_de_finir==True (aucune invitation ce tour-ci).
     if onboarding_vient_de_finir:
-        update_user_silent(phone, premiere_consultation_envoyee=True)
-    elif (user.get("premiere_consultation_envoyee") and
+        io["update_silent"](key, premiere_consultation_envoyee=True)
+    elif channel == "whatsapp" and (user.get("premiere_consultation_envoyee") and
           not user.get("telegram_invite_envoye") and
           not user.get("telegram_chat_id") and
-          not phone.startswith("tg_")):
+          not str(key).startswith("tg_")):
         telegram_token = secrets.token_urlsafe(32)
-        update_user_silent(phone, telegram_link_token=telegram_token,
+        io["update_silent"](key, telegram_link_token=telegram_token,
                             telegram_link_token_at=datetime.now().isoformat(),
                             telegram_invite_envoye=True)
         bot_username = os.environ.get("BOT_USERNAME", "")
@@ -3637,30 +3653,30 @@ def get_reply(phone, user_message, depuis_pub=False, user_msg_pre_inserted=False
             f"Pour qu'on garde le fil plus tranquillement, je t'invite sur Telegram : "
             f"https://t.me/{bot_username}?start={telegram_token}"
         )
-        send_message(phone, invite_telegram)
-        add_message(phone, "assistant", invite_telegram)
+        io["send_channel_message"](key, invite_telegram)
+        io["add_message"](key, "assistant", invite_telegram)
 
     email_detecte = detecter_email(user_message)
-    if email_detecte and not user.get("email"):
-        update_user(phone, email=email_detecte)
+    if channel == "whatsapp" and email_detecte and not user.get("email"):
+        io["update"](key, email=email_detecte)
 
     if detecter_pas_les_moyens(user_message):
         reply = msg_pas_les_moyens()
         if not user_msg_pre_inserted:
-            add_message(phone, "user", user_message)
-        add_message(phone, "assistant", reply)
-        update_user(phone, nb_echanges=user.get("nb_echanges", 0) + 1)
+            io["add_message"](key, "user", user_message)
+        io["add_message"](key, "assistant", reply)
+        io["update"](key, nb_echanges=user.get("nb_echanges", 0) + 1)
         return reply
 
     outil_demande = detecter_outil_demande(user_message)
     cartes_consent = []
     if outil_demande:
-        update_user(phone, dernier_outil=outil_demande)
+        io["update"](key, dernier_outil=outil_demande)
         user["dernier_outil"] = outil_demande
         if outil_demande == "carte":
             # Demande directe : la formulation vaut déjà consentement, tirage immédiat
             # (pas de flag à armer, pas de tour de latence à attendre).
-            _, cartes_consent = tirer_cartes(phone)
+            _, cartes_consent = io["do_tirage"](key)
 
     contexte_outil = ""
     nombres = [int(w) for w in user_message.split() if w.isdigit()]
@@ -3669,22 +3685,22 @@ def get_reply(phone, user_message, depuis_pub=False, user_msg_pre_inserted=False
         if user["dernier_outil"] == "psaume" and 1 <= n <= 150:
             psaume = PSAUMES.get(n, PSAUMES[23])
             contexte_outil = f"\n\n=== RITUEL PSAUME ===\nLa personne a choisi {n}. Psaume {n} : « {psaume} ».\nFais une lecture courte, émotionnelle, sans prétendre que tout correspond exactement. Ouvre une piste."
-            update_user(phone, dernier_outil="")
+            io["update"](key, dernier_outil="")
         elif user["dernier_outil"] == "carte" and 1 <= n <= 52:
             nom_c, sens_c = CARTES.get(n, CARTES[9])
             contexte_outil = f"\n\n=== RITUEL CARTE ===\nCarte choisie : {nom_c}. Sens : {sens_c}.\nRelie-la sobrement à ce que la personne vit. Reste court, naturel, pas automatique."
-            update_user(phone, dernier_outil="")
-            update_user_silent(phone, nb_echanges_dernier_tirage=user.get("nb_echanges", 0) + 1)
+            io["update"](key, dernier_outil="")
+            io["update_silent"](key, nb_echanges_dernier_tirage=user.get("nb_echanges", 0) + 1)
         elif user["dernier_outil"] == "chiffre" and 0 <= n <= 10:
             titre_c, sens_c = CHIFFRES.get(n, CHIFFRES[1])
             contexte_outil = f"\n\n=== RITUEL CHIFFRE ===\nChiffre choisi : {n} — {titre_c}. Sens : {sens_c}.\nUtilise-le comme symbole, pas comme verdict. Termine sur une ouverture simple."
-            update_user(phone, dernier_outil="")
+            io["update"](key, dernier_outil="")
 
     # Consentement à un tirage proposé PAR LE VOYANT (spontané, ou futur rituel d'accueil) :
     # flag posé au tour précédent, lu ici indépendamment du phrasé exact du conseiller.
     # Si ce tour a déjà résolu une demande directe (cartes_consent), on ne retire pas deux fois.
     if user.get("tirage_propose_en_attente"):
-        update_user_silent(phone, tirage_propose_en_attente=False)
+        io["update_silent"](key, tirage_propose_en_attente=False)
         # Consentement seulement si le message ENTIER se réduit à des mots d'accord
         # (+ ponctuation/espaces) une fois ceux-ci retirés — pas juste "contient" un
         # mot d'accord quelque part. "oui elle est bizarre" laisse "elleestbizarre"
@@ -3696,7 +3712,7 @@ def get_reply(phone, user_message, depuis_pub=False, user_msg_pre_inserted=False
             _reste_consentement = re.sub(r"\b" + re.escape(_mot) + r"\b", "", _reste_consentement)
         _reste_consentement = re.sub(r"[^\w]", "", _reste_consentement)
         if not cartes_consent and _msg_consentement != "" and _reste_consentement == "":
-            _, cartes_consent = tirer_cartes(phone)
+            _, cartes_consent = io["do_tirage"](key)
 
     appel       = detecter_appel_visio(user_message)
     obj_ia      = detecter_objection_ia(user_message)
@@ -3706,12 +3722,12 @@ def get_reply(phone, user_message, depuis_pub=False, user_msg_pre_inserted=False
     # get_history AVANT add_message : l'historique ne doit pas contenir le message
     # courant, qui est ajouté explicitement en fin de tableau messages à l'appel LLM.
     # Inverser ces deux lignes provoquerait un doublon du dernier message utilisateur.
-    history = get_history(phone, limit=20)
+    history = io["get_history"](key, limit=20)
     if not user_msg_pre_inserted:
-        add_message(phone, "user", user_message)
-    update_user(phone, nb_echanges=user.get("nb_echanges", 0) + 1)
+        io["add_message"](key, "user", user_message)
+    io["update"](key, nb_echanges=user.get("nb_echanges", 0) + 1)
 
-    user_fresh = get_user(phone)
+    user_fresh = io["reload"](key)
 
     nb_echanges_actuel = (user_fresh or user).get("nb_echanges", 0)
     nb_echanges_dernier_tirage = (user_fresh or user).get("nb_echanges_dernier_tirage", 0)
@@ -3745,16 +3761,16 @@ def get_reply(phone, user_message, depuis_pub=False, user_msg_pre_inserted=False
         not moment_grave
     )
     if proposer_tirage_spontane:
-        update_user_silent(phone, date_derniere_proposition_tirage=aujourd_hui,
+        io["update_silent"](key, date_derniere_proposition_tirage=aujourd_hui,
                             nb_echanges_dernier_tirage=nb_echanges_actuel,
                             tirage_propose_en_attente=True)
     if decouverte_du_tour and not moment_grave:
-        update_user_silent(phone, nb_echanges_decouverte=1)
+        io["update_silent"](key, nb_echanges_decouverte=1)
     if tirage_accueil_du_tour and not moment_grave:
         # Consommation du compteur de découverte : ne redéclenche jamais le tirage
         # d'accueil une seconde fois (même principe que la consommation de
         # tirage_propose_en_attente=False plus haut dans cette fonction).
-        update_user_silent(phone, tirage_propose_en_attente=True, nb_echanges_decouverte=0)
+        io["update_silent"](key, tirage_propose_en_attente=True, nb_echanges_decouverte=0)
 
     inspiration_citation = (
         choisir_citation((user_fresh or user).get("theme_dominant"))
@@ -3776,7 +3792,7 @@ def get_reply(phone, user_message, depuis_pub=False, user_msg_pre_inserted=False
             "obligatoire ni systématique : si ça ne s'intègre pas naturellement à ce tour, ignore-le "
             "complètement et réponds normalement."
         )
-        update_user_silent(phone, nb_echanges_dernier_psaume=nb_echanges_actuel)
+        io["update_silent"](key, nb_echanges_dernier_psaume=nb_echanges_actuel)
     if contexte_outil: system += contexte_outil
     if cartes_consent:
         system += (
@@ -3850,8 +3866,8 @@ def get_reply(phone, user_message, depuis_pub=False, user_msg_pre_inserted=False
         # Garde-fou détresse (BUG 1) : même helper que les 4 guards marketing QW-1/IA-1.
         # Couvre aussi le cas crise par construction (signal aigu <24h ⟹ <7j ⟹ bloqué ici aussi).
         _bloque_paiement, _ = _detresse_bloque_marketing(user_fresh or user)
-        if not _bloque_paiement:
-            _lien_paiement = get_stripe_links(phone).get("mensuel", "")
+        if not _bloque_paiement and io["stripe_links"]:
+            _lien_paiement = io["stripe_links"](key).get("mensuel", "")
             if _lien_paiement:
                 system += (
                     "\n\n=== DEMANDE DE PAIEMENT ===\n"
@@ -3880,11 +3896,125 @@ def get_reply(phone, user_message, depuis_pub=False, user_msg_pre_inserted=False
     # Upsell aléatoire 35% supprimé : pouvait se déclencher plusieurs fois/jour
     # et avant que l'utilisateur ait naturellement échangé.
     # Réactivation possible ici si besoin, après validation conformité.
-    user_after = get_user(phone)
+    user_after = io["reload"](key)
 
-    add_message(phone, "assistant", reply)
-    log_event("bot_response_sent", phone_hash=_phone_hash(phone), guide=guide_key)
+    io["add_message"](key, "assistant", reply)
+    log_event("bot_response_sent", phone_hash=io["hash_id"](key), guide=guide_key)
     return reply
+
+
+def get_reply(phone, user_message, depuis_pub=False, user_msg_pre_inserted=False):
+    """Chemin LEGACY (WhatsApp / Telegram). Signature et comportement INCHANGÉS :
+    quota DAILY_LIMIT, onboarding conversationnel, canaux Meta/Telegram, tirer_cartes
+    et liens Stripe restent ici ; le reste est délégué au cœur partagé _reply_core."""
+    user = get_user(phone)
+    if not user: return "Je suis là..."
+
+    if check_and_increment_daily_limit(phone, user):
+        return "On a beaucoup avancé aujourd'hui.\nJe préfère te répondre avec justesse plutôt que de te laisser tourner en boucle.\nOn reprend demain matin, et je garde le fil de ton histoire."
+
+    guide_key = user.get("guide", "selena")
+    log_event("user_message_received", phone_hash=_phone_hash(phone), guide=guide_key)
+
+    onboarding_reply = gerer_onboarding(phone, user, user_message)
+    if onboarding_reply is not None:
+        return onboarding_reply
+
+    # Repère fiable (audit validé) : `user` est l'instantané chargé AVANT gerer_onboarding()
+    # (jamais muté en mémoire par cette fonction). S'il montre encore onboarding_done=False
+    # alors que gerer_onboarding vient de rendre la main sans réponse d'onboarding, c'est que
+    # la DB vient de basculer à True À L'INSTANT (branche attente_reponse_presentation) :
+    # on est exactement sur le tout premier vrai message post-onboarding.
+    onboarding_vient_de_finir = not user.get("onboarding_done")
+
+    _io = {
+        "update": update_user,
+        "update_silent": update_user_silent,
+        "reload": get_user,
+        "add_message": add_message,
+        "get_history": get_history,
+        "do_tirage": tirer_cartes,
+        "stripe_links": get_stripe_links,
+        "send_channel_message": send_message,
+        "hash_id": _phone_hash,
+    }
+    return _reply_core(user, phone, user_message, _io,
+                       depuis_pub=depuis_pub,
+                       user_msg_pre_inserted=user_msg_pre_inserted,
+                       onboarding_vient_de_finir=onboarding_vient_de_finir,
+                       channel="whatsapp")
+
+
+def _app_persist_emotional_context(user_id, message):
+    """Équivalent app du pas fait par le webhook WhatsApp avant get_reply :
+    lance detecter_contexte_emotionnel() (ALGO INCHANGÉ) sur le profil app adapté,
+    puis persiste dans app_profiles les mêmes champs que le webhook persiste dans
+    users. Alimente les garde-fous détresse (3114 / registre adouci) côté app."""
+    profile = get_or_create_app_profile(user_id)
+    if not profile:
+        return
+    u = detecter_contexte_emotionnel(message, _app_profile_to_user_dict(profile))
+    update_app_profile_silent(
+        user_id,
+        theme_dominant=u.get("theme_dominant") or "",
+        douleur_principale=u.get("douleur_principale") or "",
+        peur_dominante=u.get("peur_dominante") or "",
+        niveau_detresse=str(u.get("niveau_detresse", 0)),
+        niveau_attachement=str(u.get("niveau_attachement", 0)),
+        prenoms_importants=u.get("prenoms_importants") or "",
+        dernier_sujet_sensible=u.get("dernier_sujet_sensible") or "",
+        derniere_intention=u.get("derniere_intention") or "",
+        detresse_maj_at=u.get("detresse_maj_at") or "",
+        dernier_signal_aigu_at=u.get("dernier_signal_aigu_at") or "",
+    )
+
+
+def get_reply_for_user_id(user_id, user_message):
+    """Chemin APP (utilisateur = accounts.user_id, sans phone). Réutilise
+    intégralement _reply_core (prompts / personas / détecteurs / garde-fous).
+    AUCUN quota DAILY_LIMIT, AUCUN onboarding legacy, AUCUN WhatsApp/Telegram,
+    AUCUN Stripe, AUCUN faux phone. Profil via app_profiles, historique via
+    messages.user_id."""
+    profile = get_or_create_app_profile(user_id)
+    if not profile:
+        return "Je suis là..."
+
+    account = None
+    conn = get_conn()
+    try:
+        c = conn.cursor()
+        c.execute("SELECT email FROM accounts WHERE user_id=%s", (str(user_id),))
+        r = c.fetchone()
+        if r:
+            account = {"email": r[0]}
+    except Exception:
+        account = None
+    finally:
+        try: conn.close()
+        except Exception: pass
+
+    user = _app_profile_to_user_dict(profile, account=account)
+    guide_key = user.get("guide", "selena")
+    log_event("user_message_received", phone_hash=_user_hash(user_id), guide=guide_key)
+
+    def _app_reload(_):
+        p = get_app_profile(user_id)
+        return _app_profile_to_user_dict(p, account=account) if p else None
+
+    _io = {
+        "update": lambda _, **kw: update_app_profile(user_id, **kw),
+        "update_silent": lambda _, **kw: update_app_profile_silent(user_id, **kw),
+        "reload": _app_reload,
+        "add_message": lambda _, role, content: add_message_for_user_id(user_id, role, content),
+        "get_history": lambda _, limit=20: get_history_for_user_id(user_id, limit),
+        "do_tirage": lambda _: (None, []),          # pas de tirage image en app (lot ultérieur)
+        "stripe_links": None,                       # aucun lien Stripe côté app
+        "send_channel_message": lambda *a, **k: None,
+        "hash_id": _user_hash,
+    }
+    return _reply_core(user, str(user_id), user_message, _io,
+                       depuis_pub=False, user_msg_pre_inserted=False,
+                       onboarding_vient_de_finir=False, channel="app")
 
 # ============================================================
 # RITUEL AUTOMATIQUE (abonnés)
