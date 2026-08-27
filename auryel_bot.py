@@ -2727,6 +2727,120 @@ def api_consultation_state():
         "quota": _quota_json(state["quota"]),
     }, 200)
 
+
+# ------------------------------------------------------------
+# PROFIL APP — synchronisation onboarding Flutter -> backend (B4.3)
+# Identité = jeton Bearer uniquement (g.app_account["user_id"]), jamais le body.
+# Aucun phone, aucun Stripe, aucun abonnement, aucun quota. Réutilise les
+# helpers existants : get_or_create_app_profile / get_app_profile /
+# update_app_profile (whitelist stricte _APP_PROFILE_COLS) et les calculs
+# métier legacy calcul_chemin_de_vie / calcul_signe (mêmes fonctions que
+# l'onboarding WhatsApp).
+# ------------------------------------------------------------
+
+_APP_PROFILE_PRENOM_MAX = 40
+
+
+def _app_profile_public(profile):
+    """Vue publique du profil app — uniquement les champs de ce lot."""
+    dn = (profile.get("date_naissance") or "").strip()
+    cdv = profile.get("chemin_de_vie")
+    return {
+        "user_id": str(profile.get("user_id") or ""),
+        "guide": profile.get("guide") or "selena",
+        "prenom": profile.get("prenom") or "",
+        "date_naissance": dn if dn else None,
+        "chemin_de_vie": "" if cdv is None else str(cdv),
+        "signe_zodiaque": profile.get("signe_zodiaque") or "",
+    }
+
+
+def _validate_app_profile_patch(data):
+    """Valide un body PATCH PARTIEL. Retourne (updates:dict, error:str|None).
+    Champs acceptés ce lot : guide, prenom, date_naissance. Tout autre champ
+    (dont user_id) est ignoré silencieusement — jamais d'écriture hors whitelist.
+    Un champ absent n'est jamais modifié (aucune remise à défaut)."""
+    updates = {}
+
+    if "guide" in data:
+        g_val = data.get("guide")
+        if not isinstance(g_val, str) or g_val not in GUIDES:
+            return None, "invalid_guide"
+        updates["guide"] = g_val
+
+    if "prenom" in data:
+        p_val = data.get("prenom")
+        if not isinstance(p_val, str):
+            return None, "invalid_prenom"
+        p_val = p_val.strip()
+        if not p_val or len(p_val) > _APP_PROFILE_PRENOM_MAX:
+            return None, "invalid_prenom"
+        updates["prenom"] = p_val
+
+    if "date_naissance" in data:
+        d_val = data.get("date_naissance")
+        if not isinstance(d_val, str):
+            return None, "invalid_date_naissance"
+        d_val = d_val.strip()
+        if not re.match(r"^\d{4}-\d{2}-\d{2}$", d_val):
+            return None, "invalid_date_naissance"
+        try:
+            d = date.fromisoformat(d_val)
+        except ValueError:
+            return None, "invalid_date_naissance"
+        if d.year < 1900 or d > date.today():
+            return None, "invalid_date_naissance"
+        updates["date_naissance"] = d_val
+        # Recalcul métier via les helpers legacy (identiques à l'onboarding WhatsApp).
+        updates["chemin_de_vie"] = str(calcul_chemin_de_vie(d_val))
+        updates["signe_zodiaque"] = calcul_signe(d_val)
+
+    return updates, None
+
+
+@app.route("/api/app/profile", methods=["GET"])
+@require_app_auth
+def api_app_profile_get():
+    """Profil app de l'utilisateur authentifié. Crée le profil vide
+    (guide='selena') s'il n'existe pas encore. Lecture seule."""
+    user_id = g.app_account["user_id"]
+    profile = get_or_create_app_profile(user_id)
+    if profile is None:
+        return _auth_json({"error": "unauthorized"}, 401)
+    return _auth_json(_app_profile_public(profile), 200)
+
+
+@app.route("/api/app/profile", methods=["PATCH"])
+@require_app_auth
+def api_app_profile_patch():
+    """Mise à jour PARTIELLE du profil app. Champs acceptés : guide, prenom,
+    date_naissance (recalcule chemin_de_vie + signe_zodiaque via les helpers
+    métier). user_id vient TOUJOURS du Bearer. Un champ absent est inchangé —
+    guide n'est jamais remis à sa valeur par défaut.
+
+    Ne touche PAS une consultation 2 h déjà ouverte : B4.2 fige le conseiller
+    sur consultations.advisor_id (via advisor_override), indépendamment de
+    app_profiles.guide."""
+    user_id = g.app_account["user_id"]
+
+    profile = get_or_create_app_profile(user_id)
+    if profile is None:
+        return _auth_json({"error": "unauthorized"}, 401)
+
+    data = request.get_json(silent=True)
+    if not isinstance(data, dict):
+        return _auth_json({"error": "invalid_request"}, 400)
+
+    updates, err = _validate_app_profile_patch(data)
+    if err is not None:
+        return _auth_json({"error": err}, 400)
+
+    if updates:
+        update_app_profile(user_id, **updates)
+
+    fresh = get_app_profile(user_id) or profile
+    return _auth_json(_app_profile_public(fresh), 200)
+
 # ============================================================
 # WHATSAPP
 # ============================================================
