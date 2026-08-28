@@ -283,9 +283,10 @@ class FakeCursor:
             self._result = (n,)
 
         elif k == ("INSERT INTO consultation_allowance (user_id, period_start, period_end, "
-                   "monthly_limit, monthly_used, created_at) VALUES (%s, %s, %s, %s, 0, %s) "
+                   "monthly_limit, monthly_used, created_at, source_subscription_id, "
+                   "source_period_start) VALUES (%s, %s, %s, %s, 0, %s, %s, %s) "
                    "ON CONFLICT (user_id, period_start) DO NOTHING"):
-            uid, ps, pe, lim, created = p
+            uid, ps, pe, lim, created, src_sub, src_ps = p
             if any(a for a in FAKE["consultation_allowance"]
                    if a["user_id"] == str(uid) and a["period_start"] == ps):
                 self.rowcount = 0
@@ -293,6 +294,7 @@ class FakeCursor:
                 FAKE["consultation_allowance"].append({
                     "user_id": str(uid), "period_start": ps, "period_end": pe,
                     "monthly_limit": lim, "monthly_used": 0, "created_at": created,
+                    "source_subscription_id": src_sub, "source_period_start": src_ps,
                 })
                 self.rowcount = 1
 

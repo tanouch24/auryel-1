@@ -895,6 +895,60 @@ def init_db():
         "ADD COLUMN IF NOT EXISTS first_consultation_used_at TIMESTAMPTZ"
     )
     conn.commit()
+    # Migration v31 — entitlement normalisé par abonnement mobile (billing B3-A).
+    # PUREMENT ADDITIF : une seule colonne nullable sur mobile_subscriptions.
+    #   - entitled IS NULL  -> l'abonnement n'a jamais été vérifié -> INUTILISABLE
+    #     comme droit Premium (aucun entitlement accordé par défaut) ;
+    #   - entitled = TRUE / FALSE -> décision NORMALISÉE écrite par le vérificateur
+    #     officiel (Google/Apple, lot ultérieur). status reste stocké à part pour
+    #     l'audit/debug ; c'est `entitled` qui fera foi côté quota.
+    # SANS DEFAULT, aucun backfill : les lignes existantes restent NULL. `ADD
+    # COLUMN IF NOT EXISTS` est idempotent au rejeu. Aucune autre table touchée,
+    # aucun UPDATE/INSERT/DELETE. Aucun try/except Python : une vraie erreur SQL
+    # doit remonter.
+    c.execute(
+        "ALTER TABLE mobile_subscriptions "
+        "ADD COLUMN IF NOT EXISTS entitled BOOLEAN"
+    )
+    conn.commit()
+    # Migration v32 — la période de quota (consultation_allowance) mémorise QUEL
+    # abonnement mobile l'a créée (billing B3-A). PUREMENT ADDITIF : deux colonnes
+    # nullables.
+    #   - source_subscription_id -> mobile_subscriptions.id qui PORTE actuellement
+    #     cette période Auryel (peut être re-pointé lors d'une bascule de store) ;
+    #   - source_period_start -> la valeur current_period_start de cet abonnement
+    #     AU MOMENT où cette période a été créée (distingue « même cycle revérifié »
+    #     d'un « vrai renouvellement »).
+    # SANS DEFAULT, aucun backfill : les lignes existantes (créées par les tests /
+    # jamais par un store) restent NULL. `ADD COLUMN IF NOT EXISTS` idempotent.
+    # Aucun UPDATE/INSERT/DELETE de données. Aucun try/except Python.
+    c.execute(
+        "ALTER TABLE consultation_allowance "
+        "ADD COLUMN IF NOT EXISTS source_subscription_id UUID"
+    )
+    c.execute(
+        "ALTER TABLE consultation_allowance "
+        "ADD COLUMN IF NOT EXISTS source_period_start TIMESTAMPTZ"
+    )
+    conn.commit()
+    # Migration v32 (suite) — FK consultation_allowance.source_subscription_id ->
+    # mobile_subscriptions(id), SANS ON DELETE CASCADE (une ligne
+    # mobile_subscriptions n'est jamais supprimée ; la source se re-pointe, elle
+    # ne casse pas en cascade). Idempotence EXPLICITE : bloc DO qui n'attrape QUE
+    # duplicate_object (SQLSTATE 42710, contrainte déjà présente au rejeu). Toute
+    # autre erreur SQL se propage. Aucun try/except Python.
+    c.execute("""
+        DO $$
+        BEGIN
+            ALTER TABLE consultation_allowance
+                ADD CONSTRAINT fk_allowance_source_subscription
+                FOREIGN KEY (source_subscription_id) REFERENCES mobile_subscriptions(id);
+        EXCEPTION
+            WHEN duplicate_object THEN NULL;
+        END
+        $$;
+    """)
+    conn.commit()
     conn.close()
 
 def reset_db():
@@ -4542,6 +4596,33 @@ def _consultation_row_to_dict(row):
     }
 
 
+def _insert_allowance(cursor, user_id, period_start, period_end, monthly_limit, now,
+                      source_subscription_id=None, source_period_start=None):
+    """INSERT d'UNE ligne consultation_allowance sur un curseur DÉJÀ ouvert.
+    N'ouvre AUCUNE connexion, ne fait NI commit NI rollback NI close : c'est
+    l'appelant qui possède la transaction (permet à un futur B3 d'insérer une
+    allowance dans SA propre transaction, sans 2e connexion).
+
+    `monthly_used` = 0 est écrit littéralement : il ne concerne donc QUE la
+    nouvelle ligne. `ON CONFLICT (user_id, period_start) DO NOTHING` -> si la PK
+    existe déjà, aucune ligne touchée, `monthly_used` d'une période existante
+    n'est JAMAIS remis à zéro.
+
+    Retourne True si une ligne a été insérée, False sinon (`cursor.rowcount == 1`).
+    `source_subscription_id` / `source_period_start` sont NULL pour les appels
+    standalone (tests / admin) ; renseignés par le futur resync B3."""
+    cursor.execute(
+        """INSERT INTO consultation_allowance
+               (user_id, period_start, period_end, monthly_limit, monthly_used,
+                created_at, source_subscription_id, source_period_start)
+           VALUES (%s, %s, %s, %s, 0, %s, %s, %s)
+           ON CONFLICT (user_id, period_start) DO NOTHING""",
+        (str(user_id), period_start, period_end, monthly_limit, now,
+         source_subscription_id, source_period_start),
+    )
+    return cursor.rowcount == 1
+
+
 def provision_allowance(user_id, period_start, period_end, monthly_limit=4, now=None):
     """Crée une allowance pour une PÉRIODE D'ABONNEMENT donnée (fournie explicitement
     par les tests / l'admin / plus tard l'IAP Store — le moteur n'en crée jamais
@@ -4549,21 +4630,18 @@ def provision_allowance(user_id, period_start, period_end, monthly_limit=4, now=
     Retourne True si une ligne a été insérée, False si elle existait déjà.
     Quota Premium standard = 4 consultations / période (offre finale : 7,99 €/mois,
     4 consultations de 2 h, messages illimités pendant chacune) ; un appelant peut
-    passer une autre valeur pour un quota custom / support."""
+    passer une autre valeur pour un quota custom / support.
+
+    Contrat public inchangé : ouvre / commit / ferme sa propre connexion. En
+    interne, délègue l'INSERT à `_insert_allowance` (curseur-in) — les appels
+    standalone laissent `source_subscription_id` / `source_period_start` à NULL."""
     if now is None:
         now = _utcnow()
-    uid = str(user_id)
     conn = get_conn()
     try:
         c = conn.cursor()
-        c.execute(
-            """INSERT INTO consultation_allowance
-                   (user_id, period_start, period_end, monthly_limit, monthly_used, created_at)
-               VALUES (%s, %s, %s, %s, 0, %s)
-               ON CONFLICT (user_id, period_start) DO NOTHING""",
-            (uid, period_start, period_end, monthly_limit, now),
-        )
-        inserted = (c.rowcount == 1)
+        inserted = _insert_allowance(c, user_id, period_start, period_end,
+                                     monthly_limit, now)
         conn.commit()
         return inserted
     finally:
@@ -4903,18 +4981,20 @@ def _mobile_sub_locked(c, store, subscription_key):
 
 
 def _mobile_sub_update_evolving(c, sub_id, product_id, latest_transaction_id,
-                                status, current_period_start, expires_at,
+                                status, entitled, current_period_start, expires_at,
                                 auto_renewing, raw_payload_json, now):
     """UPDATE des SEULS champs évolutifs d'un abonnement déjà rattaché au bon
     compte. `id`, `created_at` et `purchased_at` (premier achat) ne sont
     JAMAIS touchés ici — `purchased_at` n'est écrit qu'à l'INSERT. Le début
-    de période courante (`current_period_start`) et `expires_at` avancent à
-    chaque renouvellement. Ne touche AUCUN quota."""
+    de période courante (`current_period_start`), `expires_at` et `entitled`
+    (décision normalisée du vérificateur) avancent à chaque revérification.
+    Ne touche AUCUN quota."""
     c.execute(
         """UPDATE mobile_subscriptions
                SET product_id=%s,
                    latest_transaction_id=%s,
                    status=%s,
+                   entitled=%s,
                    current_period_start=%s,
                    expires_at=%s,
                    auto_renewing=%s,
@@ -4922,13 +5002,13 @@ def _mobile_sub_update_evolving(c, sub_id, product_id, latest_transaction_id,
                    raw_payload=%s,
                    updated_at=%s
              WHERE id=%s""",
-        (product_id, latest_transaction_id, status, current_period_start,
+        (product_id, latest_transaction_id, status, entitled, current_period_start,
          expires_at, auto_renewing, now, raw_payload_json, now, sub_id),
     )
 
 
 def record_mobile_subscription(user_id, store, product_id, subscription_key,
-                               latest_transaction_id, status, purchased_at,
+                               latest_transaction_id, status, entitled, purchased_at,
                                current_period_start, expires_at, auto_renewing,
                                raw_payload, now=None):
     """Enregistre ou réconcilie dans mobile_subscriptions un abonnement
@@ -4944,11 +5024,19 @@ def record_mobile_subscription(user_id, store, product_id, subscription_key,
                                (jamais now()).
       - expires_at           : fin de la période courante. Avance aussi.
 
+    `entitled` : décision NORMALISÉE (booléen strict) du vérificateur officiel
+    Google/Apple. C'est ce champ, pas `status` (texte libre, gardé pour l'audit),
+    qui fera foi côté quota (lot B3 ultérieur). Champ évolutif : mis à jour à
+    chaque revérification. Pour auryel_premium_monthly, une valeur non booléenne
+    (None, "true", 1…) -> MobileSubscriptionError('missing_field') AVANT toute
+    écriture DB.
+
     Retour : {"outcome": "created"|"updated", "id": <uuid str>,
               "store": <store>, "status": <status>}.
     Lève MobileSubscriptionError(code=...) — voir la classe. En particulier
-    'missing_field' si current_period_start est absent (requis pour
-    auryel_premium_monthly à ce stade), AVANT toute écriture DB.
+    'missing_field' si current_period_start est absent ou si entitled n'est pas
+    un booléen (requis pour auryel_premium_monthly à ce stade), AVANT toute
+    écriture DB.
 
     Comportement :
       - (store, subscription_key) inconnu           -> INSERT (outcome 'created')
@@ -4999,6 +5087,11 @@ def record_mobile_subscription(user_id, store, product_id, subscription_key,
     if current_period_start is None:
         raise MobileSubscriptionError(
             "missing_field", "current_period_start requis")
+    # entitled doit être un BOOLÉEN STRICT (pas None, pas "true", pas 1) : c'est
+    # la décision normalisée du vérificateur. Refus AVANT toute écriture DB.
+    if not isinstance(entitled, bool):
+        raise MobileSubscriptionError(
+            "missing_field", "entitled doit être un booléen (True/False)")
 
     payload_json = _json.dumps(raw_payload) if raw_payload is not None else None
 
@@ -5017,7 +5110,8 @@ def record_mobile_subscription(user_id, store, product_id, subscription_key,
             # purchased_at N'EST PAS transmis ici -> jamais modifié après création.
             _mobile_sub_update_evolving(
                 c, existing_id, product_id, latest_transaction_id, status_norm,
-                current_period_start, expires_at, auto_renewing, payload_json, now)
+                entitled, current_period_start, expires_at, auto_renewing,
+                payload_json, now)
             conn.commit()
             return {"outcome": "updated", "id": str(existing_id),
                     "store": store, "status": status_norm}
@@ -5026,13 +5120,13 @@ def record_mobile_subscription(user_id, store, product_id, subscription_key,
         c.execute(
             """INSERT INTO mobile_subscriptions
                    (id, user_id, store, product_id, subscription_key,
-                    latest_transaction_id, status, purchased_at,
+                    latest_transaction_id, status, entitled, purchased_at,
                     current_period_start, expires_at, auto_renewing,
                     last_verified_at, raw_payload, created_at, updated_at)
-               VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+               VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
                ON CONFLICT (store, subscription_key) DO NOTHING""",
             (new_id, uid, store, product_id, sub_key, latest_transaction_id,
-             status_norm, purchased_at, current_period_start, expires_at,
+             status_norm, entitled, purchased_at, current_period_start, expires_at,
              auto_renewing, now, payload_json, now, now),
         )
         if c.rowcount == 1:
@@ -5056,7 +5150,8 @@ def record_mobile_subscription(user_id, store, product_id, subscription_key,
                 "account_mismatch", "abonnement déjà rattaché à un autre compte")
         _mobile_sub_update_evolving(
             c, existing_id, product_id, latest_transaction_id, status_norm,
-            current_period_start, expires_at, auto_renewing, payload_json, now)
+            entitled, current_period_start, expires_at, auto_renewing,
+            payload_json, now)
         conn.commit()
         return {"outcome": "updated", "id": str(existing_id),
                 "store": store, "status": status_norm}

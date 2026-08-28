@@ -77,13 +77,13 @@ SEL = _norm("SELECT id, user_id FROM mobile_subscriptions "
 INS = _norm(
     "INSERT INTO mobile_subscriptions "
     "(id, user_id, store, product_id, subscription_key, latest_transaction_id, "
-    "status, purchased_at, current_period_start, expires_at, auto_renewing, "
+    "status, entitled, purchased_at, current_period_start, expires_at, auto_renewing, "
     "last_verified_at, raw_payload, created_at, updated_at) "
-    "VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s) "
+    "VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s) "
     "ON CONFLICT (store, subscription_key) DO NOTHING")
 UPD = _norm(
     "UPDATE mobile_subscriptions SET product_id=%s, latest_transaction_id=%s, "
-    "status=%s, current_period_start=%s, expires_at=%s, "
+    "status=%s, entitled=%s, current_period_start=%s, expires_at=%s, "
     "auto_renewing=%s, last_verified_at=%s, raw_payload=%s, updated_at=%s "
     "WHERE id=%s")
 
@@ -122,7 +122,7 @@ class FakeCursor:
             self._result = (row["id"], row["user_id"]) if row else None
 
         elif k == INS:
-            (nid, uid, store, pid, key, ltx, status, pat, cps, eat, ar, lv,
+            (nid, uid, store, pid, key, ltx, status, ent, pat, cps, eat, ar, lv,
              payload, cat, uat) = p
             clash = any(r for r in DB["mobile_subscriptions"]
                         if r["store"] == store and r["subscription_key"] == key)
@@ -133,7 +133,7 @@ class FakeCursor:
             DB["mobile_subscriptions"].append({
                 "id": nid, "user_id": uid, "store": store, "product_id": pid,
                 "subscription_key": key, "latest_transaction_id": ltx,
-                "status": status, "purchased_at": pat,
+                "status": status, "entitled": ent, "purchased_at": pat,
                 "current_period_start": cps, "expires_at": eat,
                 "auto_renewing": ar, "last_verified_at": lv,
                 "raw_payload": payload, "created_at": cat, "updated_at": uat,
@@ -141,7 +141,7 @@ class FakeCursor:
             self.rowcount = 1
 
         elif k == UPD:
-            (pid, ltx, status, cps, eat, ar, lv, payload, uat, sid) = p
+            (pid, ltx, status, ent, cps, eat, ar, lv, payload, uat, sid) = p
             row = next((r for r in DB["mobile_subscriptions"] if r["id"] == sid), None)
             if row is None:
                 self.rowcount = 0
@@ -150,6 +150,7 @@ class FakeCursor:
             row["product_id"] = pid
             row["latest_transaction_id"] = ltx
             row["status"] = status
+            row["entitled"] = ent
             row["current_period_start"] = cps
             row["expires_at"] = eat
             row["auto_renewing"] = ar
@@ -188,7 +189,7 @@ def _call(**over):
     base = dict(
         user_id=UID_A, store="google_play", product_id="auryel_premium_monthly",
         subscription_key="tok-AAA", latest_transaction_id="gpa.0001",
-        status="active", purchased_at=NOW0, current_period_start=NOW0,
+        status="active", entitled=True, purchased_at=NOW0, current_period_start=NOW0,
         expires_at=NOW0 + timedelta(days=30),
         auto_renewing=True, raw_payload={"k": "v"}, now=NOW0,
     )
@@ -384,6 +385,7 @@ _existing = {
     "id": "race-id-1", "user_id": UID_A, "store": "google_play",
     "product_id": "auryel_premium_monthly", "subscription_key": "tok-AAA",
     "latest_transaction_id": "gpa.old", "status": "active",
+    "entitled": True,
     "purchased_at": NOW0, "current_period_start": NOW0,
     "expires_at": NOW0 + timedelta(days=30),
     "auto_renewing": True, "last_verified_at": NOW0,
@@ -404,6 +406,7 @@ _existing_other = {
     "id": "race-id-2", "user_id": UID_B, "store": "google_play",
     "product_id": "auryel_premium_monthly", "subscription_key": "tok-AAA",
     "latest_transaction_id": "gpa.old", "status": "active",
+    "entitled": True,
     "purchased_at": NOW0, "current_period_start": NOW0,
     "expires_at": NOW0 + timedelta(days=30),
     "auto_renewing": True, "last_verified_at": NOW0,
@@ -419,6 +422,68 @@ check(_e is not None and _e.code == "account_mismatch"
       and len(_rows()) == 1 and _rows()[0]["user_id"] == UID_B
       and _rows()[0]["status"] == "active",
       "14c course perdue au profit d'un AUTRE compte -> 'account_mismatch', ligne concurrente intacte")
+
+print("-" * 64)
+print("15. entitled — décision normalisée du vérificateur (B3-A)")
+
+reset()
+_call(entitled=True)
+check(_rows()[0]["entitled"] is True,
+      "15a INSERT entitled=True -> stocké True")
+
+reset()
+_call(entitled=False)
+check(_rows()[0]["entitled"] is False,
+      "15b INSERT entitled=False -> stocké False (droit refusé, mais ligne enregistrée)")
+
+reset()
+a = _call(entitled=True)
+b = _call(entitled=False, now=NOW0 + timedelta(hours=2))
+check(len(_rows()) == 1 and b["outcome"] == "updated" and b["id"] == a["id"]
+      and _rows()[0]["entitled"] is False,
+      "15c UPDATE true -> false (champ évolutif)")
+c_ = _call(entitled=True, now=NOW0 + timedelta(hours=4))
+check(len(_rows()) == 1 and c_["id"] == a["id"] and _rows()[0]["entitled"] is True,
+      "15d UPDATE false -> true (champ évolutif)")
+
+reset()
+_e = None
+try:
+    _call(entitled=None)
+except A.MobileSubscriptionError as ex:
+    _e = ex
+check(_e is not None and _e.code == "missing_field"
+      and len(_rows()) == 0 and EXECUTED == [],
+      "15e entitled=None -> 'missing_field', 0 écriture, 0 SQL (refus avant DB)")
+
+reset()
+for _bad in ("true", 1, 0, "False"):
+    _n = len(_rows())
+    _e = None
+    try:
+        _call(entitled=_bad)
+    except A.MobileSubscriptionError as ex:
+        _e = ex
+    check(_e is not None and _e.code == "missing_field" and len(_rows()) == _n,
+          f"15f entitled={_bad!r} (non booléen strict) -> 'missing_field', 0 écriture")
+check(EXECUTED == [], "15g aucun SQL émis pour un entitled non booléen (refus avant get_conn)")
+
+reset()
+d1 = _call(entitled=True)
+d2 = _call(entitled=True, now=NOW0 + timedelta(hours=1))
+check(len(_rows()) == 1 and d2["id"] == d1["id"] and _rows()[0]["entitled"] is True,
+      "15h idempotence conservée : même appel entitled=True 2x -> 1 ligne, même id")
+
+reset()
+_call(entitled=True, purchased_at=NOW0)
+_call(entitled=False, purchased_at=NOW0 + timedelta(days=30),
+      current_period_start=NOW0 + timedelta(days=30),
+      expires_at=NOW0 + timedelta(days=60), now=NOW0 + timedelta(days=30))
+_row = _rows()[0]
+check(len(_rows()) == 1 and _row["purchased_at"] == NOW0
+      and _row["current_period_start"] == NOW0 + timedelta(days=30)
+      and _row["entitled"] is False,
+      "15i purchased_at toujours immuable ; current_period_start + entitled évoluent ensemble")
 
 print("-" * 64)
 print(f"RÉSULTAT : {_STATE['pass']} ok / {_STATE['fail']} ko")

@@ -272,9 +272,10 @@ class FakeCursor:
             self._result = (n,)
 
         elif k == ("INSERT INTO consultation_allowance (user_id, period_start, period_end, "
-                   "monthly_limit, monthly_used, created_at) VALUES (%s, %s, %s, %s, 0, %s) "
+                   "monthly_limit, monthly_used, created_at, source_subscription_id, "
+                   "source_period_start) VALUES (%s, %s, %s, %s, 0, %s, %s, %s) "
                    "ON CONFLICT (user_id, period_start) DO NOTHING"):
-            uid, ps, pe, lim, created = p
+            uid, ps, pe, lim, created, src_sub, src_ps = p
             uid = str(uid)
             with _STORE_LOCK:
                 exists = any(a for a in DB["consultation_allowance"]
@@ -285,6 +286,7 @@ class FakeCursor:
                 self._stage_append("consultation_allowance", {
                     "user_id": uid, "period_start": ps, "period_end": pe,
                     "monthly_limit": lim, "monthly_used": 0, "created_at": created,
+                    "source_subscription_id": src_sub, "source_period_start": src_ps,
                 })
                 self.rowcount = 1
 
@@ -362,7 +364,15 @@ class FakeConn:
             self.rollback()
 
 
-A.get_conn = lambda: FakeConn()
+_CONN_COUNT = [0]
+
+
+def _counting_get_conn():
+    _CONN_COUNT[0] += 1
+    return FakeConn()
+
+
+A.get_conn = _counting_get_conn
 
 UID = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"
 UID2 = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb"
@@ -848,6 +858,79 @@ check(sorted(r["status"] for r in _res_ff) == ["active", "opened"],
       "19n3 un thread ouvre la gratuite, l'autre récupère la session active")
 check(len({r["consultation"]["id"] for r in _res_ff if "consultation" in r}) == 1,
       "19n4 les deux threads voient la même consultation")
+
+# ==========================================================================
+# --- 20. _insert_allowance (curseur-in) & provision_allowance refactoré (B3-A) --
+# ==========================================================================
+UID_G = "99999999-0000-4999-8999-999999999999"
+_ps20 = now0 - timedelta(days=1)
+_pe20 = now0 + timedelta(days=29)
+
+# 20a. provision_allowance() standalone : contrat public inchangé, défaut = 4
+reset_db()
+_CONN_COUNT[0] = 0
+_r20 = A.provision_allowance(UID_G, _ps20, _pe20)          # SANS monthly_limit
+check(_r20 is True, "20a provision_allowance() sans kwarg -> True (ligne insérée)")
+_row20 = next(a for a in DB["consultation_allowance"] if a["user_id"] == UID_G)
+check(_row20["monthly_limit"] == 4 and _row20["monthly_used"] == 0,
+      "20b défaut = 4, monthly_used = 0 sur la nouvelle ligne")
+check(_row20["source_subscription_id"] is None and _row20["source_period_start"] is None,
+      "20c appel standalone -> source_subscription_id / source_period_start restent NULL")
+check(_CONN_COUNT[0] == 1,
+      "20d provision_allowance() standalone ouvre EXACTEMENT une connexion")
+
+# 20e. reverify même (user_id, period_start) -> no-op, monthly_used préservé
+with _STORE_LOCK:
+    _row20["monthly_used"] = 2                              # simule 2 consultations
+_CONN_COUNT[0] = 0
+_r20b = A.provision_allowance(UID_G, _ps20, _pe20, monthly_limit=4)
+check(_r20b is False and len([a for a in DB["consultation_allowance"]
+                              if a["user_id"] == UID_G]) == 1,
+      "20e re-provision même période -> False, toujours 1 ligne")
+check(next(a for a in DB["consultation_allowance"]
+           if a["user_id"] == UID_G)["monthly_used"] == 2,
+      "20f monthly_used existant (2) JAMAIS remis à zéro par une re-provision")
+
+# 20g. _insert_allowance() sur un curseur DÉJÀ ouvert : AUCUNE 2e connexion
+reset_db()
+_conn20 = A.get_conn()                                      # +1
+_c20 = _conn20.cursor()
+_CONN_COUNT[0] = 0
+_ins = A._insert_allowance(
+    _c20, UID_G, _ps20, _pe20, 4, now0,
+    source_subscription_id="sub-abc", source_period_start=_ps20)
+_conn20.commit()
+check(_CONN_COUNT[0] == 0,
+      "20g _insert_allowance(cursor, ...) n'ouvre AUCUNE connexion (get_conn jamais appelé)")
+check(_ins is True, "20h _insert_allowance -> True (inséré)")
+_row20g = next(a for a in DB["consultation_allowance"] if a["user_id"] == UID_G)
+check(_row20g["monthly_used"] == 0 and _row20g["monthly_limit"] == 4,
+      "20i _insert_allowance : monthly_used=0 / monthly_limit=4 sur la nouvelle ligne")
+check(_row20g["source_subscription_id"] == "sub-abc"
+      and _row20g["source_period_start"] == _ps20,
+      "20j source_subscription_id / source_period_start correctement stockés")
+
+# 20k. _insert_allowance sur PK existante -> no-op, rowcount 0, monthly_used intact
+with _STORE_LOCK:
+    _row20g["monthly_used"] = 3
+_conn20b = A.get_conn()
+_c20b = _conn20b.cursor()
+_CONN_COUNT[0] = 0
+_ins2 = A._insert_allowance(_c20b, UID_G, _ps20, _pe20, 4, now0,
+                            source_subscription_id="sub-xyz", source_period_start=now0)
+_conn20b.commit()
+check(_ins2 is False and _CONN_COUNT[0] == 0,
+      "20k _insert_allowance sur (user_id, period_start) existant -> False, aucune connexion")
+check(next(a for a in DB["consultation_allowance"]
+           if a["user_id"] == UID_G)["monthly_used"] == 3,
+      "20l ON CONFLICT DO NOTHING : monthly_used (3) inchangé")
+
+# 20m. None reste accepté pour les anciens appels standalone
+reset_db()
+check(A.provision_allowance(UID_G, _ps20, _pe20, monthly_limit=4) is True
+      and next(a for a in DB["consultation_allowance"]
+               if a["user_id"] == UID_G)["source_subscription_id"] is None,
+      "20m provision_allowance sans source -> source_subscription_id NULL (rétro-compat)")
 
 print("-" * 64)
 print(f"RÉSULTAT : {_STATE['pass']} ok / {_STATE['fail']} ko")

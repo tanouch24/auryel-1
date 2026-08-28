@@ -64,20 +64,28 @@ _m29 = re.search(r"#\s*Migration v29\b", SRC)
 assert _m29, "bloc 'Migration v29' introuvable dans init_db()"
 _m30 = re.search(r"#\s*Migration v30\b", SRC)
 assert _m30, "bloc 'Migration v30' introuvable dans init_db()"
+_m31 = re.search(r"#\s*Migration v31\b", SRC)
+assert _m31, "bloc 'Migration v31' introuvable dans init_db()"
+_m32 = re.search(r"#\s*Migration v32\b", SRC)
+assert _m32, "bloc 'Migration v32' introuvable dans init_db()"
 assert _m28.start() > _m.start(), "v28 doit venir APRÈS v27"
 assert _m29.start() > _m28.start(), "v29 doit venir APRÈS v28"
 assert _m30.start() > _m29.start(), "v30 doit venir APRÈS v29"
+assert _m31.start() > _m30.start(), "v31 doit venir APRÈS v30"
+assert _m32.start() > _m31.start(), "v32 doit venir APRÈS v31"
 
 V27 = SRC[_m.start():_m28.start()]
 V28 = SRC[_m28.start():_m29.start()]
 V29 = SRC[_m29.start():_m30.start()]
+V30 = SRC[_m30.start():_m31.start()]
+V31 = SRC[_m31.start():_m32.start()]
 
-# --- Isolation de la tranche v30 : du marqueur "# Migration v30" au conn.close()
+# --- Isolation de la tranche v32 : du marqueur "# Migration v32" au conn.close()
 # final de init_db().
-_v30 = SRC[_m30.start():]
-_close30 = _v30.find("conn.close()")
-assert _close30 != -1, "conn.close() final introuvable après le bloc v30"
-V30 = _v30[:_close30 + len("conn.close()")]
+_v32 = SRC[_m32.start():]
+_close32 = _v32.find("conn.close()")
+assert _close32 != -1, "conn.close() final introuvable après le bloc v32"
+V32 = _v32[:_close32 + len("conn.close()")]
 
 
 def _nocomment(block):
@@ -94,6 +102,12 @@ V29_NOCOMMENT = _nocomment(V29)
 V29_LOW = V29_NOCOMMENT.lower()
 V30_NOCOMMENT = _nocomment(V30)
 V30_LOW = V30_NOCOMMENT.lower()
+V31_NOCOMMENT = _nocomment(V31)
+V31_LOW = V31_NOCOMMENT.lower()
+V31_FLAT = re.sub(r"[\s\"']+", " ", V31_LOW)
+V32_NOCOMMENT = _nocomment(V32)
+V32_LOW = V32_NOCOMMENT.lower()
+V32_FLAT = re.sub(r"[\s\"']+", " ", V32_LOW)
 
 print("-" * 64)
 print("A. Ordre & présence")
@@ -357,6 +371,65 @@ _SRC_FLAT = re.sub(r"[\s\"']+", " ", SRC.lower())
 check("alter table consultation_allowance alter column monthly_limit set default 4"
       in _SRC_FLAT,
       "68 v29 (SET DEFAULT 4) toujours présente dans init_db(), non réécrite")
+
+print("-" * 64)
+print("J. Migration v31 — mobile_subscriptions.entitled (billing B3-A)")
+
+check(_m31.start() > _m30.start(), "69 v31 présente et placée APRÈS v30")
+check("alter table mobile_subscriptions add column if not exists entitled boolean"
+      in V31_FLAT,
+      "70 v31 : ALTER TABLE mobile_subscriptions ADD COLUMN IF NOT EXISTS entitled BOOLEAN")
+check("if not exists" in V31_LOW, "71 ADD COLUMN IF NOT EXISTS -> rejouable")
+check("default" not in V31_LOW, "72 v31 : AUCUN DEFAULT (aucune valeur true par défaut)")
+check("update " not in V31_LOW and "insert " not in V31_LOW and "delete " not in V31_LOW,
+      "73 v31 : aucun backfill (aucun UPDATE / INSERT / DELETE)")
+check("drop" not in V31_LOW, "74 v31 : aucun DROP")
+check(V31_LOW.count("alter table") == 1 and "alter table mobile_subscriptions" in V31_LOW
+      and "consultation_allowance" not in V31_LOW and "accounts" not in V31_LOW,
+      "75 v31 ne touche QUE mobile_subscriptions")
+check(re.search(r"\bexcept\b", V31_LOW) is None
+      and "print(" not in V31_NOCOMMENT and "conn.rollback()" not in V31_NOCOMMENT
+      and "try:" not in V31_NOCOMMENT,
+      "76 v31 : execute direct + commit, aucun try/except/print/rollback")
+
+print("-" * 64)
+print("K. Migration v32 — consultation_allowance.source_subscription_id / source_period_start + FK")
+
+check(_m32.start() > _m31.start(), "77 v32 présente et placée APRÈS v31")
+check("alter table consultation_allowance add column if not exists source_subscription_id uuid"
+      in V32_FLAT,
+      "78 v32 : ADD COLUMN IF NOT EXISTS source_subscription_id UUID")
+check("alter table consultation_allowance add column if not exists source_period_start timestamptz"
+      in V32_FLAT,
+      "79 v32 : ADD COLUMN IF NOT EXISTS source_period_start TIMESTAMPTZ")
+check(V32_LOW.count("add column if not exists") == 2,
+      "80 v32 : exactement 2 ADD COLUMN IF NOT EXISTS")
+check("default" not in V32_FLAT.replace("do $$", ""),
+      "81 v32 : aucun DEFAULT sur les colonnes")
+check("update " not in V32_LOW and "insert " not in V32_LOW and "delete " not in V32_LOW,
+      "82 v32 : aucun backfill (aucun UPDATE / INSERT / DELETE)")
+check("drop" not in V32_LOW, "83 v32 : aucun DROP")
+check("foreign key (source_subscription_id) references mobile_subscriptions(id)"
+      in V32_FLAT
+      and "add constraint fk_allowance_source_subscription" in V32_FLAT,
+      "84 v32 : FK source_subscription_id -> mobile_subscriptions(id), nommée")
+check("on delete cascade" not in V32_LOW,
+      "85 v32 : FK SANS ON DELETE CASCADE")
+_when = re.findall(r"\bwhen\s+([a-z_]+)", V32_LOW)
+check(_when == ["duplicate_object"] and "when others" not in V32_LOW,
+      f"86 v32 : le DO n'ignore QUE duplicate_object (trouvé : {_when or 'aucun'})")
+check(re.search(r"\bexcept\b", V32_LOW) is None
+      and "print(" not in V32_NOCOMMENT and "conn.rollback()" not in V32_NOCOMMENT,
+      "87 v32 : aucun try/except/print/rollback Python (aucune autre erreur SQL masquée)")
+check("accounts" not in V32_LOW and "earned_credits" not in V32_LOW
+      and "consultations " not in V32_LOW.replace("consultation_allowance", ""),
+      "88 v32 ne touche que consultation_allowance (+ référence FK mobile_subscriptions)")
+
+# Non-régression : v25..v31 intactes.
+check("Migration v30" in SRC and "Migration v31" in SRC,
+      "89 v30 et v31 toujours présentes, non réécrites")
+check("ADD COLUMN IF NOT EXISTS first_consultation_used_at TIMESTAMPTZ" in SRC,
+      "90 v30 (first_consultation_used_at) intacte")
 
 print("-" * 64)
 print(f"RÉSULTAT : {_STATE['pass']} ok / {_STATE['fail']} ko")
