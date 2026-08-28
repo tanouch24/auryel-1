@@ -4648,6 +4648,226 @@ def provision_allowance(user_id, period_start, period_end, monthly_limit=4, now=
         conn.close()
 
 
+_PREMIUM_QUOTA = 4
+
+
+def resync_premium_entitlement(user_id, now=None):
+    """Re-projette le quota Premium (consultation_allowance) à partir de l'état
+    RÉEL des abonnements mobiles (mobile_subscriptions). Source de vérité =
+    mobile_subscriptions ; consultation_allowance = simple projection lue par
+    get_consultation_state / open_or_get_consultation (INCHANGÉS).
+
+    UNE connexion, UNE transaction, UN commit.
+
+    Ordre :
+      1. mutex `SELECT user_id FROM accounts ... FOR UPDATE` (compte absent ->
+         rollback + action 'unknown_account').
+      2. abonnements -> subs « qui donnent droit » = entitled IS TRUE
+         AND expires_at > now AND current_period_start IS NOT NULL.
+         carrier = MAX(expires_at, store, str(id)) — store et id ne servent
+         QU'AU départage, totalement déterministe.
+      3. allowances du user FOR UPDATE -> active (period_start <= now < period_end,
+         la plus récente si anomalie de multiplicité), futures (period_start > now),
+         last_lapsed (period_start <= now la plus récente, si aucune active).
+         ANOMALIE multi-actives : `active` = la plus récente ; TOUTES les autres
+         sont sorties de l'état actif (period_end=now) dans la même transaction
+         (monthly_used inchangé, lignes conservées). -> au plus 1 active ensuite.
+      4. aucun carrier -> désactivation : period_end=now sur l'active retenue
+         (les autres déjà raccourcies à l'étape 3), DELETE de TOUTES les futures
+         (jamais consommées). monthly_used JAMAIS touché. -> 0 active.
+      5. active existe :
+           - same_cycle (même sub, même current_period_start) -> au plus aligner
+             period_end. 'aligned' / 'noop'.
+           - same sub + carrier.current_period_start >= active.period_end -> vrai
+             renouvellement anticipé : NE PAS toucher l'active, la future est
+             créée à l'étape 7. 'renewal_scheduled'.
+           - autre (bascule de porteuse / source NULL pré-v32 / cycle chevauchant)
+             -> re-pointer LA MÊME ligne : period_end + source_*. period_start,
+             monthly_used, monthly_limit INCHANGÉS. 'repointed'.
+      6. pas d'active :
+           - last_lapsed chevauché (carrier.current_period_start < last_lapsed.period_end)
+             -> revivre cette ligne (period_end + source_*), monthly_used inchangé.
+             'revived'.
+           - sinon _insert_allowance(...) d'une VRAIE nouvelle période. 'provisioned'
+             / 'noop'.
+      7. future : DELETE de toute future != exactement (carrier.id,
+         carrier.current_period_start) — MÊME si l'ancienne source reste entitled.
+         Puis, si une active EXISTAIT au début du resync ET était portée par le
+         carrier ET carrier.current_period_start >= active.period_end ET
+         > now -> _insert_allowance(...) de l'unique future légitime.
+
+    Ne touche JAMAIS : monthly_used (aucun UPDATE ne le nomme), monthly_limit,
+    le period_start d'une ligne existante, mobile_subscriptions, earned_credits,
+    accounts.first_consultation_used_at. N'appelle JAMAIS provision_allowance
+    (2e connexion). Aucun appel réseau, aucune route.
+
+    Retour : {"premium": bool, "action": <str>, "period_start": <dt|None>,
+              "period_end": <dt|None>, "anomaly": <str|None>}.
+    """
+    if now is None:
+        now = _utcnow()
+    uid = str(user_id)
+    conn = get_conn()
+    try:
+        c = conn.cursor()
+
+        # 1. mutex par utilisateur
+        c.execute(
+            "SELECT user_id FROM accounts "
+            "WHERE user_id=%s AND deleted_at IS NULL FOR UPDATE",
+            (uid,),
+        )
+        if c.fetchone() is None:
+            conn.rollback()
+            return {"premium": False, "action": "unknown_account",
+                    "period_start": None, "period_end": None, "anomaly": None}
+
+        # 2. abonnements -> entitled -> carrier
+        c.execute(
+            """SELECT id, current_period_start, expires_at, entitled, store
+               FROM mobile_subscriptions WHERE user_id=%s""",
+            (uid,),
+        )
+        subs = c.fetchall()
+        entitled = [s for s in subs
+                    if s[3] is True and s[1] is not None
+                    and s[2] is not None and s[2] > now]
+        # Départage TOTALEMENT déterministe : expires_at, puis store, puis id
+        # (le store et l'id ne servent QU'AU départage — aucune autre sémantique).
+        carrier = (max(entitled, key=lambda s: (s[2], s[4] or "", str(s[0])))
+                   if entitled else None)
+
+        # 3. allowances FOR UPDATE
+        c.execute(
+            """SELECT period_start, period_end, monthly_limit, monthly_used,
+                      source_subscription_id, source_period_start
+               FROM consultation_allowance WHERE user_id=%s FOR UPDATE""",
+            (uid,),
+        )
+        rows = c.fetchall()
+        actives = sorted((r for r in rows if r[0] <= now < r[1]),
+                         key=lambda r: r[0], reverse=True)
+        anomaly = "multiple_active_allowances" if len(actives) > 1 else None
+        active = actives[0] if actives else None
+        past = sorted((r for r in rows if r[0] <= now),
+                      key=lambda r: r[0], reverse=True)
+        last_lapsed = past[0] if (past and active is None) else None
+
+        # ANOMALIE : plusieurs lignes actives en même temps. On garde `active` =
+        # celle au period_start le plus récent (cohérent avec get_consultation_state
+        # ORDER BY period_start DESC LIMIT 1) et on SORT TOUTES LES AUTRES de
+        # l'état actif -> period_end = now, dans la MÊME transaction. monthly_used
+        # JAMAIS touché ; les lignes ne sont pas supprimées (historique). Après ce
+        # nettoyage, au plus UNE ligne reste active.
+        for _extra in actives[1:]:
+            c.execute(
+                "UPDATE consultation_allowance SET period_end=%s "
+                "WHERE user_id=%s AND period_start=%s",
+                (now, uid, _extra[0]),
+            )
+
+        def _shorten_active_to_now():
+            if active is not None:
+                c.execute(
+                    "UPDATE consultation_allowance SET period_end=%s "
+                    "WHERE user_id=%s AND period_start=%s",
+                    (now, uid, active[0]),
+                )
+
+        # 4. aucun entitlement actif -> Premium OFF
+        if carrier is None:
+            _shorten_active_to_now()
+            c.execute(
+                "DELETE FROM consultation_allowance "
+                "WHERE user_id=%s AND period_start > %s",
+                (uid, now),
+            )
+            conn.commit()
+            return {"premium": False, "action": "deactivated",
+                    "period_start": None, "period_end": None, "anomaly": anomaly}
+
+        c_id, c_cps, c_exp = carrier[0], carrier[1], carrier[2]
+
+        if active is not None:
+            a_ps, a_pe, _a_lim, _a_used, a_src, a_sps = active
+            same_sub = (a_src is not None and str(a_src) == str(c_id))
+            same_cycle = same_sub and a_sps is not None and a_sps == c_cps
+
+            if same_cycle:
+                if a_pe != c_exp:
+                    c.execute(
+                        "UPDATE consultation_allowance SET period_end=%s "
+                        "WHERE user_id=%s AND period_start=%s",
+                        (c_exp, uid, a_ps),
+                    )
+                    action = "aligned"
+                else:
+                    action = "noop"
+                result_ps, result_pe = a_ps, c_exp
+            elif same_sub and c_cps >= a_pe:
+                # vrai renouvellement anticipé de la MÊME porteuse : l'active reste
+                # telle quelle, la future est posée à l'étape 7.
+                action = "renewal_scheduled"
+                result_ps, result_pe = a_ps, a_pe
+            else:
+                # bascule de porteuse / adoption (source NULL) / cycle chevauchant
+                c.execute(
+                    "UPDATE consultation_allowance SET period_end=%s, "
+                    "source_subscription_id=%s, source_period_start=%s "
+                    "WHERE user_id=%s AND period_start=%s",
+                    (c_exp, c_id, c_cps, uid, a_ps),
+                )
+                action = "repointed"
+                result_ps, result_pe = a_ps, c_exp
+        else:
+            if last_lapsed is not None and c_cps < last_lapsed[1]:
+                # le cycle de la porteuse chevauche encore la dernière période
+                # -> revivre sans reset.
+                l_ps = last_lapsed[0]
+                c.execute(
+                    "UPDATE consultation_allowance SET period_end=%s, "
+                    "source_subscription_id=%s, source_period_start=%s "
+                    "WHERE user_id=%s AND period_start=%s",
+                    (c_exp, c_id, c_cps, uid, l_ps),
+                )
+                action = "revived"
+                result_ps, result_pe = l_ps, c_exp
+            else:
+                ins = _insert_allowance(
+                    c, uid, c_cps, c_exp, _PREMIUM_QUOTA, now,
+                    source_subscription_id=c_id, source_period_start=c_cps,
+                )
+                action = "provisioned" if ins else "noop"
+                result_ps, result_pe = c_cps, c_exp
+
+        # 7. FUTURE allowance : au plus une, possédée par (carrier.id, carrier.cps)
+        c.execute(
+            "DELETE FROM consultation_allowance "
+            "WHERE user_id=%s AND period_start > %s "
+            "AND (source_subscription_id IS DISTINCT FROM %s "
+            "     OR source_period_start IS DISTINCT FROM %s)",
+            (uid, now, c_id, c_cps),
+        )
+        if (active is not None
+                and active[4] is not None and str(active[4]) == str(c_id)
+                and c_cps >= active[1]
+                and c_cps > now):
+            _insert_allowance(
+                c, uid, c_cps, c_exp, _PREMIUM_QUOTA, now,
+                source_subscription_id=c_id, source_period_start=c_cps,
+            )
+
+        conn.commit()
+        return {"premium": True, "action": action,
+                "period_start": result_ps, "period_end": result_pe,
+                "anomaly": anomaly}
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        conn.close()
+
+
 def grant_earned_credit(user_id, source, metadata=None, now=None):
     """Ajoute un crédit gagné non consommé (source : referral / share_30d /
     support_grant / extra_paid). Séparé du quota mensuel : consommable même sans
