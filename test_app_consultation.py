@@ -315,13 +315,13 @@ UID2 = "22222222-2222-4222-8222-222222222222"
 REPLY = "Je te vois clairement, et un mouvement se dessine autour de toi."
 
 
-def _seed_premium(uid, monthly_limit=10):
+def _seed_premium(uid, monthly_limit=4):
     now = A._utcnow()
     A.provision_allowance(uid, now - timedelta(days=1), now + timedelta(days=29),
                           monthly_limit=monthly_limit)
 
 
-def fresh(uid=UID1, premium=True, monthly_limit=10):
+def fresh(uid=UID1, premium=True, monthly_limit=4):
     reset_db()
     seed_account(uid)
     if premium:
@@ -355,8 +355,8 @@ check(j["reply"] == REPLY and m_llm.call_count == 1, "1b reply renvoyé, call_ll
 check(j["consultation"]["opened_now"] is True, "1c opened_now = true")
 check(j["consultation"]["credit_source"] == "monthly", "1d credit_source = monthly")
 check(j["consultation"]["advisor_id"] == "selena", "1e advisor_id = selena (guide du profil)")
-check(j["quota"]["monthly_used"] == 1 and j["quota"]["monthly_remaining"] == 9,
-      "1f monthly_used 0 -> 1, remaining 9 (quota 10)")
+check(j["quota"]["monthly_used"] == 1 and j["quota"]["monthly_remaining"] == 3,
+      "1f monthly_used 0 -> 1, remaining 3 (quota 4)")
 check(j["quota"]["is_premium"] is True, "1g is_premium = true")
 _cid = j["consultation"]["id"]
 _msgs = FAKE["messages"]
@@ -443,7 +443,7 @@ rs = client.get("/api/consultation/state", headers={"Authorization": f"Bearer {t
 js = rs.get_json()
 check(rs.status_code == 200 and js["consultation"] is None, "7a state : consultation = null si inactif")
 check(js["quota"]["is_premium"] is True and js["quota"]["monthly_used"] == 0
-      and js["quota"]["monthly_remaining"] == 10, "7b state : quota renvoyé (10), rien consommé")
+      and js["quota"]["monthly_remaining"] == 4, "7b state : quota renvoyé (4), rien consommé")
 check(len(FAKE["consultations"]) == 0, "7c state n'ouvre AUCUNE consultation")
 
 # 7d. actif après un message

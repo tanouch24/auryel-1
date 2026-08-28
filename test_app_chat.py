@@ -324,7 +324,7 @@ UID2 = "22222222-2222-4222-8222-222222222222"
 REPLY = "Je te vois clairement, et je sens un mouvement autour de toi."
 
 
-def _seed_premium(uid, monthly_limit=10):
+def _seed_premium(uid, monthly_limit=4):
     """Allowance active pour l'utilisateur : entitlement Premium en B4.2."""
     now = A._utcnow()
     A.provision_allowance(uid, now - timedelta(days=1), now + timedelta(days=29),

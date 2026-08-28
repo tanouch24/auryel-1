@@ -60,16 +60,20 @@ _m = re.search(r"#\s*Migration v27\b", SRC)
 assert _m, "bloc 'Migration v27' introuvable dans init_db()"
 _m28 = re.search(r"#\s*Migration v28\b", SRC)
 assert _m28, "bloc 'Migration v28' introuvable dans init_db()"
+_m29 = re.search(r"#\s*Migration v29\b", SRC)
+assert _m29, "bloc 'Migration v29' introuvable dans init_db()"
 assert _m28.start() > _m.start(), "v28 doit venir APRÈS v27"
+assert _m29.start() > _m28.start(), "v29 doit venir APRÈS v28"
 
 V27 = SRC[_m.start():_m28.start()]
+V28 = SRC[_m28.start():_m29.start()]
 
-# --- Isolation de la tranche v28 : du marqueur "# Migration v28" au conn.close()
+# --- Isolation de la tranche v29 : du marqueur "# Migration v29" au conn.close()
 # final de init_db().
-_v28 = SRC[_m28.start():]
-_close28 = _v28.find("conn.close()")
-assert _close28 != -1, "conn.close() final introuvable après le bloc v28"
-V28 = _v28[:_close28 + len("conn.close()")]
+_v29 = SRC[_m29.start():]
+_close29 = _v29.find("conn.close()")
+assert _close29 != -1, "conn.close() final introuvable après le bloc v29"
+V29 = _v29[:_close29 + len("conn.close()")]
 
 
 def _nocomment(block):
@@ -82,6 +86,8 @@ V27_NOCOMMENT = _nocomment(V27)
 V27_LOW = V27_NOCOMMENT.lower()
 V28_NOCOMMENT = _nocomment(V28)
 V28_LOW = V28_NOCOMMENT.lower()
+V29_NOCOMMENT = _nocomment(V29)
+V29_LOW = V29_NOCOMMENT.lower()
 
 print("-" * 64)
 print("A. Ordre & présence")
@@ -257,6 +263,56 @@ check("try:" not in V28_NOCOMMENT
       and "c.execute(" in V28_NOCOMMENT
       and "conn.commit()" in V28_NOCOMMENT,
       "42 v28 = execute direct + commit, sans bloc try: (1er boot crée la colonne, boots suivants no-op)")
+
+print("-" * 64)
+print("H. Migration v29 — retour du quota Premium standard 10 -> 4 (règle produit finale)")
+
+check(_m29.start() > _m28.start(),
+      "43 v29 présente et placée APRÈS v28 dans init_db()")
+# La requête peut être écrite en littéraux Python concaténés : on aplatit les
+# guillemets et espaces pour retrouver le SQL logique.
+V29_FLAT = re.sub(r"[\s\"']+", " ", V29_LOW)
+check("alter table consultation_allowance alter column monthly_limit set default 4"
+      in V29_FLAT,
+      "44 v29 : ALTER TABLE consultation_allowance ... SET DEFAULT 4")
+check("update consultation_allowance set monthly_limit = 4 where monthly_limit = 10"
+      in V29_FLAT,
+      "45 v29 : UPDATE ... SET monthly_limit = 4 WHERE monthly_limit = 10 (rabaisse le standard 10)")
+check("monthly_used" not in V29_LOW,
+      "46 v29 ne mentionne JAMAIS monthly_used (aucune remise à zéro des consommations)")
+check("drop" not in V29_LOW and "delete " not in V29_LOW,
+      "47 v29 : aucun DROP / DELETE (aucune période supprimée)")
+check("earned_credits" not in V29_LOW and "consultations" not in V29_LOW
+      and not re.search(r"\busers\b", V29_LOW) and "stripe" not in V29_LOW
+      and "mobile_subscriptions" not in V29_LOW,
+      "48 v29 ne touche que consultation_allowance (ni earned_credits, ni consultations, ni legacy, ni billing)")
+check(V29_FLAT.count("where monthly_limit = 10") == 1,
+      "49 v29 ne rabaisse QUE monthly_limit = 10 (les quotas custom != 10 restent intacts)")
+
+# --- Durcissement Q1.1 : v29 est idempotente PAR NATURE (SET DEFAULT rejoué =
+# même résultat ; UPDATE ... WHERE monthly_limit = 10 rejoué = 0 ligne). Aucun
+# try/except Python ne doit l'entourer, sinon une vraie erreur SQL serait avalée.
+# NB : `\bexcept\b` ne matche PAS le mot SQL "exception".
+check(re.search(r"\bexcept\s+exception\b", V29_LOW) is None,
+      "50 aucun `except Exception` général autour de v29")
+check(re.search(r"\bexcept\b", V29_LOW) is None,
+      "51 aucun try/except Python autour de v29 (une vraie erreur SQL se propage)")
+check("print(" not in V29_NOCOMMENT,
+      "52 aucun print() d'erreur autour de v29")
+check("conn.rollback()" not in V29_NOCOMMENT,
+      "53 aucun rollback masquant dans v29")
+check("try:" not in V29_NOCOMMENT
+      and V29_NOCOMMENT.count("c.execute(") == 2
+      and "conn.commit()" in V29_NOCOMMENT,
+      "54 v29 = 2 execute directs + commit, sans bloc try:")
+
+# Non-régression : v25 (DEFAULT 4) et v26 (4 -> 10) NE SONT PAS réécrites.
+check("monthly_limit INTEGER      NOT NULL DEFAULT 4" in SRC
+      or re.search(r"monthly_limit\s+integer\s+not null\s+default 4", SRC.lower()) is not None,
+      "55 v25 intacte : la DDL consultation_allowance garde DEFAULT 4")
+check("ALTER TABLE consultation_allowance ALTER COLUMN monthly_limit SET DEFAULT 10" in SRC
+      and "UPDATE consultation_allowance SET monthly_limit = 10 WHERE monthly_limit = 4" in SRC,
+      "56 v26 intacte : ses deux instructions (SET DEFAULT 10 + UPDATE 4->10) sont toujours présentes, non réécrites")
 
 print("-" * 64)
 print(f"RÉSULTAT : {_STATE['pass']} ok / {_STATE['fail']} ko")

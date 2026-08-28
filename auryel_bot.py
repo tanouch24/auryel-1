@@ -849,6 +849,35 @@ def init_db():
     c.execute("ALTER TABLE mobile_subscriptions "
               "ADD COLUMN IF NOT EXISTS current_period_start TIMESTAMPTZ")
     conn.commit()
+    # Migration v29 — CORRECTION de règle produit : le quota Premium standard
+    # revient de 10 à 4 consultations par période (offre finale : 7,99 €/mois,
+    # 4 consultations de 2 h, messages illimités pendant chacune ; la 1re
+    # consultation offerte sera traitée dans un lot séparé). v25 (DEFAULT 4) et
+    # v26 (4 -> 10) NE SONT PAS réécrites : cette migration ADDITIVE remet
+    # simplement la règle standard à 4.
+    #   - ALTER ... SET DEFAULT 4 : n'affecte que les futurs INSERT omettant la
+    #     colonne ;
+    #   - UPDATE ... = 4 WHERE monthly_limit = 10 : rabaisse UNIQUEMENT les
+    #     lignes actuellement à l'ancien standard 10. monthly_used n'est JAMAIS
+    #     touché (aucune remise à zéro), aucune période supprimée, aucune ligne
+    #     à quota custom (!= 10) modifiée, rien touché sur consultations /
+    #     earned_credits / le legacy. Si une ligne avait monthly_used > 4,
+    #     monthly_used reste tel quel : le moteur renverra simplement
+    #     monthly_remaining = max(0, 4 - used) = 0. Idempotent PAR NATURE :
+    #     `SET DEFAULT 4` rejoué donne le même résultat ; `UPDATE ... WHERE
+    #     monthly_limit = 10` rejoué ne trouve plus aucune ligne (0 modifiée).
+    # Aucun try/except Python ici : une vraie erreur SQL (colonne absente, table
+    # manquante…) doit remonter, pas être transformée en print silencieux.
+    c.execute(
+        "ALTER TABLE consultation_allowance "
+        "ALTER COLUMN monthly_limit SET DEFAULT 4"
+    )
+    c.execute(
+        "UPDATE consultation_allowance "
+        "SET monthly_limit = 4 "
+        "WHERE monthly_limit = 10"
+    )
+    conn.commit()
     conn.close()
 
 def reset_db():
@@ -4495,13 +4524,14 @@ def _consultation_row_to_dict(row):
     }
 
 
-def provision_allowance(user_id, period_start, period_end, monthly_limit=10, now=None):
+def provision_allowance(user_id, period_start, period_end, monthly_limit=4, now=None):
     """Crée une allowance pour une PÉRIODE D'ABONNEMENT donnée (fournie explicitement
     par les tests / l'admin / plus tard l'IAP Store — le moteur n'en crée jamais
     tout seul, pas de mois calendaire). Idempotent sur (user_id, period_start).
     Retourne True si une ligne a été insérée, False si elle existait déjà.
-    Quota Premium standard = 10 (décision produit) ; un appelant peut passer une
-    autre valeur pour un quota custom / support."""
+    Quota Premium standard = 4 consultations / période (offre finale : 7,99 €/mois,
+    4 consultations de 2 h, messages illimités pendant chacune) ; un appelant peut
+    passer une autre valeur pour un quota custom / support."""
     if now is None:
         now = _utcnow()
     uid = str(user_id)
