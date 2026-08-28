@@ -833,6 +833,22 @@ def init_db():
         $$;
     """)
     conn.commit()
+    # Migration v28 — distinguer « premier achat » et « début de période courante »
+    # dans mobile_subscriptions (billing B2.2). PUREMENT ADDITIF : une seule colonne
+    # nullable current_period_start. Aucun DROP, aucun backfill, aucun UPDATE de
+    # données existantes, aucune autre table touchée. Sémantique retenue :
+    #   - purchased_at         : instant du PREMIER achat de l'abonnement, immuable
+    #                            après INSERT ;
+    #   - current_period_start : début de la période de facturation ACTUELLE, mis à
+    #                            jour à chaque renouvellement (future source de
+    #                            period_start pour consultation_allowance) ;
+    #   - expires_at           : fin de cette période.
+    # `ADD COLUMN IF NOT EXISTS` est DÉJÀ idempotent : au rejeu c'est un no-op, sans
+    # erreur. Aucun try/except Python ici : une vraie erreur SQL (table absente,
+    # type inconnu…) doit remonter, pas être transformée en print silencieux.
+    c.execute("ALTER TABLE mobile_subscriptions "
+              "ADD COLUMN IF NOT EXISTS current_period_start TIMESTAMPTZ")
+    conn.commit()
     conn.close()
 
 def reset_db():
@@ -4730,6 +4746,222 @@ def get_consultation_state(user_id, now=None):
         return {"consultation": consultation, "quota": quota}
     finally:
         conn.close()
+
+
+# ============================================================
+# BILLING MOBILE (B2) — enregistrement idempotent d'un abonnement
+# DÉJÀ vérifié auprès du store.
+#
+# Cette primitive NE contacte JAMAIS Google/Apple : elle reçoit des données
+# normalisées (produites plus tard, après vérification officielle du reçu /
+# de la transaction) et les réconcilie dans mobile_subscriptions (migration
+# v27). Elle NE TOUCHE PAS consultation_allowance / earned_credits /
+# accounts / users / Stripe : rattacher un abonnement validé au quota
+# Premium est un autre lot. Aucune route Flask ici (B2 n'expose rien).
+# ============================================================
+
+_MOBILE_STORES = ("google_play", "app_store")
+# À ce stade, seule l'offre Premium mensuelle est enregistrée dans cette
+# table. Le consommable 'auryel_consultation_extra' passera par
+# earned_credits, pas par mobile_subscriptions.
+_MOBILE_SUB_PRODUCT_IDS = ("auryel_premium_monthly",)
+
+
+class MobileSubscriptionError(Exception):
+    """Erreur métier de record_mobile_subscription. Jamais une réponse Flask
+    (B2 n'ajoute aucune route) : l'appelant décide du mapping HTTP plus tard.
+    `code` est stable pour les appelants et les tests. `code` possibles :
+      - 'invalid_store'    : store hors {google_play, app_store}
+      - 'invalid_product'  : product_id non autorisé pour cette table
+      - 'missing_field'    : user_id / subscription_key / status vide
+      - 'account_mismatch' : (store, subscription_key) déjà rattaché à un
+                             AUTRE compte -> aucune écriture, aucune
+                             réattribution
+      - 'write_conflict'   : course perdue et ligne introuvable à la relecture
+    """
+
+    def __init__(self, code, message=""):
+        super().__init__(message or code)
+        self.code = code
+
+
+def _mobile_sub_locked(c, store, subscription_key):
+    """Ligne mobile_subscriptions pour (store, subscription_key), VERROUILLÉE
+    (FOR UPDATE) le temps de la transaction. (id, user_id) ou None."""
+    c.execute(
+        """SELECT id, user_id
+           FROM mobile_subscriptions
+           WHERE store=%s AND subscription_key=%s
+           FOR UPDATE""",
+        (store, subscription_key),
+    )
+    return c.fetchone()
+
+
+def _mobile_sub_update_evolving(c, sub_id, product_id, latest_transaction_id,
+                                status, current_period_start, expires_at,
+                                auto_renewing, raw_payload_json, now):
+    """UPDATE des SEULS champs évolutifs d'un abonnement déjà rattaché au bon
+    compte. `id`, `created_at` et `purchased_at` (premier achat) ne sont
+    JAMAIS touchés ici — `purchased_at` n'est écrit qu'à l'INSERT. Le début
+    de période courante (`current_period_start`) et `expires_at` avancent à
+    chaque renouvellement. Ne touche AUCUN quota."""
+    c.execute(
+        """UPDATE mobile_subscriptions
+               SET product_id=%s,
+                   latest_transaction_id=%s,
+                   status=%s,
+                   current_period_start=%s,
+                   expires_at=%s,
+                   auto_renewing=%s,
+                   last_verified_at=%s,
+                   raw_payload=%s,
+                   updated_at=%s
+             WHERE id=%s""",
+        (product_id, latest_transaction_id, status, current_period_start,
+         expires_at, auto_renewing, now, raw_payload_json, now, sub_id),
+    )
+
+
+def record_mobile_subscription(user_id, store, product_id, subscription_key,
+                               latest_transaction_id, status, purchased_at,
+                               current_period_start, expires_at, auto_renewing,
+                               raw_payload, now=None):
+    """Enregistre ou réconcilie dans mobile_subscriptions un abonnement
+    considéré comme DÉJÀ vérifié auprès du store (aucun appel réseau ici).
+
+    Sémantique des trois dates (B2.2) :
+      - purchased_at         : instant du PREMIER achat de cet abonnement.
+                               Écrit UNE fois à l'INSERT, JAMAIS modifié
+                               ensuite (immuable après création).
+      - current_period_start : début de la période de facturation ACTUELLE.
+                               Avance à chaque renouvellement. Sera la future
+                               source de period_start pour consultation_allowance
+                               (jamais now()).
+      - expires_at           : fin de la période courante. Avance aussi.
+
+    Retour : {"outcome": "created"|"updated", "id": <uuid str>,
+              "store": <store>, "status": <status>}.
+    Lève MobileSubscriptionError(code=...) — voir la classe. En particulier
+    'missing_field' si current_period_start est absent (requis pour
+    auryel_premium_monthly à ce stade), AVANT toute écriture DB.
+
+    Comportement :
+      - (store, subscription_key) inconnu           -> INSERT (outcome 'created')
+      - (store, subscription_key) connu, MÊME compte -> UPDATE des champs
+        évolutifs uniquement ; `id`, `created_at` et `purchased_at` conservés
+        (outcome 'updated')
+      - (store, subscription_key) connu, AUTRE compte -> MobileSubscriptionError
+        'account_mismatch', aucune écriture, aucune réattribution
+
+    Idempotence : même compte + même (store, subscription_key) + même période
+    revérifiée -> exactement UNE ligne, même `id`, même `created_at`, même
+    `purchased_at`, mêmes current_period_start / expires_at. Aucun quota
+    remis à zéro (consultation_allowance n'est jamais touché).
+
+    Atomicité : une seule connexion / transaction. On lit la ligne existante
+    FOR UPDATE, puis INSERT ... ON CONFLICT (store, subscription_key) DO
+    NOTHING. Si l'INSERT ne pose rien (rowcount 0 = une transaction
+    concurrente a gagné la course), on relit FOR UPDATE et on tranche
+    l'appartenance : jamais de rattachement silencieux à un 2e compte. La
+    contrainte UNIQUE(store, subscription_key) (v27) est le filet final.
+
+    Ne logge jamais subscription_key ni latest_transaction_id en clair
+    (cette fonction ne logge rien).
+    """
+    if now is None:
+        now = _utcnow()
+
+    store = store.strip() if isinstance(store, str) else ""
+    product_id = product_id.strip() if isinstance(product_id, str) else ""
+    uid = str(user_id).strip() if user_id is not None else ""
+    if isinstance(subscription_key, str):
+        sub_key = subscription_key.strip()
+    else:
+        sub_key = str(subscription_key).strip() if subscription_key is not None else ""
+    status_norm = status.strip() if isinstance(status, str) else ""
+
+    if store not in _MOBILE_STORES:
+        raise MobileSubscriptionError("invalid_store", "store non autorisé")
+    if product_id not in _MOBILE_SUB_PRODUCT_IDS:
+        raise MobileSubscriptionError(
+            "invalid_product", "product_id non autorisé pour mobile_subscriptions")
+    if not uid or not sub_key or not status_norm:
+        raise MobileSubscriptionError(
+            "missing_field", "user_id / subscription_key / status requis")
+    # current_period_start est requis pour auryel_premium_monthly : c'est la
+    # future source de period_start du quota, jamais now(). Refus AVANT toute
+    # écriture DB si absent.
+    if current_period_start is None:
+        raise MobileSubscriptionError(
+            "missing_field", "current_period_start requis")
+
+    payload_json = _json.dumps(raw_payload) if raw_payload is not None else None
+
+    conn = get_conn()
+    try:
+        c = conn.cursor()
+
+        existing = _mobile_sub_locked(c, store, sub_key)
+        if existing is not None:
+            existing_id, existing_uid = existing
+            if str(existing_uid) != uid:
+                conn.rollback()
+                raise MobileSubscriptionError(
+                    "account_mismatch",
+                    "abonnement déjà rattaché à un autre compte")
+            # purchased_at N'EST PAS transmis ici -> jamais modifié après création.
+            _mobile_sub_update_evolving(
+                c, existing_id, product_id, latest_transaction_id, status_norm,
+                current_period_start, expires_at, auto_renewing, payload_json, now)
+            conn.commit()
+            return {"outcome": "updated", "id": str(existing_id),
+                    "store": store, "status": status_norm}
+
+        new_id = str(uuid.uuid4())
+        c.execute(
+            """INSERT INTO mobile_subscriptions
+                   (id, user_id, store, product_id, subscription_key,
+                    latest_transaction_id, status, purchased_at,
+                    current_period_start, expires_at, auto_renewing,
+                    last_verified_at, raw_payload, created_at, updated_at)
+               VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+               ON CONFLICT (store, subscription_key) DO NOTHING""",
+            (new_id, uid, store, product_id, sub_key, latest_transaction_id,
+             status_norm, purchased_at, current_period_start, expires_at,
+             auto_renewing, now, payload_json, now, now),
+        )
+        if c.rowcount == 1:
+            conn.commit()
+            return {"outcome": "created", "id": new_id,
+                    "store": store, "status": status_norm}
+
+        # rowcount 0 : une transaction concurrente a inséré la même
+        # (store, subscription_key) entre notre SELECT et notre INSERT.
+        # On relit SOUS VERROU pour trancher l'appartenance — jamais de
+        # rattachement silencieux à un 2e compte.
+        existing = _mobile_sub_locked(c, store, sub_key)
+        if existing is None:
+            conn.rollback()
+            raise MobileSubscriptionError(
+                "write_conflict", "ligne introuvable après conflit d'écriture")
+        existing_id, existing_uid = existing
+        if str(existing_uid) != uid:
+            conn.rollback()
+            raise MobileSubscriptionError(
+                "account_mismatch", "abonnement déjà rattaché à un autre compte")
+        _mobile_sub_update_evolving(
+            c, existing_id, product_id, latest_transaction_id, status_norm,
+            current_period_start, expires_at, auto_renewing, payload_json, now)
+        conn.commit()
+        return {"outcome": "updated", "id": str(existing_id),
+                "store": store, "status": status_norm}
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        conn.close()
+
 
 # ============================================================
 # RITUEL AUTOMATIQUE (abonnés)

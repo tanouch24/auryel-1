@@ -1,6 +1,7 @@
 """
-test_migration_v27.py — B1 billing : migration additive v27 (table
-mobile_subscriptions pour les abonnements Google Play / Apple).
+test_migration_v27.py — billing : migrations additives v27 (table
+mobile_subscriptions pour les abonnements Google Play / Apple) et v28
+(colonne current_period_start).
 
 Le harnais de test du projet ne joue jamais init_db() contre une vraie base
 (psycopg2 mocké, get_conn -> FakeConn/FakeCursor par SQL exact). On prouve donc
@@ -52,19 +53,35 @@ def check(cond, label):
 
 SRC = inspect.getsource(A.init_db)
 
-# --- Isolation de la tranche v27 : du marqueur "# Migration v27" au conn.close()
-# final de init_db(). Tout le reste de init_db() (v1..v26) est hors périmètre.
+# --- Isolation de la tranche v27 : du marqueur "# Migration v27" au marqueur
+# "# Migration v28" (ou, à défaut, au conn.close() final). Le reste de
+# init_db() (v1..v26) est hors périmètre.
 _m = re.search(r"#\s*Migration v27\b", SRC)
 assert _m, "bloc 'Migration v27' introuvable dans init_db()"
-V27 = SRC[_m.start():]
-_close = V27.find("conn.close()")
-assert _close != -1, "conn.close() final introuvable après le bloc v27"
-V27 = V27[:_close + len("conn.close()")]
+_m28 = re.search(r"#\s*Migration v28\b", SRC)
+assert _m28, "bloc 'Migration v28' introuvable dans init_db()"
+assert _m28.start() > _m.start(), "v28 doit venir APRÈS v27"
 
-V27_NOCOMMENT = "\n".join(
-    line for line in V27.splitlines() if not line.lstrip().startswith("#")
-)
+V27 = SRC[_m.start():_m28.start()]
+
+# --- Isolation de la tranche v28 : du marqueur "# Migration v28" au conn.close()
+# final de init_db().
+_v28 = SRC[_m28.start():]
+_close28 = _v28.find("conn.close()")
+assert _close28 != -1, "conn.close() final introuvable après le bloc v28"
+V28 = _v28[:_close28 + len("conn.close()")]
+
+
+def _nocomment(block):
+    return "\n".join(
+        line for line in block.splitlines() if not line.lstrip().startswith("#")
+    )
+
+
+V27_NOCOMMENT = _nocomment(V27)
 V27_LOW = V27_NOCOMMENT.lower()
+V28_NOCOMMENT = _nocomment(V28)
+V28_LOW = V28_NOCOMMENT.lower()
 
 print("-" * 64)
 print("A. Ordre & présence")
@@ -196,6 +213,50 @@ check("UPDATE consultation_allowance SET monthly_limit = 10 WHERE monthly_limit 
 # touchée, seul le bloc FK de v27 a été durci.
 check(SRC.count("except Exception as e:") >= 1 and "Migration v25 (FK consultations)" in SRC,
       "29 idiome historique des migrations antérieures (v25) laissé intact")
+
+print("-" * 64)
+print("G. Migration v28 — colonne current_period_start (billing B2.2)")
+
+check(_m28.start() > _m.start(), "30 v28 présente et placée APRÈS v27 dans init_db()")
+# La requête peut être écrite en littéraux Python concaténés : on aplatit les
+# guillemets et espaces pour retrouver le SQL logique.
+V28_FLAT = re.sub(r"[\s\"']+", " ", V28_LOW)
+check("alter table mobile_subscriptions add column if not exists "
+      "current_period_start timestamptz" in V28_FLAT,
+      "31 ALTER TABLE mobile_subscriptions ADD COLUMN IF NOT EXISTS "
+      "current_period_start TIMESTAMPTZ")
+check("if not exists" in V28_LOW,
+      "32 ADD COLUMN IF NOT EXISTS -> migration rejouable sans erreur")
+check("drop" not in V28_LOW,
+      "33 aucun DROP dans la tranche v28")
+check("update " not in V28_LOW and "delete " not in V28_LOW
+      and "insert into" not in V28_LOW,
+      "34 v28 : aucun UPDATE / DELETE / INSERT (aucun backfill, aucune donnée modifiée)")
+check("consultation_allowance" not in V28_LOW and "earned_credits" not in V28_LOW
+      and not re.search(r"\busers\b", V28_LOW) and "accounts" not in V28_LOW
+      and "stripe" not in V28_LOW,
+      "35 v28 ne touche AUCUNE autre table (que mobile_subscriptions)")
+check(V28_LOW.count("alter table") == 1
+      and "alter table mobile_subscriptions" in V28_LOW,
+      "36 v28 : un seul ALTER TABLE, sur mobile_subscriptions")
+check("current_period_start" not in V27_LOW,
+      "37 v27 reste intacte : la colonne current_period_start est bien ajoutée par v28, pas par v27")
+
+# --- Durcissement B2.3 : v28 est idempotente par IF NOT EXISTS SEUL, aucun
+# try/except Python ne doit l'entourer (sinon une vraie erreur SQL serait avalée).
+# NB : `\bexcept\b` ne matche PAS le mot SQL "exception" (pas de frontière t|i).
+check(re.search(r"\bexcept\s+exception\b", V28_LOW) is None,
+      "38 aucun `except Exception` général autour de v28")
+check(re.search(r"\bexcept\b", V28_LOW) is None,
+      "39 aucun try/except Python autour de v28 (idempotence 100 % SQL via IF NOT EXISTS)")
+check("print(" not in V28_NOCOMMENT,
+      "40 aucun print() d'erreur autour de v28 (une erreur non triviale n'est pas loggée puis ignorée)")
+check("conn.rollback()" not in V28_NOCOMMENT,
+      "41 aucun rollback masquant dans v28 : une vraie erreur SQL se propage")
+check("try:" not in V28_NOCOMMENT
+      and "c.execute(" in V28_NOCOMMENT
+      and "conn.commit()" in V28_NOCOMMENT,
+      "42 v28 = execute direct + commit, sans bloc try: (1er boot crée la colonne, boots suivants no-op)")
 
 print("-" * 64)
 print(f"RÉSULTAT : {_STATE['pass']} ok / {_STATE['fail']} ko")
