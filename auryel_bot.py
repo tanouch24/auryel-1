@@ -779,6 +779,60 @@ def init_db():
     except Exception as e:
         conn.rollback()
         print(f"Migration v26: {e}")
+    # Migration v27 — enregistrement des abonnements mobiles (Google Play / App Store).
+    # PUREMENT ADDITIF : une seule table mobile_subscriptions. Aucune colonne touchée
+    # sur consultation_allowance / accounts / users (legacy Stripe) / le reste, aucun
+    # backfill, aucun DROP, aucune donnée existante modifiée. Cette table est la source
+    # de vérité CÔTÉ STORE ; le quota (consultation_allowance) reste piloté séparément.
+    # Horodatages en TIMESTAMPTZ (cohérent avec le moteur B4). product_id figés :
+    # 'auryel_premium_monthly' (abonnement), 'auryel_consultation_extra' (consommable,
+    # usage futur). Idempotente : CREATE TABLE IF NOT EXISTS (contrainte UNIQUE inline)
+    # + bloc FK séparé rendu idempotent par un DO PL/pgSQL qui n'ignore QUE
+    # duplicate_object (voir bloc suivant).
+    try:
+        c.execute("""
+            CREATE TABLE IF NOT EXISTS mobile_subscriptions (
+                id                    UUID         PRIMARY KEY,
+                user_id               UUID         NOT NULL,
+                store                 TEXT         NOT NULL,
+                product_id            TEXT         NOT NULL,
+                subscription_key      TEXT         NOT NULL,
+                latest_transaction_id TEXT,
+                status                TEXT         NOT NULL,
+                purchased_at          TIMESTAMPTZ,
+                expires_at            TIMESTAMPTZ,
+                auto_renewing         BOOLEAN,
+                last_verified_at      TIMESTAMPTZ,
+                raw_payload           JSONB,
+                created_at            TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
+                updated_at            TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
+                CONSTRAINT uq_mobile_subscriptions_store_key UNIQUE (store, subscription_key)
+            )
+        """)
+        conn.commit()
+    except Exception as e:
+        conn.rollback()
+        print(f"Migration v27: {e}")
+    # Migration v27 (suite) — FK mobile_subscriptions.user_id -> accounts(user_id),
+    # SANS ON DELETE CASCADE. Idempotence EXPLICITE côté PostgreSQL : un bloc DO
+    # tente l'ADD CONSTRAINT et n'attrape QUE duplicate_object (SQLSTATE 42710 — la
+    # contrainte existe déjà, cas normal du rejeu). Toute AUTRE erreur (table absente,
+    # colonne inconnue, type incompatible, accounts manquant…) se propage normalement
+    # et n'est PAS avalée par un `except Exception` général. Aucun try/except Python
+    # ici : une vraie erreur de migration doit remonter, pas être silencieusement
+    # transformée en print.
+    c.execute("""
+        DO $$
+        BEGIN
+            ALTER TABLE mobile_subscriptions
+                ADD CONSTRAINT fk_mobile_subscriptions_account
+                FOREIGN KEY (user_id) REFERENCES accounts(user_id);
+        EXCEPTION
+            WHEN duplicate_object THEN NULL;
+        END
+        $$;
+    """)
+    conn.commit()
     conn.close()
 
 def reset_db():
