@@ -275,6 +275,21 @@ class FakeCursor:
             })
             self.rowcount = 1
 
+        # ---- migration v26 : quota Premium 4 -> 10 ----
+        elif k == "ALTER TABLE consultation_allowance ALTER COLUMN monthly_limit SET DEFAULT 10":
+            # Le DEFAULT ne concerne que les futurs INSERT omettant la colonne :
+            # aucun effet sur les lignes existantes du fake -> no-op ici.
+            self.rowcount = -1
+
+        elif k == "UPDATE consultation_allowance SET monthly_limit = 10 WHERE monthly_limit = 4":
+            with _STORE_LOCK:
+                n = 0
+                for a in DB["consultation_allowance"]:
+                    if a["monthly_limit"] == 4:
+                        a["monthly_limit"] = 10
+                        n += 1
+            self.rowcount = n
+
         else:
             raise AssertionError("SQL non géré par le fake B4.1 : " + k)
 
@@ -489,6 +504,103 @@ check(len(DB["consultation_allowance"]) == 1, "14c une seule ligne d'allowance")
 for _name in ("open_or_get_consultation", "get_consultation_state",
               "provision_allowance", "grant_earned_credit", "_utcnow"):
     check(callable(getattr(A, _name, None)), f"15 {_name} exposé")
+
+# --- 16. quota Premium produit = 10 (défaut provision_allowance) -------------
+reset_db(); seed_account(UID)
+ps, pe = _period(now0)
+A.provision_allowance(UID, ps, pe)  # SANS monthly_limit explicite
+_st = A.get_consultation_state(UID, now=now0)
+check(_st["quota"]["monthly_limit"] == 10 and _st["quota"]["monthly_remaining"] == 10
+      and _st["quota"]["is_premium"] is True,
+      "16a provision_allowance() sans kwarg -> monthly_limit 10, remaining 10")
+
+# 4 ouvertures -> used 4, remaining 6 ; le quota n'est PAS épuisé à 4
+for i in range(4):
+    ri = A.open_or_get_consultation(UID, "selena", now=now0 + timedelta(hours=3 * i))
+    check(ri["consultation"]["credit_source"] == "monthly", f"16b ouverture {i + 1}/10 via quota")
+_st = A.get_consultation_state(UID, now=now0 + timedelta(hours=13))
+check(_st["quota"]["monthly_used"] == 4 and _st["quota"]["monthly_remaining"] == 6,
+      "16c 4 utilisées -> used 4 / remaining 6 (quota 10, plus épuisé à 4)")
+
+# --- 17. migration v26 : lignes existantes 4 -> 10, monthly_used inchangé ----
+reset_db()
+UID_A = "aaaaaaaa-1111-4aaa-8aaa-aaaaaaaaaaaa"
+UID_B = "bbbbbbbb-2222-4bbb-8bbb-bbbbbbbbbbbb"
+with _STORE_LOCK:
+    DB["consultation_allowance"].append({
+        "user_id": UID_A, "period_start": ps, "period_end": pe,
+        "monthly_limit": 4, "monthly_used": 2, "created_at": now0,
+    })
+    DB["consultation_allowance"].append({
+        "user_id": UID_B, "period_start": ps, "period_end": pe,
+        "monthly_limit": 15, "monthly_used": 1, "created_at": now0,
+    })
+DB["earned_credits"].append({
+    "id": "ec-keep", "user_id": UID_A, "source": "referral",
+    "granted_at": now0, "consumed_at": None, "consultation_id": None, "metadata": None,
+})
+DB["consultations"].append({
+    "id": "cons-keep", "user_id": UID_A, "advisor_id": "selena",
+    "started_at": now0, "expires_at": now0 + timedelta(hours=2),
+    "credit_source": "monthly", "created_at": now0,
+})
+
+_conn = A.get_conn()
+_c = _conn.cursor()
+_c.execute("ALTER TABLE consultation_allowance ALTER COLUMN monthly_limit SET DEFAULT 10")
+_c.execute("UPDATE consultation_allowance SET monthly_limit = 10 WHERE monthly_limit = 4")
+_conn.commit()
+_conn.close()
+# rejouable : 2e passage ne touche plus rien
+_conn2 = A.get_conn()
+_c2 = _conn2.cursor()
+_c2.execute("UPDATE consultation_allowance SET monthly_limit = 10 WHERE monthly_limit = 4")
+check(_c2.rowcount == 0, "17a v26 idempotent : 2e passage -> 0 ligne")
+_conn2.commit(); _conn2.close()
+
+_ra = next(a for a in DB["consultation_allowance"] if a["user_id"] == UID_A)
+_rb = next(a for a in DB["consultation_allowance"] if a["user_id"] == UID_B)
+check(_ra["monthly_limit"] == 10 and _ra["monthly_used"] == 2,
+      "17b v26 : ligne 4/used=2 -> 10/used=2 (monthly_used STRICTEMENT inchangé)")
+check(_rb["monthly_limit"] == 15 and _rb["monthly_used"] == 1,
+      "17c v26 : ligne custom 15 reste 15 (WHERE monthly_limit = 4 seulement)")
+check(len(DB["earned_credits"]) == 1 and DB["earned_credits"][0]["consumed_at"] is None,
+      "17d v26 : earned_credits inchangés")
+check(len(DB["consultations"]) == 1 and DB["consultations"][0]["id"] == "cons-keep",
+      "17e v26 : consultations inchangées")
+
+# --- 18. quota 10 : 10 utilisées -> refus ; earned credit encore utilisable --
+reset_db(); seed_account(UID)
+ps, pe = _period(now0)
+A.provision_allowance(UID, ps, pe)  # -> monthly_limit 10
+_ids = set()
+for i in range(10):
+    ri = A.open_or_get_consultation(UID, "selena", now=now0 + timedelta(hours=3 * i))
+    check(ri["status"] == "opened" and ri["consultation"]["credit_source"] == "monthly",
+          f"18a ouverture {i + 1}/10 via quota mensuel")
+    _ids.add(ri["consultation"]["id"])
+check(len(_ids) == 10, "18b 10 consultations distinctes")
+_st = A.get_consultation_state(UID, now=now0 + timedelta(hours=31))
+check(_st["quota"]["monthly_used"] == 10 and _st["quota"]["monthly_remaining"] == 0,
+      "18c quota épuisé : used 10 / remaining 0")
+
+# 11e ouverture mensuelle refusée
+r11 = A.open_or_get_consultation(UID, "selena", now=now0 + timedelta(hours=31))
+check(r11["status"] == "no_credit" and "consultation" not in r11,
+      "18d 11e ouverture -> no_credit (aucune consultation créée)")
+check(len(DB["consultations"]) == 10, "18e toujours 10 consultations")
+
+# earned credit encore utilisable à monthly_used=10
+_eid = A.grant_earned_credit(UID, "referral")
+r_earned = A.open_or_get_consultation(UID, "selena", now=now0 + timedelta(hours=31))
+check(r_earned["status"] == "opened" and r_earned["consultation"]["credit_source"] == "referral",
+      "18f earned credit encore utilisable après quota mensuel épuisé")
+_ec = next(e for e in DB["earned_credits"] if e["id"] == _eid)
+check(_ec["consumed_at"] is not None
+      and _ec["consultation_id"] == r_earned["consultation"]["id"],
+      "18g earned credit marqué consommé + rattaché à la consultation")
+_st = A.get_consultation_state(UID, now=now0 + timedelta(hours=31))
+check(_st["quota"]["monthly_used"] == 10, "18h monthly_used reste 10 (earned séparé du quota)")
 
 print("-" * 64)
 print(f"RÉSULTAT : {_STATE['pass']} ok / {_STATE['fail']} ko")

@@ -763,6 +763,22 @@ def init_db():
     except Exception as e:
         conn.rollback()
         print(f"Migration v25 (FK messages consultation): {e}")
+    # Migration v26 — quota Premium standard 4 -> 10 (décision produit :
+    # 7,99 €/mois, 10 consultations de 2 h par période). PUREMENT ADDITIF :
+    #   - le DEFAULT de consultation_allowance.monthly_limit passe à 10 (n'affecte
+    #     que les futurs INSERT qui omettraient la colonne) ;
+    #   - les lignes existantes exactement à l'ancienne valeur standard 4 sont
+    #     remontées à 10. monthly_used n'est JAMAIS touché (aucun compteur remis
+    #     à zéro). Aucune ligne à quota custom (!= 4) n'est modifiée. Rien n'est
+    #     touché sur consultations / earned_credits / le legacy. Idempotent :
+    #     rejoué, l'UPDATE ne trouve plus aucune ligne à 4.
+    try:
+        c.execute("ALTER TABLE consultation_allowance ALTER COLUMN monthly_limit SET DEFAULT 10")
+        c.execute("UPDATE consultation_allowance SET monthly_limit = 10 WHERE monthly_limit = 4")
+        conn.commit()
+    except Exception as e:
+        conn.rollback()
+        print(f"Migration v26: {e}")
     conn.close()
 
 def reset_db():
@@ -4409,11 +4425,13 @@ def _consultation_row_to_dict(row):
     }
 
 
-def provision_allowance(user_id, period_start, period_end, monthly_limit=4, now=None):
+def provision_allowance(user_id, period_start, period_end, monthly_limit=10, now=None):
     """Crée une allowance pour une PÉRIODE D'ABONNEMENT donnée (fournie explicitement
     par les tests / l'admin / plus tard l'IAP Store — le moteur n'en crée jamais
     tout seul, pas de mois calendaire). Idempotent sur (user_id, period_start).
-    Retourne True si une ligne a été insérée, False si elle existait déjà."""
+    Retourne True si une ligne a été insérée, False si elle existait déjà.
+    Quota Premium standard = 10 (décision produit) ; un appelant peut passer une
+    autre valeur pour un quota custom / support."""
     if now is None:
         now = _utcnow()
     uid = str(user_id)
