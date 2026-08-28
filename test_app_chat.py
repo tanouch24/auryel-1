@@ -66,8 +66,11 @@ def reset_db():
     FAKE["seq"][0] = 0
 
 
-def seed_account(user_id, deleted_at=None, email="u@example.com"):
-    FAKE["accounts"].append({"user_id": user_id, "email": email, "deleted_at": deleted_at})
+def seed_account(user_id, deleted_at=None, email="u@example.com",
+                 first_consultation_used_at=None):
+    FAKE["accounts"].append({"user_id": user_id, "email": email,
+                             "deleted_at": deleted_at,
+                             "first_consultation_used_at": first_consultation_used_at})
 
 
 _APP_SELECT = "SELECT " + ", ".join(A._APP_PROFILE_FIELDS) + " FROM app_profiles WHERE user_id=%s"
@@ -184,12 +187,27 @@ class FakeCursor:
             self._rows = [(m["role"], m["content"], m["timestamp"]) for m in rows]
 
         # ---- moteur consultations 2 h / crédits (B4.1) ----
-        elif k == ("SELECT user_id FROM accounts WHERE user_id=%s AND deleted_at IS NULL "
-                   "FOR UPDATE"):
+        elif k == ("SELECT user_id, first_consultation_used_at FROM accounts "
+                   "WHERE user_id=%s AND deleted_at IS NULL FOR UPDATE"):
             (uid,) = p
             r = next((a for a in FAKE["accounts"]
                       if a["user_id"] == uid and a["deleted_at"] is None), None)
-            self._result = (uid,) if r else None
+            self._result = (uid, r.get("first_consultation_used_at")) if r else None
+
+        elif k == ("UPDATE accounts SET first_consultation_used_at=%s "
+                   "WHERE user_id=%s AND first_consultation_used_at IS NULL"):
+            ts, uid = p
+            r = next((a for a in FAKE["accounts"] if a["user_id"] == str(uid)), None)
+            if r is not None and r.get("first_consultation_used_at") is None:
+                r["first_consultation_used_at"] = ts
+                self.rowcount = 1
+            else:
+                self.rowcount = 0
+
+        elif k == "SELECT first_consultation_used_at FROM accounts WHERE user_id=%s":
+            (uid,) = p
+            r = next((a for a in FAKE["accounts"] if a["user_id"] == str(uid)), None)
+            self._result = (r.get("first_consultation_used_at"),) if r is not None else None
 
         elif k == ("SELECT id, advisor_id, started_at, expires_at, credit_source "
                    "FROM consultations WHERE user_id=%s AND expires_at > %s "
@@ -331,9 +349,15 @@ def _seed_premium(uid, monthly_limit=4):
                           monthly_limit=monthly_limit)
 
 
-def fresh(uid=UID1, premium=True):
+# Scénarios existants : la 1re source testée est le quota Premium / earned,
+# donc on marque la gratuite comme déjà consommée. first_free=True pour tester
+# la gratuite elle-même.
+_FF_USED = A._utcnow() - timedelta(days=2)
+
+
+def fresh(uid=UID1, premium=True, first_free=False):
     reset_db()
-    seed_account(uid)
+    seed_account(uid, first_consultation_used_at=None if first_free else _FF_USED)
     if premium:
         _seed_premium(uid)
     return A.create_app_session(uid)

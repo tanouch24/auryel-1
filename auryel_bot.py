@@ -878,6 +878,23 @@ def init_db():
         "WHERE monthly_limit = 10"
     )
     conn.commit()
+    # Migration v30 — première consultation OFFERTE (1 par compte, à vie).
+    # PUREMENT ADDITIF : une seule colonne nullable sur accounts.
+    #   - first_consultation_used_at IS NULL  -> la gratuite n'a jamais été
+    #     utilisée par ce compte ;
+    #   - renseignée (TIMESTAMPTZ) -> elle a été consommée au 1er message, une
+    #     seule fois pour toute la vie du compte (le user_id est stable : même
+    #     email -> même compte, logout / réinstallation / changement de
+    #     téléphone ne la recréent pas).
+    # `ADD COLUMN IF NOT EXISTS` est idempotent au rejeu. AUCUN backfill : les
+    # comptes existants restent NULL (gratuite disponible). Aucune autre table
+    # touchée, aucun UPDATE/INSERT/DELETE. Aucun try/except Python : une vraie
+    # erreur SQL doit remonter, pas être transformée en print silencieux.
+    c.execute(
+        "ALTER TABLE accounts "
+        "ADD COLUMN IF NOT EXISTS first_consultation_used_at TIMESTAMPTZ"
+    )
+    conn.commit()
     conn.close()
 
 def reset_db():
@@ -2726,6 +2743,7 @@ def _quota_json(quota):
         "monthly_used": quota["monthly_used"],
         "monthly_remaining": quota["monthly_remaining"],
         "earned_available": quota["earned_available"],
+        "first_free_available": quota["first_free_available"],
         "period_start": _ts_iso(quota["period_start"]),
         "period_end": _ts_iso(quota["period_end"]),
     }
@@ -4581,19 +4599,26 @@ def open_or_get_consultation(user_id, advisor_id, now=None):
     consultation active s'il y en a une (sans rien consommer).
 
     Une seule connexion, une seule transaction. Ordre :
-      A. SELECT accounts ... FOR UPDATE        -> mutex transactionnel par utilisateur
-      B. consultation active ? (expires_at > now) -> la renvoyer, 0 consommation
-      C. allowance ACTIVE (period_start <= now < period_end) FOR UPDATE :
+      A.  SELECT accounts (+ first_consultation_used_at) FOR UPDATE -> mutex par utilisateur
+      B.  consultation active ? (expires_at > now) -> la renvoyer, 0 consommation
+      C0. première consultation OFFERTE : si first_consultation_used_at IS NULL
+            -> source='first_free' (ne touche NI monthly_used NI earned_credits)
+      C.  sinon allowance ACTIVE (period_start <= now < period_end) FOR UPDATE :
             si monthly_used < monthly_limit -> source='monthly', monthly_used += 1
-      D. sinon earned_credit non consommé le plus ancien, FOR UPDATE SKIP LOCKED
+      D.  sinon earned_credit non consommé le plus ancien, FOR UPDATE SKIP LOCKED
             -> source = source du crédit
-      E. aucune source -> rollback, status='no_credit', rien créé, rien consommé
-      F. INSERT consultation (started_at = now, expires_at = now + 2 h)
-      G. si crédit earned : UPDATE consumed_at + consultation_id APRÈS le INSERT
-      H. commit
+      E.  aucune source -> rollback, status='no_credit', rien créé, rien consommé
+      F.  INSERT consultation (started_at = now, expires_at = now + 2 h)
+      F'. si source=='first_free' : UPDATE accounts SET first_consultation_used_at=now
+            WHERE user_id=%s AND first_consultation_used_at IS NULL (garde d'unicité,
+            MÊME transaction que l'INSERT). rowcount != 1 = course perdue -> rollback
+            + on renvoie la consultation concurrente déjà active (jamais 2 gratuites).
+      G.  si crédit earned : UPDATE consumed_at + consultation_id APRÈS le INSERT
+      H.  commit
 
     Le verrou (A) garantit que deux premiers messages concurrents ne créent
-    qu'UNE consultation et ne débitent qu'UNE fois. Aucun appel LLM ici.
+    qu'UNE consultation et ne débitent qu'UNE fois — gratuite comprise.
+    Priorité : first_free > monthly > earned. Aucun appel LLM ici.
 
     Retour : dict {status, opened_now?, consultation?} — status dans
     {'opened', 'active', 'no_credit', 'unknown_account'}.
@@ -4605,14 +4630,18 @@ def open_or_get_consultation(user_id, advisor_id, now=None):
     try:
         c = conn.cursor()
 
-        # A. mutex par utilisateur — sérialise les "premiers messages" concurrents
+        # A. mutex par utilisateur — sérialise les "premiers messages" concurrents.
+        #    On lit first_consultation_used_at DANS le même SELECT verrouillé.
         c.execute(
-            "SELECT user_id FROM accounts WHERE user_id=%s AND deleted_at IS NULL FOR UPDATE",
+            "SELECT user_id, first_consultation_used_at FROM accounts "
+            "WHERE user_id=%s AND deleted_at IS NULL FOR UPDATE",
             (uid,),
         )
-        if c.fetchone() is None:
+        acc = c.fetchone()
+        if acc is None:
             conn.rollback()
             return {"status": "unknown_account"}
+        first_free_used_at = acc[1]
 
         # B. consultation déjà active -> réutilisée, AUCUNE consommation
         c.execute(
@@ -4629,28 +4658,36 @@ def open_or_get_consultation(user_id, advisor_id, now=None):
             return {"status": "active", "opened_now": False,
                     "consultation": _consultation_row_to_dict(row)}
 
-        # C. allowance active (période d'abonnement réelle, pas un mois calendaire)
         source = None
-        c.execute(
-            """SELECT period_start, monthly_limit, monthly_used
-               FROM consultation_allowance
-               WHERE user_id=%s AND period_start <= %s AND period_end > %s
-               ORDER BY period_start DESC
-               LIMIT 1
-               FOR UPDATE""",
-            (uid, now, now),
-        )
-        arow = c.fetchone()
-        if arow is not None:
-            period_start, monthly_limit, monthly_used = arow
-            if monthly_used < monthly_limit:
-                c.execute(
-                    """UPDATE consultation_allowance
-                       SET monthly_used = monthly_used + 1
-                       WHERE user_id=%s AND period_start=%s""",
-                    (uid, period_start),
-                )
-                source = "monthly"
+
+        # C0. première consultation OFFERTE — prioritaire, AVANT le quota Premium
+        #     et AVANT les earned credits. Ne touche NI monthly_used NI
+        #     earned_credits ; la marque sur accounts est posée en F'.
+        if first_free_used_at is None:
+            source = "first_free"
+
+        # C. allowance active (période d'abonnement réelle, pas un mois calendaire)
+        if source is None:
+            c.execute(
+                """SELECT period_start, monthly_limit, monthly_used
+                   FROM consultation_allowance
+                   WHERE user_id=%s AND period_start <= %s AND period_end > %s
+                   ORDER BY period_start DESC
+                   LIMIT 1
+                   FOR UPDATE""",
+                (uid, now, now),
+            )
+            arow = c.fetchone()
+            if arow is not None:
+                period_start, monthly_limit, monthly_used = arow
+                if monthly_used < monthly_limit:
+                    c.execute(
+                        """UPDATE consultation_allowance
+                           SET monthly_used = monthly_used + 1
+                           WHERE user_id=%s AND period_start=%s""",
+                        (uid, period_start),
+                    )
+                    source = "monthly"
 
         # D. sinon : crédit gagné le plus ancien encore disponible
         earned_id = None
@@ -4683,6 +4720,33 @@ def open_or_get_consultation(user_id, advisor_id, now=None):
                VALUES (%s, %s, %s, %s, %s, %s, %s)""",
             (cid, uid, advisor_id, started_at, expires_at, source, now),
         )
+
+        # F'. gratuite -> on pose la marque d'unicité DANS la même transaction.
+        #     WHERE first_consultation_used_at IS NULL = garde finale ; rowcount != 1
+        #     signifie qu'une transaction concurrente a déjà consommé la gratuite
+        #     (impossible avec le verrou A, mais on ne fabrique jamais 2 gratuites).
+        if source == "first_free":
+            c.execute(
+                "UPDATE accounts SET first_consultation_used_at=%s "
+                "WHERE user_id=%s AND first_consultation_used_at IS NULL",
+                (now, uid),
+            )
+            if c.rowcount != 1:
+                conn.rollback()
+                c.execute(
+                    """SELECT id, advisor_id, started_at, expires_at, credit_source
+                       FROM consultations
+                       WHERE user_id=%s AND expires_at > %s
+                       ORDER BY started_at DESC
+                       LIMIT 1""",
+                    (uid, now),
+                )
+                r2 = c.fetchone()
+                conn.commit()
+                if r2 is not None:
+                    return {"status": "active", "opened_now": False,
+                            "consultation": _consultation_row_to_dict(r2)}
+                return {"status": "no_credit"}
 
         # G. le crédit earned n'est marqué consommé QU'APRÈS que la consultation existe
         #    (FK earned_credits.consultation_id -> consultations.id).
@@ -4772,6 +4836,16 @@ def get_consultation_state(user_id, now=None):
             (uid,),
         )
         quota["earned_available"] = int(c.fetchone()[0])
+
+        # Première consultation OFFERTE : disponible tant que la colonne accounts
+        # n'est pas renseignée. LECTURE SEULE — aucun UPDATE ici.
+        c.execute(
+            "SELECT first_consultation_used_at FROM accounts WHERE user_id=%s",
+            (uid,),
+        )
+        _acc = c.fetchone()
+        quota["first_free_available"] = (_acc is not None and _acc[0] is None)
+
         conn.commit()
         return {"consultation": consultation, "quota": quota}
     finally:

@@ -62,18 +62,22 @@ _m28 = re.search(r"#\s*Migration v28\b", SRC)
 assert _m28, "bloc 'Migration v28' introuvable dans init_db()"
 _m29 = re.search(r"#\s*Migration v29\b", SRC)
 assert _m29, "bloc 'Migration v29' introuvable dans init_db()"
+_m30 = re.search(r"#\s*Migration v30\b", SRC)
+assert _m30, "bloc 'Migration v30' introuvable dans init_db()"
 assert _m28.start() > _m.start(), "v28 doit venir APRÈS v27"
 assert _m29.start() > _m28.start(), "v29 doit venir APRÈS v28"
+assert _m30.start() > _m29.start(), "v30 doit venir APRÈS v29"
 
 V27 = SRC[_m.start():_m28.start()]
 V28 = SRC[_m28.start():_m29.start()]
+V29 = SRC[_m29.start():_m30.start()]
 
-# --- Isolation de la tranche v29 : du marqueur "# Migration v29" au conn.close()
+# --- Isolation de la tranche v30 : du marqueur "# Migration v30" au conn.close()
 # final de init_db().
-_v29 = SRC[_m29.start():]
-_close29 = _v29.find("conn.close()")
-assert _close29 != -1, "conn.close() final introuvable après le bloc v29"
-V29 = _v29[:_close29 + len("conn.close()")]
+_v30 = SRC[_m30.start():]
+_close30 = _v30.find("conn.close()")
+assert _close30 != -1, "conn.close() final introuvable après le bloc v30"
+V30 = _v30[:_close30 + len("conn.close()")]
 
 
 def _nocomment(block):
@@ -88,6 +92,8 @@ V28_NOCOMMENT = _nocomment(V28)
 V28_LOW = V28_NOCOMMENT.lower()
 V29_NOCOMMENT = _nocomment(V29)
 V29_LOW = V29_NOCOMMENT.lower()
+V30_NOCOMMENT = _nocomment(V30)
+V30_LOW = V30_NOCOMMENT.lower()
 
 print("-" * 64)
 print("A. Ordre & présence")
@@ -313,6 +319,44 @@ check("monthly_limit INTEGER      NOT NULL DEFAULT 4" in SRC
 check("ALTER TABLE consultation_allowance ALTER COLUMN monthly_limit SET DEFAULT 10" in SRC
       and "UPDATE consultation_allowance SET monthly_limit = 10 WHERE monthly_limit = 4" in SRC,
       "56 v26 intacte : ses deux instructions (SET DEFAULT 10 + UPDATE 4->10) sont toujours présentes, non réécrites")
+
+print("-" * 64)
+print("I. Migration v30 — première consultation OFFERTE (accounts.first_consultation_used_at)")
+
+V30_FLAT = re.sub(r"[\s\"']+", " ", V30_LOW)
+check(_m30.start() > _m29.start(),
+      "57 v30 présente et placée APRÈS v29 dans init_db()")
+check("alter table accounts add column if not exists first_consultation_used_at timestamptz"
+      in V30_FLAT,
+      "58 v30 : ALTER TABLE accounts ADD COLUMN IF NOT EXISTS first_consultation_used_at TIMESTAMPTZ")
+check("if not exists" in V30_LOW,
+      "59 ADD COLUMN IF NOT EXISTS -> migration rejouable sans erreur")
+check("timestamptz" in V30_LOW,
+      "60 v30 : colonne typée TIMESTAMPTZ")
+check("update " not in V30_LOW and "insert " not in V30_LOW and "delete " not in V30_LOW,
+      "61 v30 : AUCUN backfill (aucun UPDATE / INSERT / DELETE)")
+check("drop" not in V30_LOW,
+      "62 v30 : aucun DROP")
+check(V30_LOW.count("alter table") == 1 and "alter table accounts" in V30_LOW
+      and "consultation_allowance" not in V30_LOW and "consultations" not in V30_LOW
+      and "earned_credits" not in V30_LOW and "mobile_subscriptions" not in V30_LOW,
+      "63 v30 ne touche QUE accounts (un seul ALTER TABLE)")
+check(re.search(r"\bexcept\b", V30_LOW) is None,
+      "64 aucun try/except Python autour de v30")
+check("print(" not in V30_NOCOMMENT and "conn.rollback()" not in V30_NOCOMMENT,
+      "65 aucun print / rollback masquant dans v30")
+check("try:" not in V30_NOCOMMENT and "c.execute(" in V30_NOCOMMENT
+      and "conn.commit()" in V30_NOCOMMENT,
+      "66 v30 = execute direct + commit, sans bloc try:")
+
+# Non-régression : v25..v29 intactes.
+check("Migration v25" in SRC and "Migration v27" in SRC and "Migration v28" in SRC
+      and "Migration v29" in SRC,
+      "67 v25 / v27 / v28 / v29 toujours présentes, non réécrites")
+_SRC_FLAT = re.sub(r"[\s\"']+", " ", SRC.lower())
+check("alter table consultation_allowance alter column monthly_limit set default 4"
+      in _SRC_FLAT,
+      "68 v29 (SET DEFAULT 4) toujours présente dans init_db(), non réécrite")
 
 print("-" * 64)
 print(f"RÉSULTAT : {_STATE['pass']} ok / {_STATE['fail']} ko")

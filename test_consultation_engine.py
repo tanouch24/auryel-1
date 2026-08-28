@@ -78,9 +78,12 @@ def reset_db():
         _ROW_LOCKS.clear()
 
 
-def seed_account(user_id, deleted_at=None, email="u@example.com"):
+def seed_account(user_id, deleted_at=None, email="u@example.com",
+                 first_consultation_used_at=None):
     with _STORE_LOCK:
-        DB["accounts"].append({"user_id": str(user_id), "email": email, "deleted_at": deleted_at})
+        DB["accounts"].append({"user_id": str(user_id), "email": email,
+                               "deleted_at": deleted_at,
+                               "first_consultation_used_at": first_consultation_used_at})
 
 
 def _norm(sql):
@@ -143,15 +146,34 @@ class FakeCursor:
         self._result = None
         self._rows = None
 
-        if k == ("SELECT user_id FROM accounts WHERE user_id=%s AND deleted_at IS NULL "
-                 "FOR UPDATE"):
+        if k == ("SELECT user_id, first_consultation_used_at FROM accounts "
+                 "WHERE user_id=%s AND deleted_at IS NULL FOR UPDATE"):
             (uid,) = p
             uid = str(uid)
             self._acquire("accounts:" + uid, blocking=True)
             with _STORE_LOCK:
                 r = next((a for a in DB["accounts"]
                           if a["user_id"] == uid and a["deleted_at"] is None), None)
-            self._result = (uid,) if r else None
+            self._result = (uid, r.get("first_consultation_used_at")) if r else None
+
+        elif k == ("UPDATE accounts SET first_consultation_used_at=%s "
+                   "WHERE user_id=%s AND first_consultation_used_at IS NULL"):
+            ts, uid = p
+            uid = str(uid)
+            with _STORE_LOCK:
+                r = next((a for a in DB["accounts"] if a["user_id"] == uid), None)
+            if r is not None and r.get("first_consultation_used_at") is None:
+                self._stage_update(r, {"first_consultation_used_at": ts})
+                self.rowcount = 1
+            else:
+                self.rowcount = 0
+
+        elif k == "SELECT first_consultation_used_at FROM accounts WHERE user_id=%s":
+            (uid,) = p
+            uid = str(uid)
+            with _STORE_LOCK:
+                r = next((a for a in DB["accounts"] if a["user_id"] == uid), None)
+            self._result = (r.get("first_consultation_used_at"),) if r is not None else None
 
         elif k == ("SELECT id, advisor_id, started_at, expires_at, credit_source "
                    "FROM consultations WHERE user_id=%s AND expires_at > %s "
@@ -355,9 +377,10 @@ print("TEST CONSULTATION ENGINE — B4.1")
 print("=" * 64)
 
 now0 = A._utcnow()
+_FF_USED = now0 - timedelta(days=2)  # marque "première gratuite déjà consommée"
 
 # --- 1. ouverture avec allowance active : used 0 -> 1 --------------------
-reset_db(); seed_account(UID)
+reset_db(); seed_account(UID, first_consultation_used_at=_FF_USED)
 ps, pe = _period(now0)
 A.provision_allowance(UID, ps, pe, monthly_limit=4)
 r1 = A.open_or_get_consultation(UID, "selena", now=now0)
@@ -385,7 +408,7 @@ _st = A.get_consultation_state(UID, now=now0 + timedelta(hours=3))
 check(_st["quota"]["monthly_used"] == 2, "3b monthly_used 1 -> 2")
 
 # --- 4. 4 utilisations : quota épuisé -------------------------------
-reset_db(); seed_account(UID)
+reset_db(); seed_account(UID, first_consultation_used_at=_FF_USED)
 ps, pe = _period(now0)
 A.provision_allowance(UID, ps, pe, monthly_limit=4)
 ids = []
@@ -418,7 +441,7 @@ check(_st["quota"]["monthly_used"] == 4, "6c monthly_used toujours 4 (earned != 
 check(_st["quota"]["earned_available"] == 0, "6d earned_available 1 -> 0")
 
 # --- 7. utilisateur sans allowance + earned : fonctionne ---------
-reset_db(); seed_account(UID2)
+reset_db(); seed_account(UID2, first_consultation_used_at=_FF_USED)
 A.grant_earned_credit(UID2, "share_30d")
 r7 = A.open_or_get_consultation(UID2, "maia", now=now0)
 check(r7["status"] == "opened" and r7["consultation"]["credit_source"] == "share_30d",
@@ -427,13 +450,13 @@ _st = A.get_consultation_state(UID2, now=now0)
 check(_st["quota"]["is_premium"] is False, "7b is_premium = False sans allowance active")
 
 # --- 8. utilisateur sans allowance + sans earned : no_credit -----
-reset_db(); seed_account(UID2)
+reset_db(); seed_account(UID2, first_consultation_used_at=_FF_USED)
 r8 = A.open_or_get_consultation(UID2, "maia", now=now0)
 check(r8["status"] == "no_credit", "8a sans allowance ni earned -> no_credit")
 check(len(DB["consultations"]) == 0, "8b rien créé")
 
 # --- 9. nouvelle période d'abonnement : nouvelle allowance ------
-reset_db(); seed_account(UID)
+reset_db(); seed_account(UID, first_consultation_used_at=_FF_USED)
 p1s, p1e = now0 - timedelta(days=20), now0 + timedelta(days=10)
 A.provision_allowance(UID, p1s, p1e, monthly_limit=4)
 A.open_or_get_consultation(UID, "selena", now=now0)                       # P1 used -> 1
@@ -448,7 +471,7 @@ _p2 = next(a for a in DB["consultation_allowance"] if a["period_start"] == p2s)
 check(_p1["monthly_used"] == 1 and _p2["monthly_used"] == 1, "9c P1 inchangée (1), P2 débitée (1)")
 
 # --- 10. consultation active survit au dépassement de period_end -
-reset_db(); seed_account(UID)
+reset_db(); seed_account(UID, first_consultation_used_at=_FF_USED)
 psh, peh = now0 - timedelta(days=1), now0 + timedelta(hours=1)           # period_end proche
 A.provision_allowance(UID, psh, peh, monthly_limit=4)
 r10 = A.open_or_get_consultation(UID, "selena", now=now0)                # expires now0 + 2 h
@@ -462,7 +485,7 @@ check(_st["consultation"] is not None and _st["quota"]["is_premium"] is False,
 check(_st["consultation"]["seconds_remaining"] == 30 * 60, "10c secondes restantes = 30 min")
 
 # --- 11. advisor_id de la consultation reste identique ----------
-reset_db(); seed_account(UID)
+reset_db(); seed_account(UID, first_consultation_used_at=_FF_USED)
 ps, pe = _period(now0)
 A.provision_allowance(UID, ps, pe, monthly_limit=4)
 r11 = A.open_or_get_consultation(UID, "selena", now=now0)
@@ -474,7 +497,7 @@ check(_st["consultation"]["advisor_id"] == "selena",
       "11b get_consultation_state renvoie l'advisor figé")
 
 # --- 12. concurrence : un seul débit / une seule session -------
-reset_db(); seed_account(UID)
+reset_db(); seed_account(UID, first_consultation_used_at=_FF_USED)
 ps, pe = _period(now0)
 A.provision_allowance(UID, ps, pe, monthly_limit=4)
 _results = []
@@ -508,7 +531,7 @@ check(r13["status"] == "unknown_account", "13a compte absent -> unknown_account"
 check(len(DB["consultations"]) == 0, "13b rien créé")
 
 # --- 14. provision_allowance idempotent ----------------------
-reset_db(); seed_account(UID)
+reset_db(); seed_account(UID, first_consultation_used_at=_FF_USED)
 ps, pe = _period(now0)
 check(A.provision_allowance(UID, ps, pe) is True, "14a 1re provision -> insérée")
 check(A.provision_allowance(UID, ps, pe) is False, "14b 2e provision même période -> no-op")
@@ -520,7 +543,7 @@ for _name in ("open_or_get_consultation", "get_consultation_state",
     check(callable(getattr(A, _name, None)), f"15 {_name} exposé")
 
 # --- 16. quota Premium standard = 4 (défaut provision_allowance) -------------
-reset_db(); seed_account(UID)
+reset_db(); seed_account(UID, first_consultation_used_at=_FF_USED)
 ps, pe = _period(now0)
 A.provision_allowance(UID, ps, pe)  # SANS monthly_limit explicite
 _st = A.get_consultation_state(UID, now=now0)
@@ -561,7 +584,7 @@ UID_A = "aaaaaaaa-1111-4aaa-8aaa-aaaaaaaaaaaa"
 UID_B = "bbbbbbbb-2222-4bbb-8bbb-bbbbbbbbbbbb"
 UID_C = "cccccccc-3333-4ccc-8ccc-cccccccccccc"
 UID_D = "dddddddd-4444-4ddd-8ddd-dddddddddddd"
-seed_account(UID_D)
+seed_account(UID_D, first_consultation_used_at=_FF_USED)
 with _STORE_LOCK:
     # standard 10, used 0 / 2 / 4  -> doivent devenir limit 4, used inchangé
     DB["consultation_allowance"].append({
@@ -635,7 +658,7 @@ check(len(DB["consultations"]) == 1 and DB["consultations"][0]["id"] == "cons-ke
       "17j v29 : consultations inchangées (aucune période supprimée)")
 
 # --- 18. quota 4 : 4 utilisées -> refus ; earned credit encore utilisable --
-reset_db(); seed_account(UID)
+reset_db(); seed_account(UID, first_consultation_used_at=_FF_USED)
 ps, pe = _period(now0)
 A.provision_allowance(UID, ps, pe)  # -> monthly_limit 4
 _ids = set()
@@ -666,6 +689,165 @@ check(_ec["consumed_at"] is not None
       "18g earned credit marqué consommé + rattaché à la consultation")
 _st = A.get_consultation_state(UID, now=now0 + timedelta(hours=13))
 check(_st["quota"]["monthly_used"] == 4, "18h monthly_used reste 4 (earned séparé du quota)")
+
+# ==========================================================================
+# --- 19. PREMIÈRE CONSULTATION OFFERTE (Q2.1) ------------------------------
+# ==========================================================================
+UID_F = "ffffffff-0000-4fff-8fff-ffffffffffff"
+
+# 19a. compte neuf (first_consultation_used_at NULL) -> first_free_available=true
+reset_db(); seed_account(UID_F)                       # PAS de marque -> gratuite dispo
+_st = A.get_consultation_state(UID_F, now=now0)
+check(_st["quota"]["first_free_available"] is True,
+      "19a compte neuf -> first_free_available = true")
+check(_st["quota"]["monthly_used"] == 0 and _st["quota"]["is_premium"] is False,
+      "19a2 aucun quota Premium, monthly_used 0")
+
+# 19b. GET /state répété -> AUCUNE consommation, aucune écriture
+for _ in range(5):
+    A.get_consultation_state(UID_F, now=now0)
+_acc_f = next(a for a in DB["accounts"] if a["user_id"] == UID_F)
+check(_acc_f["first_consultation_used_at"] is None
+      and len(DB["consultations"]) == 0,
+      "19b GET /state x5 -> aucune consultation, first_consultation_used_at toujours NULL")
+
+# 19c. premier message -> credit_source = 'first_free', marque posée
+r19 = A.open_or_get_consultation(UID_F, "selena", now=now0)
+check(r19["status"] == "opened" and r19["opened_now"] is True
+      and r19["consultation"]["credit_source"] == "first_free",
+      "19c premier message -> consultation ouverte, credit_source = first_free")
+_acc_f = next(a for a in DB["accounts"] if a["user_id"] == UID_F)
+check(_acc_f["first_consultation_used_at"] == now0,
+      "19c2 accounts.first_consultation_used_at renseigné (= now)")
+
+# 19d. first_free_available devient false
+_st = A.get_consultation_state(UID_F, now=now0)
+check(_st["quota"]["first_free_available"] is False,
+      "19d après consommation -> first_free_available = false")
+
+# 19e. earned credit reste intact (aucune consommation earned par la gratuite)
+reset_db(); seed_account(UID_F)
+A.grant_earned_credit(UID_F, "referral")
+r19e = A.open_or_get_consultation(UID_F, "selena", now=now0)
+check(r19e["consultation"]["credit_source"] == "first_free",
+      "19e gratuite prioritaire sur earned")
+_st = A.get_consultation_state(UID_F, now=now0)
+check(_st["quota"]["earned_available"] == 1,
+      "19e2 earned credit intact après la gratuite")
+
+# 19f. consultation gratuite active -> reprise, même id, aucune 2e consommation
+r19f = A.open_or_get_consultation(UID_F, "selena", now=now0 + timedelta(minutes=20))
+check(r19f["status"] == "active" and r19f["opened_now"] is False
+      and r19f["consultation"]["id"] == r19e["consultation"]["id"],
+      "19f 2e message < 2 h -> session gratuite reprise, même id")
+check(len(DB["consultations"]) == 1,
+      "19f2 toujours une seule consultation")
+
+# 19g. après expiration -> la gratuite NE revient JAMAIS
+_after = now0 + timedelta(hours=3)
+r19g = A.open_or_get_consultation(UID_F, "selena", now=_after)  # earned dispo -> referral
+check(r19g["status"] == "opened" and r19g["consultation"]["credit_source"] == "referral",
+      "19g après expiration -> plus de gratuite, on bascule sur earned (referral)")
+_st = A.get_consultation_state(UID_F, now=_after)
+check(_st["quota"]["first_free_available"] is False,
+      "19g2 first_free_available reste false après expiration")
+
+# 19h. Premium NEUF -> la gratuite est utilisée AVANT les 4 mensuelles
+reset_db(); seed_account(UID_F)                       # neuf, gratuite dispo
+ps, pe = _period(now0)
+A.provision_allowance(UID_F, ps, pe)                  # -> monthly_limit 4
+r19h = A.open_or_get_consultation(UID_F, "selena", now=now0)
+check(r19h["consultation"]["credit_source"] == "first_free",
+      "19h Premium neuf -> 1er message = first_free (avant le quota mensuel)")
+_st = A.get_consultation_state(UID_F, now=now0)
+check(_st["quota"]["monthly_used"] == 0 and _st["quota"]["monthly_remaining"] == 4,
+      "19h2 monthly_used reste 0 pendant la gratuite (4 mensuelles intactes)")
+
+# 19i. après expiration de la gratuite -> 1re Premium => monthly_used = 1
+r19i = A.open_or_get_consultation(UID_F, "selena", now=now0 + timedelta(hours=3))
+check(r19i["consultation"]["credit_source"] == "monthly",
+      "19i après la gratuite -> 1re consultation Premium via le quota")
+_st = A.get_consultation_state(UID_F, now=now0 + timedelta(hours=3))
+check(_st["quota"]["monthly_used"] == 1 and _st["quota"]["monthly_remaining"] == 3,
+      "19i2 monthly_used 0 -> 1 (la gratuite n'a rien consommé du quota)")
+
+# 19j. les 4 Premium restent disponibles après la gratuite (total = 1 + 4)
+_used_ids = {r19h["consultation"]["id"], r19i["consultation"]["id"]}
+for _n in range(3):
+    rr = A.open_or_get_consultation(UID_F, "selena", now=now0 + timedelta(hours=6 + 3 * _n))
+    check(rr["status"] == "opened" and rr["consultation"]["credit_source"] == "monthly",
+          f"19j Premium {_n + 2}/4 encore disponible après la gratuite")
+    _used_ids.add(rr["consultation"]["id"])
+_st = A.get_consultation_state(UID_F, now=now0 + timedelta(hours=20))
+check(_st["quota"]["monthly_used"] == 4 and _st["quota"]["monthly_remaining"] == 0,
+      "19j2 4 Premium consommées après la gratuite -> quota épuisé")
+check(len(_used_ids) == 5,
+      "19j3 total = 5 consultations distinctes (1 gratuite + 4 Premium)")
+r19j = A.open_or_get_consultation(UID_F, "selena", now=now0 + timedelta(hours=20))
+check(r19j["status"] == "no_credit",
+      "19j4 6e ouverture -> no_credit (gratuite + 4 Premium épuisées, aucun earned)")
+
+# 19k. compte avec first_consultation_used_at renseigné -> PAS de gratuite
+reset_db(); seed_account(UID_F, first_consultation_used_at=_FF_USED)
+_st = A.get_consultation_state(UID_F, now=now0)
+check(_st["quota"]["first_free_available"] is False,
+      "19k first_consultation_used_at renseigné -> first_free_available = false")
+r19k = A.open_or_get_consultation(UID_F, "selena", now=now0)
+check(r19k["status"] == "no_credit",
+      "19k2 aucune gratuite, aucun quota, aucun earned -> no_credit")
+
+# 19l. compte existant SANS marque (pas de backfill) -> gratuite disponible
+reset_db(); seed_account(UID_F, first_consultation_used_at=None)
+DB["consultations"].append({                          # il a DÉJÀ consulté par le passé
+    "id": "old-cons", "user_id": UID_F, "advisor_id": "selena",
+    "started_at": now0 - timedelta(days=5),
+    "expires_at": now0 - timedelta(days=5) + timedelta(hours=2),
+    "credit_source": "monthly", "created_at": now0 - timedelta(days=5),
+})
+_st = A.get_consultation_state(UID_F, now=now0)
+check(_st["quota"]["first_free_available"] is True,
+      "19l compte existant, colonne NULL (aucun backfill) -> gratuite disponible")
+r19l = A.open_or_get_consultation(UID_F, "selena", now=now0)
+check(r19l["consultation"]["credit_source"] == "first_free",
+      "19l2 il obtient bien sa gratuite au 1er message")
+
+# 19m. 402 UNIQUEMENT quand first_free + monthly + earned indisponibles
+reset_db(); seed_account(UID_F, first_consultation_used_at=_FF_USED)  # gratuite KO
+r19m = A.open_or_get_consultation(UID_F, "selena", now=now0)
+check(r19m["status"] == "no_credit",
+      "19m gratuite KO + pas de quota + pas d'earned -> no_credit")
+A.grant_earned_credit(UID_F, "share_30d")            # earned dispo -> plus de no_credit
+r19m2 = A.open_or_get_consultation(UID_F, "selena", now=now0)
+check(r19m2["status"] == "opened" and r19m2["consultation"]["credit_source"] == "share_30d",
+      "19m2 earned redevient une source -> plus de no_credit")
+
+# 19n. concurrence : deux premiers messages simultanés -> UNE seule gratuite
+reset_db(); seed_account(UID_F)                       # neuf
+_res_ff = []
+_res_ff_lock = threading.Lock()
+
+
+def _worker_ff():
+    rr = A.open_or_get_consultation(UID_F, "selena", now=now0)
+    with _res_ff_lock:
+        _res_ff.append(rr)
+
+
+_th_ff = [threading.Thread(target=_worker_ff) for _ in range(2)]
+for _t in _th_ff:
+    _t.start()
+for _t in _th_ff:
+    _t.join()
+_ff_consults = [c for c in DB["consultations"] if c["credit_source"] == "first_free"]
+_acc_f = next(a for a in DB["accounts"] if a["user_id"] == UID_F)
+check(len(_ff_consults) == 1,
+      "19n 2 premiers messages simultanés -> UNE seule consultation first_free")
+check(_acc_f["first_consultation_used_at"] == now0,
+      "19n2 first_consultation_used_at posé exactement une fois")
+check(sorted(r["status"] for r in _res_ff) == ["active", "opened"],
+      "19n3 un thread ouvre la gratuite, l'autre récupère la session active")
+check(len({r["consultation"]["id"] for r in _res_ff if "consultation" in r}) == 1,
+      "19n4 les deux threads voient la même consultation")
 
 print("-" * 64)
 print(f"RÉSULTAT : {_STATE['pass']} ok / {_STATE['fail']} ko")

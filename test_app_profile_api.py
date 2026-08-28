@@ -62,8 +62,11 @@ def reset_db():
     FAKE["seq"][0] = 0
 
 
-def seed_account(user_id, deleted_at=None, email="u@example.com"):
-    FAKE["accounts"].append({"user_id": user_id, "email": email, "deleted_at": deleted_at})
+def seed_account(user_id, deleted_at=None, email="u@example.com",
+                 first_consultation_used_at=None):
+    FAKE["accounts"].append({"user_id": user_id, "email": email,
+                             "deleted_at": deleted_at,
+                             "first_consultation_used_at": first_consultation_used_at})
 
 
 _APP_SELECT = "SELECT " + ", ".join(A._APP_PROFILE_FIELDS) + " FROM app_profiles WHERE user_id=%s"
@@ -176,12 +179,27 @@ class FakeCursor:
             self._rows = [(m["role"], m["content"]) for m in rows[:limit]]
 
         # ---- moteur consultations 2 h / crédits (B4.1) ----
-        elif k == ("SELECT user_id FROM accounts WHERE user_id=%s AND deleted_at IS NULL "
-                   "FOR UPDATE"):
+        elif k == ("SELECT user_id, first_consultation_used_at FROM accounts "
+                   "WHERE user_id=%s AND deleted_at IS NULL FOR UPDATE"):
             (uid,) = p
             r = next((a for a in FAKE["accounts"]
                       if a["user_id"] == uid and a["deleted_at"] is None), None)
-            self._result = (uid,) if r else None
+            self._result = (uid, r.get("first_consultation_used_at")) if r else None
+
+        elif k == ("UPDATE accounts SET first_consultation_used_at=%s "
+                   "WHERE user_id=%s AND first_consultation_used_at IS NULL"):
+            ts, uid = p
+            r = next((a for a in FAKE["accounts"] if a["user_id"] == str(uid)), None)
+            if r is not None and r.get("first_consultation_used_at") is None:
+                r["first_consultation_used_at"] = ts
+                self.rowcount = 1
+            else:
+                self.rowcount = 0
+
+        elif k == "SELECT first_consultation_used_at FROM accounts WHERE user_id=%s":
+            (uid,) = p
+            r = next((a for a in FAKE["accounts"] if a["user_id"] == str(uid)), None)
+            self._result = (r.get("first_consultation_used_at"),) if r is not None else None
 
         elif k == ("SELECT id, advisor_id, started_at, expires_at, credit_source "
                    "FROM consultations WHERE user_id=%s AND expires_at > %s "

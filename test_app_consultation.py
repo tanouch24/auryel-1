@@ -61,8 +61,11 @@ def reset_db():
     FAKE["seq"][0] = 0
 
 
-def seed_account(user_id, deleted_at=None, email="u@example.com"):
-    FAKE["accounts"].append({"user_id": user_id, "email": email, "deleted_at": deleted_at})
+def seed_account(user_id, deleted_at=None, email="u@example.com",
+                 first_consultation_used_at=None):
+    FAKE["accounts"].append({"user_id": user_id, "email": email,
+                             "deleted_at": deleted_at,
+                             "first_consultation_used_at": first_consultation_used_at})
 
 
 _APP_SELECT = "SELECT " + ", ".join(A._APP_PROFILE_FIELDS) + " FROM app_profiles WHERE user_id=%s"
@@ -175,12 +178,27 @@ class FakeCursor:
             self._rows = [(m["role"], m["content"]) for m in rows[:limit]]
 
         # ---- moteur consultations 2 h / crédits (B4.1) ----
-        elif k == ("SELECT user_id FROM accounts WHERE user_id=%s AND deleted_at IS NULL "
-                   "FOR UPDATE"):
+        elif k == ("SELECT user_id, first_consultation_used_at FROM accounts "
+                   "WHERE user_id=%s AND deleted_at IS NULL FOR UPDATE"):
             (uid,) = p
             r = next((a for a in FAKE["accounts"]
                       if a["user_id"] == uid and a["deleted_at"] is None), None)
-            self._result = (uid,) if r else None
+            self._result = (uid, r.get("first_consultation_used_at")) if r else None
+
+        elif k == ("UPDATE accounts SET first_consultation_used_at=%s "
+                   "WHERE user_id=%s AND first_consultation_used_at IS NULL"):
+            ts, uid = p
+            r = next((a for a in FAKE["accounts"] if a["user_id"] == str(uid)), None)
+            if r is not None and r.get("first_consultation_used_at") is None:
+                r["first_consultation_used_at"] = ts
+                self.rowcount = 1
+            else:
+                self.rowcount = 0
+
+        elif k == "SELECT first_consultation_used_at FROM accounts WHERE user_id=%s":
+            (uid,) = p
+            r = next((a for a in FAKE["accounts"] if a["user_id"] == str(uid)), None)
+            self._result = (r.get("first_consultation_used_at"),) if r is not None else None
 
         elif k == ("SELECT id, advisor_id, started_at, expires_at, credit_source "
                    "FROM consultations WHERE user_id=%s AND expires_at > %s "
@@ -321,9 +339,15 @@ def _seed_premium(uid, monthly_limit=4):
                           monthly_limit=monthly_limit)
 
 
-def fresh(uid=UID1, premium=True, monthly_limit=4):
+# Marque "première gratuite DÉJÀ consommée" : par défaut les scénarios existants
+# testent le quota Premium / les earned credits comme 1re source. Passer
+# first_free=True pour un compte neuf avec sa gratuite disponible.
+_FF_USED = A._utcnow() - timedelta(days=2)
+
+
+def fresh(uid=UID1, premium=True, monthly_limit=4, first_free=False):
     reset_db()
-    seed_account(uid)
+    seed_account(uid, first_consultation_used_at=None if first_free else _FF_USED)
     if premium:
         _seed_premium(uid, monthly_limit=monthly_limit)
     return A.create_app_session(uid)
@@ -489,8 +513,9 @@ check(set(j9["consultation"].keys()) == {"id", "advisor_id", "started_at", "expi
       "9b clés consultation exactes")
 check(set(j9["quota"].keys()) == {"is_premium", "monthly_limit", "monthly_used",
                                    "monthly_remaining", "earned_available",
+                                   "first_free_available",
                                    "period_start", "period_end"},
-      "9c clés quota exactes")
+      "9c clés quota exactes (dont first_free_available)")
 check(j9["quota"]["monthly_limit"] - j9["quota"]["monthly_used"] == j9["quota"]["monthly_remaining"],
       "9d monthly_remaining cohérent avec limit - used")
 check(isinstance(j9["consultation"]["started_at"], str)
@@ -538,6 +563,65 @@ import inspect
 check(str(inspect.signature(A.get_reply)) ==
       "(phone, user_message, depuis_pub=False, user_msg_pre_inserted=False)",
       "14 get_reply(phone, ...) : signature legacy inchangée")
+
+# --- 15. PREMIÈRE CONSULTATION OFFERTE via les routes (Q2.1) --------------
+# 15a. GET /state d'un compte neuf : first_free_available=true, aucune écriture
+tok = fresh(premium=False, first_free=True)
+for _ in range(3):
+    js15 = client.get("/api/consultation/state",
+                      headers={"Authorization": f"Bearer {tok}"}).get_json()
+check(js15["quota"]["first_free_available"] is True
+      and js15["consultation"] is None
+      and len(FAKE["consultations"]) == 0,
+      "15a GET /state x3 (compte neuf) -> first_free_available true, aucune consultation")
+check(FAKE["accounts"][0]["first_consultation_used_at"] is None,
+      "15a2 GET /state n'écrit rien : first_consultation_used_at toujours NULL")
+
+# 15b. 1er POST /message -> 200, credit_source=first_free, marque posée
+with patch.object(A, "call_llm", return_value=REPLY) as m_llm15:
+    r15 = _post(tok)
+j15 = r15.get_json()
+check(r15.status_code == 200 and m_llm15.call_count == 1
+      and j15["consultation"]["credit_source"] == "first_free"
+      and j15["consultation"]["opened_now"] is True,
+      "15b 1er message -> 200, credit_source = first_free")
+check(j15["quota"]["first_free_available"] is False
+      and j15["quota"]["monthly_used"] == 0,
+      "15b2 first_free_available passe à false, monthly_used reste 0")
+check(FAKE["accounts"][0]["first_consultation_used_at"] is not None,
+      "15b3 accounts.first_consultation_used_at renseigné")
+
+# 15c. reprise pendant les 2 h -> même id, aucune 2e consommation
+with patch.object(A, "call_llm", return_value=REPLY):
+    j15c = _post(tok, "suite").get_json()
+check(j15c["consultation"]["id"] == j15["consultation"]["id"]
+      and j15c["consultation"]["opened_now"] is False
+      and len(FAKE["consultations"]) == 1,
+      "15c 2e message < 2 h -> même consultation gratuite, opened_now false")
+
+# 15d. après consommation + sans autre droit -> 402 no_credit
+_expire_active_consultations()
+with patch.object(A, "call_llm", return_value=REPLY) as m_llm15d:
+    r15d = _post(tok)
+check(r15d.status_code == 402 and r15d.get_json()["error"] == "no_credit"
+      and m_llm15d.call_count == 0
+      and r15d.get_json()["quota"]["first_free_available"] is False,
+      "15d gratuite épuisée + aucun autre droit -> 402 no_credit")
+
+# 15e. Premium neuf : la gratuite passe AVANT le quota mensuel
+tok = fresh(premium=True, first_free=True)
+with patch.object(A, "call_llm", return_value=REPLY):
+    j15e = _post(tok).get_json()
+check(j15e["consultation"]["credit_source"] == "first_free"
+      and j15e["quota"]["monthly_used"] == 0
+      and j15e["quota"]["monthly_remaining"] == 4,
+      "15e Premium neuf -> 1er message = first_free, monthly_used 0 (4 mensuelles intactes)")
+_expire_active_consultations()
+with patch.object(A, "call_llm", return_value=REPLY):
+    j15f = _post(tok).get_json()
+check(j15f["consultation"]["credit_source"] == "monthly"
+      and j15f["quota"]["monthly_used"] == 1,
+      "15f après la gratuite -> 1re Premium, monthly_used 0 -> 1")
 
 print("-" * 64)
 _total = _STATE["pass"] + _STATE["fail"]
