@@ -4703,6 +4703,11 @@ def resync_premium_entitlement(user_id, now=None):
 
     Retour : {"premium": bool, "action": <str>, "period_start": <dt|None>,
               "period_end": <dt|None>, "anomaly": <str|None>}.
+
+    Implémentation : ce wrapper public ouvre / verrouille `accounts` FOR UPDATE
+    (compte absent -> rollback + 'unknown_account') / commit / ferme sa propre
+    connexion, et délègue les étapes 2→7 à `_resync_premium_entitlement_tx`
+    (curseur-in).
     """
     if now is None:
         now = _utcnow()
@@ -4722,150 +4727,175 @@ def resync_premium_entitlement(user_id, now=None):
             return {"premium": False, "action": "unknown_account",
                     "period_start": None, "period_end": None, "anomaly": None}
 
-        # 2. abonnements -> entitled -> carrier
-        c.execute(
-            """SELECT id, current_period_start, expires_at, entitled, store
-               FROM mobile_subscriptions WHERE user_id=%s""",
-            (uid,),
-        )
-        subs = c.fetchall()
-        entitled = [s for s in subs
-                    if s[3] is True and s[1] is not None
-                    and s[2] is not None and s[2] > now]
-        # Départage TOTALEMENT déterministe : expires_at, puis store, puis id
-        # (le store et l'id ne servent QU'AU départage — aucune autre sémantique).
-        carrier = (max(entitled, key=lambda s: (s[2], s[4] or "", str(s[0])))
-                   if entitled else None)
-
-        # 3. allowances FOR UPDATE
-        c.execute(
-            """SELECT period_start, period_end, monthly_limit, monthly_used,
-                      source_subscription_id, source_period_start
-               FROM consultation_allowance WHERE user_id=%s FOR UPDATE""",
-            (uid,),
-        )
-        rows = c.fetchall()
-        actives = sorted((r for r in rows if r[0] <= now < r[1]),
-                         key=lambda r: r[0], reverse=True)
-        anomaly = "multiple_active_allowances" if len(actives) > 1 else None
-        active = actives[0] if actives else None
-        past = sorted((r for r in rows if r[0] <= now),
-                      key=lambda r: r[0], reverse=True)
-        last_lapsed = past[0] if (past and active is None) else None
-
-        # ANOMALIE : plusieurs lignes actives en même temps. On garde `active` =
-        # celle au period_start le plus récent (cohérent avec get_consultation_state
-        # ORDER BY period_start DESC LIMIT 1) et on SORT TOUTES LES AUTRES de
-        # l'état actif -> period_end = now, dans la MÊME transaction. monthly_used
-        # JAMAIS touché ; les lignes ne sont pas supprimées (historique). Après ce
-        # nettoyage, au plus UNE ligne reste active.
-        for _extra in actives[1:]:
-            c.execute(
-                "UPDATE consultation_allowance SET period_end=%s "
-                "WHERE user_id=%s AND period_start=%s",
-                (now, uid, _extra[0]),
-            )
-
-        def _shorten_active_to_now():
-            if active is not None:
-                c.execute(
-                    "UPDATE consultation_allowance SET period_end=%s "
-                    "WHERE user_id=%s AND period_start=%s",
-                    (now, uid, active[0]),
-                )
-
-        # 4. aucun entitlement actif -> Premium OFF
-        if carrier is None:
-            _shorten_active_to_now()
-            c.execute(
-                "DELETE FROM consultation_allowance "
-                "WHERE user_id=%s AND period_start > %s",
-                (uid, now),
-            )
-            conn.commit()
-            return {"premium": False, "action": "deactivated",
-                    "period_start": None, "period_end": None, "anomaly": anomaly}
-
-        c_id, c_cps, c_exp = carrier[0], carrier[1], carrier[2]
-
-        if active is not None:
-            a_ps, a_pe, _a_lim, _a_used, a_src, a_sps = active
-            same_sub = (a_src is not None and str(a_src) == str(c_id))
-            same_cycle = same_sub and a_sps is not None and a_sps == c_cps
-
-            if same_cycle:
-                if a_pe != c_exp:
-                    c.execute(
-                        "UPDATE consultation_allowance SET period_end=%s "
-                        "WHERE user_id=%s AND period_start=%s",
-                        (c_exp, uid, a_ps),
-                    )
-                    action = "aligned"
-                else:
-                    action = "noop"
-                result_ps, result_pe = a_ps, c_exp
-            elif same_sub and c_cps >= a_pe:
-                # vrai renouvellement anticipé de la MÊME porteuse : l'active reste
-                # telle quelle, la future est posée à l'étape 7.
-                action = "renewal_scheduled"
-                result_ps, result_pe = a_ps, a_pe
-            else:
-                # bascule de porteuse / adoption (source NULL) / cycle chevauchant
-                c.execute(
-                    "UPDATE consultation_allowance SET period_end=%s, "
-                    "source_subscription_id=%s, source_period_start=%s "
-                    "WHERE user_id=%s AND period_start=%s",
-                    (c_exp, c_id, c_cps, uid, a_ps),
-                )
-                action = "repointed"
-                result_ps, result_pe = a_ps, c_exp
-        else:
-            if last_lapsed is not None and c_cps < last_lapsed[1]:
-                # le cycle de la porteuse chevauche encore la dernière période
-                # -> revivre sans reset.
-                l_ps = last_lapsed[0]
-                c.execute(
-                    "UPDATE consultation_allowance SET period_end=%s, "
-                    "source_subscription_id=%s, source_period_start=%s "
-                    "WHERE user_id=%s AND period_start=%s",
-                    (c_exp, c_id, c_cps, uid, l_ps),
-                )
-                action = "revived"
-                result_ps, result_pe = l_ps, c_exp
-            else:
-                ins = _insert_allowance(
-                    c, uid, c_cps, c_exp, _PREMIUM_QUOTA, now,
-                    source_subscription_id=c_id, source_period_start=c_cps,
-                )
-                action = "provisioned" if ins else "noop"
-                result_ps, result_pe = c_cps, c_exp
-
-        # 7. FUTURE allowance : au plus une, possédée par (carrier.id, carrier.cps)
-        c.execute(
-            "DELETE FROM consultation_allowance "
-            "WHERE user_id=%s AND period_start > %s "
-            "AND (source_subscription_id IS DISTINCT FROM %s "
-            "     OR source_period_start IS DISTINCT FROM %s)",
-            (uid, now, c_id, c_cps),
-        )
-        if (active is not None
-                and active[4] is not None and str(active[4]) == str(c_id)
-                and c_cps >= active[1]
-                and c_cps > now):
-            _insert_allowance(
-                c, uid, c_cps, c_exp, _PREMIUM_QUOTA, now,
-                source_subscription_id=c_id, source_period_start=c_cps,
-            )
-
+        result = _resync_premium_entitlement_tx(c, uid, now)
         conn.commit()
-        return {"premium": True, "action": action,
-                "period_start": result_ps, "period_end": result_pe,
-                "anomaly": anomaly}
+        return result
     except Exception:
         conn.rollback()
         raise
     finally:
         conn.close()
+
+
+def _resync_premium_entitlement_tx(cursor, user_id, now):
+    """Cœur transactionnel de resync_premium_entitlement (étapes 2→7) sur un
+    curseur DÉJÀ ouvert (curseur-in).
+
+    PRÉCONDITION : la ligne `accounts` de `user_id` est DÉJÀ verrouillée
+    FOR UPDATE par l'appelant. Ce helper NE RELOCK PAS accounts et ne vérifie
+    PAS l'existence du compte (le wrapper public / le chemin atomique l'ont
+    fait).
+
+    N'ouvre AUCUNE connexion, ne fait NI commit NI rollback NI close : la
+    transaction (et donc tout ROLLBACK) appartient à l'appelant. Le seul verrou
+    pris ici est `consultation_allowance` (user) FOR UPDATE — jamais avant
+    accounts ni mobile_subscriptions.
+
+    Invariants identiques à resync_premium_entitlement : ne touche JAMAIS
+    monthly_used, monthly_limit, le period_start d'une ligne existante,
+    mobile_subscriptions, earned_credits, accounts.first_consultation_used_at.
+    Retour identique.
+    """
+    c = cursor
+    uid = str(user_id)
+
+    # 2. abonnements -> entitled -> carrier
+    c.execute(
+        """SELECT id, current_period_start, expires_at, entitled, store
+           FROM mobile_subscriptions WHERE user_id=%s""",
+        (uid,),
+    )
+    subs = c.fetchall()
+    entitled = [s for s in subs
+                if s[3] is True and s[1] is not None
+                and s[2] is not None and s[2] > now]
+    # Départage TOTALEMENT déterministe : expires_at, puis store, puis id
+    # (le store et l'id ne servent QU'AU départage — aucune autre sémantique).
+    carrier = (max(entitled, key=lambda s: (s[2], s[4] or "", str(s[0])))
+               if entitled else None)
+
+    # 3. allowances FOR UPDATE
+    c.execute(
+        """SELECT period_start, period_end, monthly_limit, monthly_used,
+                  source_subscription_id, source_period_start
+           FROM consultation_allowance WHERE user_id=%s FOR UPDATE""",
+        (uid,),
+    )
+    rows = c.fetchall()
+    actives = sorted((r for r in rows if r[0] <= now < r[1]),
+                     key=lambda r: r[0], reverse=True)
+    anomaly = "multiple_active_allowances" if len(actives) > 1 else None
+    active = actives[0] if actives else None
+    past = sorted((r for r in rows if r[0] <= now),
+                  key=lambda r: r[0], reverse=True)
+    last_lapsed = past[0] if (past and active is None) else None
+
+    # ANOMALIE : plusieurs lignes actives en même temps. On garde `active` =
+    # celle au period_start le plus récent (cohérent avec get_consultation_state
+    # ORDER BY period_start DESC LIMIT 1) et on SORT TOUTES LES AUTRES de
+    # l'état actif -> period_end = now, dans la MÊME transaction. monthly_used
+    # JAMAIS touché ; les lignes ne sont pas supprimées (historique). Après ce
+    # nettoyage, au plus UNE ligne reste active.
+    for _extra in actives[1:]:
+        c.execute(
+            "UPDATE consultation_allowance SET period_end=%s "
+            "WHERE user_id=%s AND period_start=%s",
+            (now, uid, _extra[0]),
+        )
+
+    def _shorten_active_to_now():
+        if active is not None:
+            c.execute(
+                "UPDATE consultation_allowance SET period_end=%s "
+                "WHERE user_id=%s AND period_start=%s",
+                (now, uid, active[0]),
+            )
+
+    # 4. aucun entitlement actif -> Premium OFF
+    if carrier is None:
+        _shorten_active_to_now()
+        c.execute(
+            "DELETE FROM consultation_allowance "
+            "WHERE user_id=%s AND period_start > %s",
+            (uid, now),
+        )
+        return {"premium": False, "action": "deactivated",
+                "period_start": None, "period_end": None, "anomaly": anomaly}
+
+    c_id, c_cps, c_exp = carrier[0], carrier[1], carrier[2]
+
+    if active is not None:
+        a_ps, a_pe, _a_lim, _a_used, a_src, a_sps = active
+        same_sub = (a_src is not None and str(a_src) == str(c_id))
+        same_cycle = same_sub and a_sps is not None and a_sps == c_cps
+
+        if same_cycle:
+            if a_pe != c_exp:
+                c.execute(
+                    "UPDATE consultation_allowance SET period_end=%s "
+                    "WHERE user_id=%s AND period_start=%s",
+                    (c_exp, uid, a_ps),
+                )
+                action = "aligned"
+            else:
+                action = "noop"
+            result_ps, result_pe = a_ps, c_exp
+        elif same_sub and c_cps >= a_pe:
+            # vrai renouvellement anticipé de la MÊME porteuse : l'active reste
+            # telle quelle, la future est posée à l'étape 7.
+            action = "renewal_scheduled"
+            result_ps, result_pe = a_ps, a_pe
+        else:
+            # bascule de porteuse / adoption (source NULL) / cycle chevauchant
+            c.execute(
+                "UPDATE consultation_allowance SET period_end=%s, "
+                "source_subscription_id=%s, source_period_start=%s "
+                "WHERE user_id=%s AND period_start=%s",
+                (c_exp, c_id, c_cps, uid, a_ps),
+            )
+            action = "repointed"
+            result_ps, result_pe = a_ps, c_exp
+    else:
+        if last_lapsed is not None and c_cps < last_lapsed[1]:
+            # le cycle de la porteuse chevauche encore la dernière période
+            # -> revivre sans reset.
+            l_ps = last_lapsed[0]
+            c.execute(
+                "UPDATE consultation_allowance SET period_end=%s, "
+                "source_subscription_id=%s, source_period_start=%s "
+                "WHERE user_id=%s AND period_start=%s",
+                (c_exp, c_id, c_cps, uid, l_ps),
+            )
+            action = "revived"
+            result_ps, result_pe = l_ps, c_exp
+        else:
+            ins = _insert_allowance(
+                c, uid, c_cps, c_exp, _PREMIUM_QUOTA, now,
+                source_subscription_id=c_id, source_period_start=c_cps,
+            )
+            action = "provisioned" if ins else "noop"
+            result_ps, result_pe = c_cps, c_exp
+
+    # 7. FUTURE allowance : au plus une, possédée par (carrier.id, carrier.cps)
+    c.execute(
+        "DELETE FROM consultation_allowance "
+        "WHERE user_id=%s AND period_start > %s "
+        "AND (source_subscription_id IS DISTINCT FROM %s "
+        "     OR source_period_start IS DISTINCT FROM %s)",
+        (uid, now, c_id, c_cps),
+    )
+    if (active is not None
+            and active[4] is not None and str(active[4]) == str(c_id)
+            and c_cps >= active[1]
+            and c_cps > now):
+        _insert_allowance(
+            c, uid, c_cps, c_exp, _PREMIUM_QUOTA, now,
+            source_subscription_id=c_id, source_period_start=c_cps,
+        )
+
+    return {"premium": True, "action": action,
+            "period_start": result_ps, "period_end": result_pe,
+            "anomaly": anomaly}
 
 
 def grant_earned_credit(user_id, source, metadata=None, now=None):
@@ -5280,7 +5310,46 @@ def record_mobile_subscription(user_id, store, product_id, subscription_key,
 
     Ne logge jamais subscription_key ni latest_transaction_id en clair
     (cette fonction ne logge rien).
+
+    Implémentation : ce wrapper public ouvre / commit / ferme sa propre
+    connexion et délègue toute la logique DB à `_record_mobile_subscription_tx`
+    (curseur-in). Contrat public inchangé.
     """
+    if now is None:
+        now = _utcnow()
+    conn = get_conn()
+    try:
+        c = conn.cursor()
+        result = _record_mobile_subscription_tx(
+            c, user_id, store, product_id, subscription_key, latest_transaction_id,
+            status, entitled, purchased_at, current_period_start, expires_at,
+            auto_renewing, raw_payload, now=now)
+        conn.commit()
+        return result
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        conn.close()
+
+
+def _record_mobile_subscription_tx(cursor, user_id, store, product_id, subscription_key,
+                                   latest_transaction_id, status, entitled, purchased_at,
+                                   current_period_start, expires_at, auto_renewing,
+                                   raw_payload, now=None):
+    """Cœur transactionnel de record_mobile_subscription sur un curseur DÉJÀ
+    ouvert (curseur-in). N'ouvre AUCUNE connexion, ne fait NI commit NI
+    rollback NI close : la transaction (et donc tout ROLLBACK) appartient à
+    l'appelant. `account_mismatch` / `write_conflict` LÈVENT
+    MobileSubscriptionError SANS rollback — c'est le wrapper transactionnel qui
+    annule.
+
+    Verrou pris ici : mobile_subscriptions (store, subscription_key) FOR UPDATE.
+    Le mutex `accounts` FOR UPDATE, requis sur le chemin atomique, est pris par
+    l'appelant AVANT cet appel.
+
+    Validation / idempotence / valeur de retour identiques à
+    record_mobile_subscription (voir sa docstring)."""
     if now is None:
         now = _utcnow()
 
@@ -5315,66 +5384,125 @@ def record_mobile_subscription(user_id, store, product_id, subscription_key,
 
     payload_json = _json.dumps(raw_payload) if raw_payload is not None else None
 
+    existing = _mobile_sub_locked(cursor, store, sub_key)
+    if existing is not None:
+        existing_id, existing_uid = existing
+        if str(existing_uid) != uid:
+            raise MobileSubscriptionError(
+                "account_mismatch",
+                "abonnement déjà rattaché à un autre compte")
+        # purchased_at N'EST PAS transmis ici -> jamais modifié après création.
+        _mobile_sub_update_evolving(
+            cursor, existing_id, product_id, latest_transaction_id, status_norm,
+            entitled, current_period_start, expires_at, auto_renewing,
+            payload_json, now)
+        return {"outcome": "updated", "id": str(existing_id),
+                "store": store, "status": status_norm}
+
+    new_id = str(uuid.uuid4())
+    cursor.execute(
+        """INSERT INTO mobile_subscriptions
+               (id, user_id, store, product_id, subscription_key,
+                latest_transaction_id, status, entitled, purchased_at,
+                current_period_start, expires_at, auto_renewing,
+                last_verified_at, raw_payload, created_at, updated_at)
+           VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+           ON CONFLICT (store, subscription_key) DO NOTHING""",
+        (new_id, uid, store, product_id, sub_key, latest_transaction_id,
+         status_norm, entitled, purchased_at, current_period_start, expires_at,
+         auto_renewing, now, payload_json, now, now),
+    )
+    if cursor.rowcount == 1:
+        return {"outcome": "created", "id": new_id,
+                "store": store, "status": status_norm}
+
+    # rowcount 0 : une transaction concurrente a inséré la même
+    # (store, subscription_key) entre notre SELECT et notre INSERT.
+    # On relit SOUS VERROU pour trancher l'appartenance — jamais de
+    # rattachement silencieux à un 2e compte.
+    existing = _mobile_sub_locked(cursor, store, sub_key)
+    if existing is None:
+        raise MobileSubscriptionError(
+            "write_conflict", "ligne introuvable après conflit d'écriture")
+    existing_id, existing_uid = existing
+    if str(existing_uid) != uid:
+        raise MobileSubscriptionError(
+            "account_mismatch", "abonnement déjà rattaché à un autre compte")
+    _mobile_sub_update_evolving(
+        cursor, existing_id, product_id, latest_transaction_id, status_norm,
+        entitled, current_period_start, expires_at, auto_renewing,
+        payload_json, now)
+    return {"outcome": "updated", "id": str(existing_id),
+            "store": store, "status": status_norm}
+
+
+# ------------------------------------------------------------
+# CHEMIN ATOMIQUE record + resync  (POST /api/billing/verify)
+#
+# INVARIANT DE VERROUILLAGE — tout chemin qui écrit à la fois
+# mobile_subscriptions ET consultation_allowance dans UNE transaction prend les
+# verrous DANS CET ORDRE, jamais l'inverse :
+#     1. accounts               FOR UPDATE   (mutex par utilisateur)
+#     2. mobile_subscriptions   FOR UPDATE   (ligne (store, subscription_key))
+#     3. consultation_allowance FOR UPDATE   (projection quota)
+# UNE connexion, UNE transaction, UN commit. AUCUN appel réseau ici : la
+# vérification store (Google/Apple) a eu lieu AVANT ; l'acknowledge Google a
+# lieu APRÈS le commit, hors transaction.
+# ------------------------------------------------------------
+
+def record_and_resync_mobile_subscription(user_id, store, product_id, subscription_key,
+                                          latest_transaction_id, status, entitled,
+                                          purchased_at, current_period_start, expires_at,
+                                          auto_renewing, raw_payload, now=None):
+    """Enregistre l'abonnement DÉJÀ vérifié PUIS re-projette le quota Premium
+    dans UNE SEULE transaction DB :
+
+        store vérifié -> BEGIN -> lock compte -> record subscription
+                      -> resync quota -> COMMIT
+
+    Si record OU resync échoue : ROLLBACK GLOBAL, aucune demi-écriture (ni
+    ligne mobile_subscriptions, ni ligne consultation_allowance).
+
+    Une seule connexion, un seul commit. AUCUN appel réseau (Google/Apple déjà
+    vérifiés en amont ; l'acknowledge Google se fait APRÈS le commit, hors
+    transaction, à la charge de l'appelant).
+
+    Retour : {"subscription": <record_result>, "resync": <resync_result>}.
+    Lève MobileSubscriptionError (échec record) ou toute autre exception
+    (échec resync) APRÈS avoir exécuté un ROLLBACK global."""
+    if now is None:
+        now = _utcnow()
+    uid = str(user_id)
     conn = get_conn()
     try:
         c = conn.cursor()
 
-        existing = _mobile_sub_locked(c, store, sub_key)
-        if existing is not None:
-            existing_id, existing_uid = existing
-            if str(existing_uid) != uid:
-                conn.rollback()
-                raise MobileSubscriptionError(
-                    "account_mismatch",
-                    "abonnement déjà rattaché à un autre compte")
-            # purchased_at N'EST PAS transmis ici -> jamais modifié après création.
-            _mobile_sub_update_evolving(
-                c, existing_id, product_id, latest_transaction_id, status_norm,
-                entitled, current_period_start, expires_at, auto_renewing,
-                payload_json, now)
-            conn.commit()
-            return {"outcome": "updated", "id": str(existing_id),
-                    "store": store, "status": status_norm}
-
-        new_id = str(uuid.uuid4())
+        # 1. mutex par utilisateur — pris AVANT toute écriture sub / quota.
         c.execute(
-            """INSERT INTO mobile_subscriptions
-                   (id, user_id, store, product_id, subscription_key,
-                    latest_transaction_id, status, entitled, purchased_at,
-                    current_period_start, expires_at, auto_renewing,
-                    last_verified_at, raw_payload, created_at, updated_at)
-               VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
-               ON CONFLICT (store, subscription_key) DO NOTHING""",
-            (new_id, uid, store, product_id, sub_key, latest_transaction_id,
-             status_norm, entitled, purchased_at, current_period_start, expires_at,
-             auto_renewing, now, payload_json, now, now),
+            "SELECT user_id FROM accounts "
+            "WHERE user_id=%s AND deleted_at IS NULL FOR UPDATE",
+            (uid,),
         )
-        if c.rowcount == 1:
-            conn.commit()
-            return {"outcome": "created", "id": new_id,
-                    "store": store, "status": status_norm}
+        if c.fetchone() is None:
+            conn.rollback()
+            # require_app_auth garantit un compte valide en amont de la route ;
+            # ce cas reste défensif. 'account_mismatch' -> 409 via
+            # _MOBILE_SUB_ERR_HTTP.
+            raise MobileSubscriptionError(
+                "account_mismatch", "compte introuvable ou supprimé")
 
-        # rowcount 0 : une transaction concurrente a inséré la même
-        # (store, subscription_key) entre notre SELECT et notre INSERT.
-        # On relit SOUS VERROU pour trancher l'appartenance — jamais de
-        # rattachement silencieux à un 2e compte.
-        existing = _mobile_sub_locked(c, store, sub_key)
-        if existing is None:
-            conn.rollback()
-            raise MobileSubscriptionError(
-                "write_conflict", "ligne introuvable après conflit d'écriture")
-        existing_id, existing_uid = existing
-        if str(existing_uid) != uid:
-            conn.rollback()
-            raise MobileSubscriptionError(
-                "account_mismatch", "abonnement déjà rattaché à un autre compte")
-        _mobile_sub_update_evolving(
-            c, existing_id, product_id, latest_transaction_id, status_norm,
-            entitled, current_period_start, expires_at, auto_renewing,
-            payload_json, now)
+        # 2. mobile_subscriptions (store, subscription_key) FOR UPDATE + INSERT/UPDATE
+        record_result = _record_mobile_subscription_tx(
+            c, uid, store, product_id, subscription_key, latest_transaction_id,
+            status, entitled, purchased_at, current_period_start, expires_at,
+            auto_renewing, raw_payload, now=now)
+
+        # 3. consultation_allowance FOR UPDATE + re-projection quota
+        #    (le compte est DÉJÀ verrouillé à l'étape 1).
+        resync_result = _resync_premium_entitlement_tx(c, uid, now)
+
         conn.commit()
-        return {"outcome": "updated", "id": str(existing_id),
-                "store": store, "status": status_norm}
+        return {"subscription": record_result, "resync": resync_result}
     except Exception:
         conn.rollback()
         raise
@@ -5390,8 +5518,9 @@ def record_mobile_subscription(user_id, store, product_id, subscription_key,
 # Le backend vérifie cette référence auprès du store officiel
 # (Google Play Developer API / App Store Server API), NORMALISE le
 # résultat, puis :
-#   record_mobile_subscription(...)  -> mobile_subscriptions (source de vérité)
-#   resync_premium_entitlement(...)  -> consultation_allowance (projection quota)
+#   record_and_resync_mobile_subscription(...) -> mobile_subscriptions (source
+#       de vérité) + consultation_allowance (projection quota) dans UNE SEULE
+#       transaction DB (rollback global si l'un échoue).
 #   get_consultation_state(...)      -> quota renvoyé au client
 #
 # RÈGLES ABSOLUES :
@@ -6161,9 +6290,11 @@ def api_billing_verify():
     if normalized is None:
         return _auth_json({"error": ctx["error"]}, 400)
 
-    # 2) Réconciliation dans mobile_subscriptions (source de vérité).
+    # 2) Réconciliation mobile_subscriptions + re-projection du quota Premium
+    #    dans UNE SEULE transaction DB (rollback global si record OU resync
+    #    échoue — jamais de demi-écriture). AUCUN appel réseau ici.
     try:
-        record_mobile_subscription(
+        record_and_resync_mobile_subscription(
             user_id=user_id,
             store=normalized["store"],
             product_id=normalized["product_id"],
@@ -6180,10 +6311,13 @@ def api_billing_verify():
     except MobileSubscriptionError as exc:
         return _auth_json({"error": exc.code},
                           _MOBILE_SUB_ERR_HTTP.get(exc.code, 400))
+    except Exception:
+        print("[billing] échec transaction record+resync user=%s"
+              % _billing_mask(str(user_id)))
+        return _auth_json({"error": "internal_error"}, 500)
 
-    # 3) Re-projection du quota Premium + 4) acknowledge Google + 5) état.
+    # 3) acknowledge Google (RÉSEAU — HORS transaction DB) + 4) état renvoyé.
     try:
-        resync_premium_entitlement(user_id)
         if ctx.get("store") == "google_play":
             _google_acknowledge_subscription(
                 ctx["purchase_token"], product_id,
@@ -6191,12 +6325,12 @@ def api_billing_verify():
             )
         state = get_consultation_state(user_id)
     except StoreVerificationError as exc:
-        # L'entitlement local est déjà accordé : le client rejouera
+        # L'entitlement local est déjà COMMITTÉ : le client rejouera
         # /api/billing/verify (record + resync idempotents, pas de double quota).
         status = 503 if exc.retryable else 422
         return _auth_json({"error": exc.code}, status)
     except Exception:
-        print("[billing] erreur post-vérification (resync/state) user=%s" % _billing_mask(str(user_id)))
+        print("[billing] erreur post-commit (ack/state) user=%s" % _billing_mask(str(user_id)))
         return _auth_json({"error": "internal_error"}, 500)
 
     return _auth_json({

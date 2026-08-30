@@ -132,8 +132,28 @@ def fake_ack(purchase_token, product_id, ack_state=None):
     return {"acknowledged": True}
 
 
+def fake_record_and_resync(**kw):
+    """Compose fake_record + fake_resync avec la sémantique ATOMIQUE réelle :
+    si le resync échoue APRÈS l'INSERT/UPDATE de la subscription, la mutation
+    du record est ANNULÉE (rollback global) — aucune demi-écriture."""
+    import copy
+    user_id = kw["user_id"]
+    subs_before = copy.deepcopy(MEM["subs"])
+    resync_len_before = len(MEM["resync"])
+    rec = fake_record(**kw)                       # MobileSubscriptionError = pré-écriture
+    try:
+        res = fake_resync(user_id, now=kw.get("now"))
+    except Exception:
+        MEM["subs"].clear()
+        MEM["subs"].update(subs_before)           # la ligne record disparaît
+        del MEM["resync"][resync_len_before:]     # aucune trace resync
+        raise
+    return {"subscription": rec, "resync": res}
+
+
 A.record_mobile_subscription = fake_record
 A.resync_premium_entitlement = fake_resync
+A.record_and_resync_mobile_subscription = fake_record_and_resync
 A.get_consultation_state = fake_state
 A._google_acknowledge_subscription = fake_ack
 
@@ -318,8 +338,9 @@ with patch.object(A, "_google_verify_subscription", return_value=_norm()):
     r = _post(G_BODY)
 check(r.status_code == 500 and r.get_json().get("error") == "internal_error",
       "15 exception dans resync -> 500 internal_error")
-check(len(MEM["subs"]) == 1,
-      "15b record a bien eu lieu avant l'échec resync (retry client = idempotent)")
+check(len(MEM["subs"]) == 0 and MEM["resync"] == [],
+      "15b ROLLBACK GLOBAL : échec resync -> la subscription n'est PAS committée "
+      "(retry client rejoue record+resync, idempotent)")
 check("no-store" in r.headers.get("Cache-Control", ""), "15c 500 -> Cache-Control: no-store")
 
 _reset_mem()

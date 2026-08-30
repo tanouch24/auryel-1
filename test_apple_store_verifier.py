@@ -547,6 +547,9 @@ _rec, _res = [], []
 A.record_mobile_subscription = lambda **kw: _rec.append(kw) or {
     "outcome": "created", "id": "s1", "store": kw["store"], "status": kw["status"]}
 A.resync_premium_entitlement = lambda uid, now=None: _res.append(uid)
+A.record_and_resync_mobile_subscription = lambda **kw: {
+    "subscription": A.record_mobile_subscription(**kw),
+    "resync": A.resync_premium_entitlement(kw["user_id"], now=kw.get("now"))}
 A.get_consultation_state = lambda uid, now=None: {"consultation": None, "quota": {
     "is_premium": True, "monthly_limit": 4, "monthly_used": 0, "monthly_remaining": 4,
     "earned_available": 0, "first_free_available": True, "period_start": NOW,
