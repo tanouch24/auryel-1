@@ -5383,6 +5383,835 @@ def record_mobile_subscription(user_id, store, product_id, subscription_key,
 
 
 # ============================================================
+# BILLING MOBILE (B4) — vérification store + POST /api/billing/verify
+#
+# Chaîne : le client Flutter envoie une RÉFÉRENCE OPAQUE d'achat
+# (purchase_token Android / transaction_id iOS) + store + product_id.
+# Le backend vérifie cette référence auprès du store officiel
+# (Google Play Developer API / App Store Server API), NORMALISE le
+# résultat, puis :
+#   record_mobile_subscription(...)  -> mobile_subscriptions (source de vérité)
+#   resync_premium_entitlement(...)  -> consultation_allowance (projection quota)
+#   get_consultation_state(...)      -> quota renvoyé au client
+#
+# RÈGLES ABSOLUES :
+#   - AUCUNE donnée du body client ne détermine l'entitlement : entitled,
+#     status, dates de période, subscription_key, etc. viennent TOUJOURS du
+#     vérificateur store.
+#   - entitled = booléen STRICT calculé côté serveur.
+#   - current_period_start / expires_at viennent du store, jamais now().
+#   - Apple : la signature JWS + la chaîne x5c sont TOUJOURS vérifiées
+#     cryptographiquement (app-store-server-library / SignedDataVerifier).
+#     Jamais de verify_signature=False, jamais d'environnement Xcode/LocalTesting.
+#   - Aucun secret, aucune clé, aucun token complet en clair (logs / raw_payload).
+#   - Aucun appel réseau réel dans les tests (interfaces isolées et mockées).
+# ============================================================
+
+_STORE_HTTP_TIMEOUT = 10  # secondes — borne dure sur tout appel store sortant
+
+# Google Play Developer API v3
+_GP_API_ROOT = "https://androidpublisher.googleapis.com/androidpublisher/v3"
+_GP_SCOPE = "https://www.googleapis.com/auth/androidpublisher"
+# subscriptionState (purchases.subscriptionsv2) qui, sous réserve d'une
+# expiryTime encore dans le futur, donnent droit à Premium.
+_GP_ENTITLING_STATES = frozenset({
+    "SUBSCRIPTION_STATE_ACTIVE",
+    "SUBSCRIPTION_STATE_IN_GRACE_PERIOD",
+    "SUBSCRIPTION_STATE_CANCELED",   # résilié mais encore payé jusqu'à expiryTime
+})
+
+_NORMALIZED_SUBSCRIPTION_KEYS = (
+    "store", "product_id", "subscription_key", "latest_transaction_id",
+    "status", "entitled", "purchased_at", "current_period_start",
+    "expires_at", "auto_renewing", "raw_payload",
+)
+
+
+class StoreVerificationError(Exception):
+    """Échec de vérification d'un achat auprès du store. `code` stable pour le
+    mapping HTTP de la route ; `retryable` indique si un nouvel essai client a
+    une chance d'aboutir (-> 503) ou non (-> 422).
+
+    Codes :
+      - 'invalid_store_receipt'          : le store a répondu mais la référence
+                                           est invalide / inconnue / illisible
+                                           (bundleId étranger, JWS non vérifiable,
+                                           token 404…). NON retryable.
+      - 'product_mismatch'               : l'achat vérifié ne porte pas le
+                                           product_id attendu. NON retryable.
+      - 'store_verification_unavailable' : store injoignable / 5xx / 429 / auth
+                                           serveur refusée / timeout. Retryable.
+      - 'verification_not_configured'    : configuration serveur absente
+                                           (credentials / certificats racine).
+                                           Retryable (côté ops).
+    Le message brut du store n'est JAMAIS propagé au client.
+    """
+
+    _RETRYABLE = frozenset({"store_verification_unavailable", "verification_not_configured"})
+
+    def __init__(self, code, message="", retryable=None):
+        super().__init__(message or code)
+        self.code = code
+        self.retryable = self._RETRYABLE.__contains__(code) if retryable is None else bool(retryable)
+
+
+# ------------------------------------------------------------
+# Helpers communs
+# ------------------------------------------------------------
+
+def _billing_parse_rfc3339(value):
+    """RFC3339 / ISO-8601 -> datetime timezone-aware UTC. None si non parsable.
+    Accepte le suffixe 'Z' et un datetime déjà construit (rendu tz-aware UTC)."""
+    if value is None:
+        return None
+    if isinstance(value, datetime):
+        return value.astimezone(timezone.utc) if value.tzinfo else value.replace(tzinfo=timezone.utc)
+    if not isinstance(value, str) or not value.strip():
+        return None
+    s = value.strip()
+    if s[-1] in ("Z", "z"):
+        s = s[:-1] + "+00:00"
+    try:
+        dt = datetime.fromisoformat(s)
+    except ValueError:
+        return None
+    return dt.astimezone(timezone.utc) if dt.tzinfo else dt.replace(tzinfo=timezone.utc)
+
+
+def _billing_parse_epoch_millis(value):
+    """Millisecondes epoch (int / str numérique) -> datetime tz-aware UTC.
+    None si absent / non numérique. `bool` est refusé explicitement."""
+    if value is None or isinstance(value, bool):
+        return None
+    if isinstance(value, datetime):
+        return value.astimezone(timezone.utc) if value.tzinfo else value.replace(tzinfo=timezone.utc)
+    try:
+        ms = int(value)
+    except (TypeError, ValueError):
+        return None
+    return datetime.fromtimestamp(ms / 1000.0, tz=timezone.utc)
+
+
+def _billing_mask(token):
+    """Représentation NON réversible d'un token/identifiant pour les logs :
+    jamais la valeur en clair. '****' + 4 derniers caractères."""
+    if not token or not isinstance(token, str):
+        return "<none>"
+    return "****" if len(token) <= 4 else "****" + token[-4:]
+
+
+def _assert_normalized_subscription(d):
+    """Garde-fou : la structure produite par un vérificateur store DOIT être
+    exactement le contrat attendu par record_mobile_subscription. Toute
+    déviation = donnée store inexploitable -> 'invalid_store_receipt' (on ne
+    fabrique jamais une valeur manquante)."""
+    if not isinstance(d, dict) or set(d) != set(_NORMALIZED_SUBSCRIPTION_KEYS):
+        raise StoreVerificationError("invalid_store_receipt", "structure normalisée non conforme")
+    if d["store"] not in _MOBILE_STORES:
+        raise StoreVerificationError("invalid_store_receipt", "store normalisé inattendu")
+    for k in ("product_id", "subscription_key", "status"):
+        if not isinstance(d[k], str) or not d[k].strip():
+            raise StoreVerificationError("invalid_store_receipt", f"{k} normalisé vide")
+    if not isinstance(d["entitled"], bool):
+        raise StoreVerificationError("invalid_store_receipt", "entitled normalisé non booléen")
+    for k in ("current_period_start", "expires_at"):
+        v = d[k]
+        if not isinstance(v, datetime) or v.tzinfo is None:
+            raise StoreVerificationError("invalid_store_receipt", f"{k} normalisé absent / non tz-aware")
+    if d["purchased_at"] is not None and (
+            not isinstance(d["purchased_at"], datetime) or d["purchased_at"].tzinfo is None):
+        raise StoreVerificationError("invalid_store_receipt", "purchased_at normalisé non tz-aware")
+    if d["latest_transaction_id"] is not None and not isinstance(d["latest_transaction_id"], str):
+        raise StoreVerificationError("invalid_store_receipt", "latest_transaction_id normalisé invalide")
+    if d["auto_renewing"] is not None and not isinstance(d["auto_renewing"], bool):
+        raise StoreVerificationError("invalid_store_receipt", "auto_renewing normalisé invalide")
+    if d["raw_payload"] is not None and not isinstance(d["raw_payload"], dict):
+        raise StoreVerificationError("invalid_store_receipt", "raw_payload normalisé invalide")
+    return d
+
+
+# ------------------------------------------------------------
+# GOOGLE PLAY — purchases.subscriptionsv2.get + orders.get + :acknowledge
+# ------------------------------------------------------------
+
+def _google_service_account_info():
+    """Contenu du service account Google (dict). GOOGLE_SERVICE_ACCOUNT_JSON
+    accepte soit le JSON inline, soit un chemin de fichier. Ne logge JAMAIS
+    la valeur. verification_not_configured si absent / illisible."""
+    raw = os.environ.get("GOOGLE_SERVICE_ACCOUNT_JSON", "").strip()
+    if not raw:
+        raise StoreVerificationError("verification_not_configured",
+                                     "GOOGLE_SERVICE_ACCOUNT_JSON absent")
+    if raw.startswith("{"):
+        try:
+            return _json.loads(raw)
+        except ValueError:
+            raise StoreVerificationError("verification_not_configured",
+                                         "GOOGLE_SERVICE_ACCOUNT_JSON illisible")
+    if os.path.isfile(raw):
+        try:
+            with open(raw, encoding="utf-8") as fh:
+                return _json.load(fh)
+        except (OSError, ValueError):
+            raise StoreVerificationError("verification_not_configured",
+                                         "fichier service account illisible")
+    raise StoreVerificationError("verification_not_configured",
+                                 "GOOGLE_SERVICE_ACCOUNT_JSON ni JSON inline ni fichier")
+
+
+def _google_access_token():
+    """Jeton OAuth2 d'accès (scope androidpublisher) via google-auth. Isolé
+    pour être mockable en test. Jamais loggé."""
+    try:
+        from google.oauth2 import service_account as _gsa
+        from google.auth.transport.requests import Request as _GAuthRequest
+    except ImportError:
+        raise StoreVerificationError("verification_not_configured",
+                                     "google-auth non installé")
+    info = _google_service_account_info()
+    try:
+        creds = _gsa.Credentials.from_service_account_info(info, scopes=[_GP_SCOPE])
+        creds.refresh(_GAuthRequest())
+    except StoreVerificationError:
+        raise
+    except Exception:
+        raise StoreVerificationError("store_verification_unavailable",
+                                     "échec obtention du jeton Google", retryable=True)
+    if not creds.token:
+        raise StoreVerificationError("store_verification_unavailable",
+                                     "jeton Google vide", retryable=True)
+    return creds.token
+
+
+def _google_api_request(method, path, body=None):
+    """Appel authentifié à la Google Play Developer API. `path` est relatif à
+    _GP_API_ROOT. Retourne (status_code:int, json_body|None). Lève
+    StoreVerificationError seulement pour un échec de transport / d'auth
+    serveur (retryable) : le mapping des codes HTTP applicatifs est fait par
+    l'appelant. Timeout borné. Isolé pour être mocké en test."""
+    token = _google_access_token()
+    url = _GP_API_ROOT + path
+    try:
+        resp = requests.request(
+            method, url,
+            headers={"Authorization": "Bearer " + token},
+            json=body,
+            timeout=_STORE_HTTP_TIMEOUT,
+        )
+    except requests.RequestException:
+        raise StoreVerificationError("store_verification_unavailable",
+                                     "Google Play injoignable", retryable=True)
+    try:
+        payload = resp.json() if resp.content else None
+    except ValueError:
+        payload = None
+    return resp.status_code, payload
+
+
+def _google_status_to_http(status_code):
+    """Traduit un code HTTP Google en StoreVerificationError (ou None si 2xx)."""
+    if 200 <= status_code < 300:
+        return None
+    if status_code == 404:
+        return StoreVerificationError("invalid_store_receipt", "achat Google inconnu")
+    if status_code in (401, 403):
+        return StoreVerificationError("store_verification_unavailable",
+                                      "auth Google refusée", retryable=True)
+    if status_code == 429 or status_code >= 500:
+        return StoreVerificationError("store_verification_unavailable",
+                                      "Google Play indisponible", retryable=True)
+    return StoreVerificationError("invalid_store_receipt",
+                                  "réponse Google inattendue (%d)" % status_code)
+
+
+def _google_pick_line_item(sub_body, expected_product_id):
+    """Le lineItem du produit attendu. product_mismatch si aucun ne correspond."""
+    for li in (sub_body.get("lineItems") or []):
+        if isinstance(li, dict) and li.get("productId") == expected_product_id:
+            return li
+    raise StoreVerificationError("product_mismatch",
+                                 "aucun lineItem au product_id attendu")
+
+
+def _google_entitled(state, expires_at, now):
+    """Décision d'entitlement Google, calculée CÔTÉ SERVEUR.
+      ACTIVE / IN_GRACE_PERIOD / CANCELED  -> True SI expires_at > now
+      ON_HOLD / PAUSED / EXPIRED / PENDING / inconnu -> False
+    (IN_GRACE_PERIOD : l'utilisateur garde l'accès ; ON_HOLD : accès suspendu.)"""
+    if expires_at is None or expires_at <= now:
+        return False
+    return state in _GP_ENTITLING_STATES
+
+
+def _google_normalize(sub_body, order_body, purchase_token, expected_product_id, now):
+    """SubscriptionPurchaseV2 (+ Order du cycle courant) -> structure normalisée.
+    Pur : aucun réseau. `order_body` fournit createTime = début du cycle COURANT
+    (avance à chaque renouvellement) ; jamais expires_at - 30 j."""
+    if not isinstance(sub_body, dict):
+        raise StoreVerificationError("invalid_store_receipt", "corps subscriptionsv2 absent")
+
+    line_item = _google_pick_line_item(sub_body, expected_product_id)
+    state = sub_body.get("subscriptionState") or ""
+    expires_at = _billing_parse_rfc3339(line_item.get("expiryTime"))
+    if expires_at is None:
+        raise StoreVerificationError("invalid_store_receipt", "expiryTime Google absent")
+
+    # current_period_start : createTime de l'Order du cycle courant, résolu via
+    # latestSuccessfulOrderId du lineItem (seul champ documenté par
+    # SubscriptionPurchaseLineItem V2 ; latestOrderId n'existe pas). Jamais
+    # expires_at - 30 j.
+    current_period_start = _billing_parse_rfc3339((order_body or {}).get("createTime"))
+    if current_period_start is None:
+        raise StoreVerificationError("invalid_store_receipt",
+                                     "createTime de l'Order courant introuvable")
+
+    auto_plan = line_item.get("autoRenewingPlan")
+    auto_renewing = None
+    if isinstance(auto_plan, dict) and isinstance(auto_plan.get("autoRenewEnabled"), bool):
+        auto_renewing = auto_plan["autoRenewEnabled"]
+
+    ack_state = sub_body.get("acknowledgementState") or ""
+
+    normalized = {
+        "store": "google_play",
+        "product_id": line_item.get("productId") or expected_product_id,
+        "subscription_key": purchase_token,
+        "latest_transaction_id": line_item.get("latestSuccessfulOrderId"),
+        "status": state or "SUBSCRIPTION_STATE_UNSPECIFIED",
+        "entitled": _google_entitled(state, expires_at, now),
+        "purchased_at": _billing_parse_rfc3339(sub_body.get("startTime")),
+        "current_period_start": current_period_start,
+        "expires_at": expires_at,
+        "auto_renewing": auto_renewing,
+        # raw_payload : sous-ensemble NON sensible, jamais le purchase_token.
+        "raw_payload": {
+            "source": "google_play",
+            "subscription_state": state,
+            "acknowledgement_state": ack_state,
+            "test_purchase": bool(sub_body.get("testPurchase")),
+            "region_code": sub_body.get("regionCode"),
+        },
+    }
+    return _assert_normalized_subscription(normalized)
+
+
+def _google_verify_subscription(purchase_token, expected_product_id, now=None):
+    """Vérifie un abonnement Google Play (purchases.subscriptionsv2.get) puis
+    résout le début du cycle courant (orders.get). Retourne la structure
+    normalisée commune. Lève StoreVerificationError. AUCUN acknowledge ici."""
+    if now is None:
+        now = _utcnow()
+    package = os.environ.get("GOOGLE_PLAY_PACKAGE_NAME", "").strip()
+    if not package:
+        raise StoreVerificationError("verification_not_configured",
+                                     "GOOGLE_PLAY_PACKAGE_NAME absent")
+
+    status_code, sub_body = _google_api_request(
+        "GET",
+        "/applications/%s/purchases/subscriptionsv2/tokens/%s" % (package, purchase_token),
+    )
+    err = _google_status_to_http(status_code)
+    if err is not None:
+        raise err
+    if not isinstance(sub_body, dict):
+        raise StoreVerificationError("invalid_store_receipt", "corps subscriptionsv2 non JSON")
+
+    line_item = _google_pick_line_item(sub_body, expected_product_id)
+    # SubscriptionPurchaseLineItem V2 n'expose que latestSuccessfulOrderId ;
+    # aucun fallback latestOrderId (champ non documenté). Absent -> reçu
+    # inexploitable, on ne fabrique jamais la période courante.
+    order_id = line_item.get("latestSuccessfulOrderId")
+    if not order_id:
+        raise StoreVerificationError("invalid_store_receipt",
+                                     "latestSuccessfulOrderId absent du lineItem Google")
+    o_status, order_body = _google_api_request(
+        "GET", "/applications/%s/orders/%s" % (package, order_id))
+    o_err = _google_status_to_http(o_status)
+    if o_err is not None:
+        raise o_err
+
+    normalized = _google_normalize(sub_body, order_body, purchase_token,
+                                   expected_product_id, now)
+    print("[billing] google verify %s state=%s entitled=%s"
+          % (_billing_mask(purchase_token), normalized["status"], normalized["entitled"]))
+    return normalized
+
+
+def _google_acknowledge_subscription(purchase_token, product_id, ack_state=None):
+    """Acknowledge idempotent d'un achat Google Play. NE DOIT être appelé
+    qu'APRÈS record + resync réussis. No-op si déjà acknowledged. Lève
+    StoreVerificationError('store_verification_unavailable') (retryable) si
+    l'acknowledge échoue -> la route renvoie 503, le client rejoue (record
+    reste idempotent, pas de double quota)."""
+    if ack_state == "ACKNOWLEDGEMENT_STATE_ACKNOWLEDGED":
+        return {"acknowledged": False, "reason": "already_acknowledged"}
+    package = os.environ.get("GOOGLE_PLAY_PACKAGE_NAME", "").strip()
+    if not package:
+        raise StoreVerificationError("verification_not_configured",
+                                     "GOOGLE_PLAY_PACKAGE_NAME absent")
+    status_code, body = _google_api_request(
+        "POST",
+        "/applications/%s/purchases/subscriptions/%s/tokens/%s:acknowledge"
+        % (package, product_id, purchase_token),
+    )
+    if 200 <= status_code < 300:
+        return {"acknowledged": True}
+    # Déjà acknowledged entre-temps : Google renvoie 400 -> traité comme no-op.
+    if status_code == 400 and isinstance(body, dict):
+        msg = ((body.get("error") or {}).get("message") or "").lower()
+        if "already" in msg and "acknowledg" in msg:
+            return {"acknowledged": False, "reason": "already_acknowledged"}
+    raise StoreVerificationError("store_verification_unavailable",
+                                 "échec acknowledge Google", retryable=True)
+
+
+# ------------------------------------------------------------
+# APPLE APP STORE — App Store Server API + vérification JWS (StoreKit 2)
+# ------------------------------------------------------------
+
+_APPLE_STATUS_LABELS = {
+    1: "active", 2: "expired", 3: "billing_retry",
+    4: "billing_grace_period", 5: "revoked",
+}
+
+
+def _apple_config():
+    """(issuer_id, key_id, private_key_pem, bundle_id, environment_label,
+    app_apple_id|None). verification_not_configured si un champ requis manque.
+    Aucune valeur n'est loggée."""
+    issuer = os.environ.get("APPLE_ASC_ISSUER_ID", "").strip()
+    key_id = os.environ.get("APPLE_ASC_KEY_ID", "").strip()
+    private_key = os.environ.get("APPLE_ASC_PRIVATE_KEY", "")
+    bundle_id = os.environ.get("APPLE_BUNDLE_ID", "").strip()
+    env_label = (os.environ.get("APPLE_ENVIRONMENT", "").strip() or "production").lower()
+    app_apple_id = os.environ.get("APPLE_APP_APPLE_ID", "").strip()
+    if not (issuer and key_id and private_key.strip() and bundle_id):
+        raise StoreVerificationError("verification_not_configured",
+                                     "configuration Apple incomplète")
+    if env_label not in ("production", "sandbox"):
+        raise StoreVerificationError("verification_not_configured",
+                                     "APPLE_ENVIRONMENT invalide")
+    aid = None
+    if app_apple_id:
+        try:
+            aid = int(app_apple_id)
+        except ValueError:
+            raise StoreVerificationError("verification_not_configured",
+                                         "APPLE_APP_APPLE_ID non numérique")
+    # SignedDataVerifier EXIGE app_apple_id en environnement Production.
+    if env_label == "production" and aid is None:
+        raise StoreVerificationError("verification_not_configured",
+                                     "APPLE_APP_APPLE_ID requis en production")
+    return issuer, key_id, private_key, bundle_id, env_label, aid
+
+
+def _apple_root_certificates():
+    """Liste des certificats racine Apple (DER/bytes), lus depuis le dossier
+    nommé par APPLE_ROOT_CA_DIR (*.cer / *.der / *.crt). On ne télécharge
+    JAMAIS une racine à la volée. verification_not_configured si absent/vide."""
+    root_dir = os.environ.get("APPLE_ROOT_CA_DIR", "").strip()
+    if not root_dir or not os.path.isdir(root_dir):
+        raise StoreVerificationError("verification_not_configured",
+                                     "APPLE_ROOT_CA_DIR absent")
+    certs = []
+    for name in sorted(os.listdir(root_dir)):
+        if name.lower().endswith((".cer", ".der", ".crt")):
+            try:
+                with open(os.path.join(root_dir, name), "rb") as fh:
+                    certs.append(fh.read())
+            except OSError:
+                continue
+    if not certs:
+        raise StoreVerificationError("verification_not_configured",
+                                     "aucun certificat racine Apple trouvé")
+    return certs
+
+
+def _apple_environment(env_label):
+    from appstoreserverlibrary.models.Environment import Environment
+    return Environment.SANDBOX if env_label == "sandbox" else Environment.PRODUCTION
+
+
+def _apple_api_client(env_label):
+    """AppStoreServerAPIClient pour l'environnement donné. Isolé -> mockable."""
+    try:
+        from appstoreserverlibrary.api_client import AppStoreServerAPIClient
+    except ImportError:
+        raise StoreVerificationError("verification_not_configured",
+                                     "app-store-server-library non installé")
+    issuer, key_id, private_key, bundle_id, _lbl, _aid = _apple_config()
+    return AppStoreServerAPIClient(
+        private_key.encode("utf-8") if isinstance(private_key, str) else private_key,
+        key_id, issuer, bundle_id, _apple_environment(env_label),
+    )
+
+
+def _apple_signed_data_verifier(env_label):
+    """SignedDataVerifier (signature JWS + chaîne x5c -> Apple Root CA).
+    enable_online_checks=True : contrôle OCSP de la chaîne en production.
+    Isolé -> mockable en test (le test crypto dédié construit un vrai
+    SignedDataVerifier sur une chaîne locale)."""
+    try:
+        from appstoreserverlibrary.signed_data_verifier import SignedDataVerifier
+    except ImportError:
+        raise StoreVerificationError("verification_not_configured",
+                                     "app-store-server-library non installé")
+    _iss, _kid, _pk, bundle_id, _lbl, app_apple_id = _apple_config()
+    return SignedDataVerifier(
+        _apple_root_certificates(), True, _apple_environment(env_label),
+        bundle_id, app_apple_id,
+    )
+
+
+def _apple_entitled(status_int, expires_at, revocation_date, now,
+                    grace_expires_at=None):
+    """Décision d'entitlement Apple, calculée CÔTÉ SERVEUR.
+      revocationDate présente / REVOKED / EXPIRED  -> False
+      ACTIVE (1)                  -> True SI expires_at > now
+      BILLING_GRACE_PERIOD (4)    -> True UNIQUEMENT si gracePeriodExpiresDate
+                                     est fournie ET > now (jamais inventée)
+      BILLING_RETRY (3) hors grâce -> False (accès suspendu)
+      tout autre status (inconnu)  -> False (fail closed : aucun status Apple
+                                     non reconnu n'accorde Premium ; cohérent
+                                     avec _google_entitled qui rejette de même
+                                     tout état non listé)."""
+    if revocation_date is not None:
+        return False
+    if status_int in (2, 5):          # EXPIRED / REVOKED
+        return False
+    if status_int == 4:               # BILLING_GRACE_PERIOD
+        return grace_expires_at is not None and grace_expires_at > now
+    if status_int == 3:               # BILLING_RETRY hors grâce
+        return False
+    if status_int != 1:               # status Apple inconnu -> fail closed
+        return False
+    if expires_at is None or expires_at <= now:
+        return False
+    return True                       # ACTIVE (1), période encore payée
+
+
+def _apple_normalize(tx, renewal, status_int, env_label, expected_product_id, now):
+    """(JWSTransactionDecodedPayload, JWSRenewalInfoDecodedPayload|None,
+    status int Apple) -> structure normalisée commune. Pur (aucun réseau).
+    Les payloads sont DÉJÀ vérifiés cryptographiquement en amont."""
+    product_id = getattr(tx, "productId", None)
+    if product_id != expected_product_id:
+        raise StoreVerificationError("product_mismatch", "productId Apple != attendu")
+
+    expires_at = _billing_parse_epoch_millis(getattr(tx, "expiresDate", None))
+    current_period_start = _billing_parse_epoch_millis(getattr(tx, "purchaseDate", None))
+    if expires_at is None or current_period_start is None:
+        raise StoreVerificationError("invalid_store_receipt",
+                                     "dates de transaction Apple absentes")
+    revocation_date = _billing_parse_epoch_millis(getattr(tx, "revocationDate", None))
+
+    # Billing Grace Period : Apple maintient le droit APRÈS expiresDate jusqu'à
+    # renewalInfo.gracePeriodExpiresDate. On ne l'invente jamais (absente -> pas
+    # de droit). La fin EFFECTIVE du droit Auryel devient alors
+    # max(expiresDate, gracePeriodExpiresDate), sinon resync_premium_entitlement
+    # (filtre entitled IS TRUE AND expires_at > now) retirerait Premium alors
+    # qu'Apple signale encore la grâce.
+    grace_expires_at = _billing_parse_epoch_millis(
+        getattr(renewal, "gracePeriodExpiresDate", None)) if renewal is not None else None
+    effective_expires_at = expires_at
+    if status_int == 4 and grace_expires_at is not None:
+        effective_expires_at = max(expires_at, grace_expires_at)
+    entitled = _apple_entitled(status_int, expires_at, revocation_date, now,
+                               grace_expires_at=grace_expires_at)
+
+    original_tx_id = getattr(tx, "originalTransactionId", None)
+    if not original_tx_id:
+        raise StoreVerificationError("invalid_store_receipt",
+                                     "originalTransactionId Apple absent")
+
+    auto_renewing = None
+    raw_auto = getattr(renewal, "autoRenewStatus", None) if renewal is not None else None
+    if raw_auto is not None:
+        try:
+            auto_renewing = int(getattr(raw_auto, "value", raw_auto)) == 1
+        except (TypeError, ValueError):
+            auto_renewing = None
+
+    normalized = {
+        "store": "app_store",
+        "product_id": product_id,
+        "subscription_key": str(original_tx_id),
+        "latest_transaction_id": (str(getattr(tx, "transactionId", None))
+                                  if getattr(tx, "transactionId", None) else None),
+        "status": _APPLE_STATUS_LABELS.get(status_int, "unknown"),
+        "entitled": entitled,
+        "purchased_at": _billing_parse_epoch_millis(getattr(tx, "originalPurchaseDate", None)),
+        "current_period_start": current_period_start,
+        "expires_at": effective_expires_at,
+        "auto_renewing": auto_renewing,
+        "raw_payload": {
+            "source": "app_store",
+            "environment": env_label,
+            "status": _APPLE_STATUS_LABELS.get(status_int, "unknown"),
+            "raw_status": status_int,
+            "transaction_type": _apple_enum_str(getattr(tx, "type", None)),
+            "expiration_intent": _apple_enum_str(getattr(renewal, "expirationIntent", None))
+                                 if renewal is not None else None,
+            "is_in_billing_retry": (bool(getattr(renewal, "isInBillingRetryPeriod", None))
+                                    if renewal is not None
+                                    and getattr(renewal, "isInBillingRetryPeriod", None) is not None
+                                    else None),
+            "grace_period_expires_at": (grace_expires_at.isoformat()
+                                        if grace_expires_at is not None else None),
+            "revoked": revocation_date is not None,
+        },
+    }
+    return _assert_normalized_subscription(normalized)
+
+
+def _apple_enum_str(value):
+    """Enum lib Apple / valeur simple -> str|None JSON-sérialisable."""
+    if value is None:
+        return None
+    v = getattr(value, "value", value)
+    return v if isinstance(v, (str, int)) else str(v)
+
+
+def _apple_pick_transaction(status_response, verifier, expected_product_id):
+    """Parcourt les groupes d'abonnement renvoyés par
+    get_all_subscription_statuses, vérifie CRYPTOGRAPHIQUEMENT chaque
+    signedTransactionInfo et retourne (tx, renewal, status_int) pour le
+    groupe dont le productId correspond. product_mismatch si aucun."""
+    try:
+        from appstoreserverlibrary.signed_data_verifier import VerificationException
+    except ImportError:
+        raise StoreVerificationError("verification_not_configured",
+                                     "app-store-server-library non installé")
+    groups = getattr(status_response, "data", None) or []
+    saw_transaction = False
+    for group in groups:
+        for item in (getattr(group, "lastTransactions", None) or []):
+            signed_tx = getattr(item, "signedTransactionInfo", None)
+            if not signed_tx:
+                continue
+            saw_transaction = True
+            try:
+                tx = verifier.verify_and_decode_signed_transaction(signed_tx)
+            except VerificationException:
+                raise StoreVerificationError("invalid_store_receipt",
+                                             "signature/chaîne JWS Apple invalide")
+            if getattr(tx, "productId", None) != expected_product_id:
+                continue
+            renewal = None
+            signed_renewal = getattr(item, "signedRenewalInfo", None)
+            if signed_renewal:
+                try:
+                    renewal = verifier.verify_and_decode_renewal_info(signed_renewal)
+                except VerificationException:
+                    raise StoreVerificationError("invalid_store_receipt",
+                                                 "renewalInfo JWS Apple invalide")
+            status_int = _apple_status_int(getattr(item, "status", None))
+            return tx, renewal, status_int
+    if not saw_transaction:
+        raise StoreVerificationError("invalid_store_receipt",
+                                     "aucune transaction Apple pour cette référence")
+    raise StoreVerificationError("product_mismatch",
+                                 "aucun abonnement Apple au product_id attendu")
+
+
+def _apple_status_int(status):
+    if status is None:
+        return 0
+    try:
+        return int(getattr(status, "value", status))
+    except (TypeError, ValueError):
+        return 0
+
+
+def _apple_verify_subscription(transaction_id, expected_product_id, now=None):
+    """Vérifie une transaction App Store (get_all_subscription_statuses) avec
+    vérification cryptographique COMPLÈTE des JWS (signature + chaîne x5c ->
+    Apple Root CA). Retourne la structure normalisée commune. Lève
+    StoreVerificationError. Environnement piloté par la config serveur
+    (APPLE_ENVIRONMENT) — jamais par le client ; bascule automatique
+    production -> sandbox si la transaction est introuvable en production."""
+    if now is None:
+        now = _utcnow()
+    try:
+        from appstoreserverlibrary.api_client import APIException
+    except ImportError:
+        raise StoreVerificationError("verification_not_configured",
+                                     "app-store-server-library non installé")
+
+    _iss, _kid, _pk, _bundle, configured_env, _aid = _apple_config()
+    envs = [configured_env] + (["sandbox"] if configured_env == "production" else [])
+
+    last_not_found = None
+    for env_label in envs:
+        client = _apple_api_client(env_label)
+        try:
+            status_response = client.get_all_subscription_statuses(transaction_id)
+        except APIException as exc:
+            code = getattr(exc, "http_status_code", None)
+            if code == 404:
+                last_not_found = StoreVerificationError(
+                    "invalid_store_receipt", "transaction Apple inconnue")
+                continue
+            if code in (401, 403):
+                raise StoreVerificationError("store_verification_unavailable",
+                                             "auth Apple refusée", retryable=True)
+            if code == 429 or (code is not None and code >= 500):
+                raise StoreVerificationError("store_verification_unavailable",
+                                             "App Store Server API indisponible",
+                                             retryable=True)
+            raise StoreVerificationError("invalid_store_receipt",
+                                         "réponse Apple inattendue")
+        except requests.RequestException:
+            raise StoreVerificationError("store_verification_unavailable",
+                                         "App Store injoignable", retryable=True)
+
+        verifier = _apple_signed_data_verifier(env_label)
+        tx, renewal, status_int = _apple_pick_transaction(
+            status_response, verifier, expected_product_id)
+        normalized = _apple_normalize(tx, renewal, status_int, env_label,
+                                      expected_product_id, now)
+        print("[billing] apple verify %s env=%s status=%s entitled=%s"
+              % (_billing_mask(transaction_id), env_label,
+                 normalized["status"], normalized["entitled"]))
+        return normalized
+
+    raise last_not_found or StoreVerificationError("invalid_store_receipt",
+                                                   "transaction Apple inconnue")
+
+
+# ------------------------------------------------------------
+# ROUTE — POST /api/billing/verify
+# ------------------------------------------------------------
+
+_MOBILE_SUB_ERR_HTTP = {
+    "invalid_store": 400, "invalid_product": 400, "missing_field": 400,
+    "account_mismatch": 409, "write_conflict": 503,
+}
+
+
+def _billing_verify_run_verifier(store, product_id, data):
+    """Valide la référence d'achat du body puis dispatche vers le vérificateur
+    store. Retourne (normalized_dict, verifier_context) ou lève
+    StoreVerificationError. `verifier_context` porte ce qu'il faut à la route
+    pour l'acknowledge Google post-attribution."""
+    if store == "google_play":
+        token = data.get("purchase_token")
+        token = token.strip() if isinstance(token, str) else ""
+        if not token:
+            return None, {"error": "missing_purchase_token"}
+        normalized = _google_verify_subscription(token, product_id)
+        return normalized, {"store": "google_play", "purchase_token": token}
+    # app_store
+    txid = data.get("transaction_id")
+    txid = txid.strip() if isinstance(txid, str) else ""
+    if not txid:
+        return None, {"error": "missing_transaction_id"}
+    normalized = _apple_verify_subscription(txid, product_id)
+    return normalized, {"store": "app_store"}
+
+
+@app.route("/api/billing/verify", methods=["POST"])
+@limiter.limit("10 per 10 minutes")
+@require_app_auth
+def api_billing_verify():
+    """Vérifie un achat mobile auprès du store officiel, le réconcilie dans
+    mobile_subscriptions, re-projette le quota Premium, renvoie l'état.
+
+    Identité : g.app_account['user_id'] (jeton Bearer) UNIQUEMENT. Les champs
+    entitled / status / dates / subscription_key éventuellement présents dans
+    le body sont IGNORÉS : seul le vérificateur store fait foi.
+
+    Body attendu :
+      Android : {"store":"google_play","product_id":"auryel_premium_monthly",
+                 "purchase_token":"..."}
+      iOS     : {"store":"app_store","product_id":"auryel_premium_monthly",
+                 "transaction_id":"..."}
+
+    Réponses (toutes via _auth_json -> Cache-Control: no-store) :
+      200 {"subscription": {...non sensible...}, "quota": {...}}
+      400 invalid_request / invalid_store / invalid_product /
+          missing_purchase_token / missing_transaction_id
+      401 unauthorized            (require_app_auth)
+      409 account_mismatch        (achat déjà rattaché à un autre compte)
+      422 invalid_store_receipt / product_mismatch
+      503 store_verification_unavailable
+      500 internal_error
+    """
+    user_id = g.app_account["user_id"]
+
+    data = request.get_json(silent=True)
+    if not isinstance(data, dict):
+        return _auth_json({"error": "invalid_request"}, 400)
+
+    store = data.get("store")
+    store = store.strip() if isinstance(store, str) else ""
+    product_id = data.get("product_id")
+    product_id = product_id.strip() if isinstance(product_id, str) else ""
+    if store not in _MOBILE_STORES:
+        return _auth_json({"error": "invalid_store"}, 400)
+    if product_id not in _MOBILE_SUB_PRODUCT_IDS:
+        return _auth_json({"error": "invalid_product"}, 400)
+
+    # 1) Vérification auprès du store officiel.
+    try:
+        normalized, ctx = _billing_verify_run_verifier(store, product_id, data)
+    except StoreVerificationError as exc:
+        status = 503 if exc.retryable else 422
+        return _auth_json({"error": exc.code}, status)
+    if normalized is None:
+        return _auth_json({"error": ctx["error"]}, 400)
+
+    # 2) Réconciliation dans mobile_subscriptions (source de vérité).
+    try:
+        record_mobile_subscription(
+            user_id=user_id,
+            store=normalized["store"],
+            product_id=normalized["product_id"],
+            subscription_key=normalized["subscription_key"],
+            latest_transaction_id=normalized["latest_transaction_id"],
+            status=normalized["status"],
+            entitled=normalized["entitled"],
+            purchased_at=normalized["purchased_at"],
+            current_period_start=normalized["current_period_start"],
+            expires_at=normalized["expires_at"],
+            auto_renewing=normalized["auto_renewing"],
+            raw_payload=normalized["raw_payload"],
+        )
+    except MobileSubscriptionError as exc:
+        return _auth_json({"error": exc.code},
+                          _MOBILE_SUB_ERR_HTTP.get(exc.code, 400))
+
+    # 3) Re-projection du quota Premium + 4) acknowledge Google + 5) état.
+    try:
+        resync_premium_entitlement(user_id)
+        if ctx.get("store") == "google_play":
+            _google_acknowledge_subscription(
+                ctx["purchase_token"], product_id,
+                ack_state=(normalized["raw_payload"] or {}).get("acknowledgement_state"),
+            )
+        state = get_consultation_state(user_id)
+    except StoreVerificationError as exc:
+        # L'entitlement local est déjà accordé : le client rejouera
+        # /api/billing/verify (record + resync idempotents, pas de double quota).
+        status = 503 if exc.retryable else 422
+        return _auth_json({"error": exc.code}, status)
+    except Exception:
+        print("[billing] erreur post-vérification (resync/state) user=%s" % _billing_mask(str(user_id)))
+        return _auth_json({"error": "internal_error"}, 500)
+
+    return _auth_json({
+        "subscription": {
+            "store": normalized["store"],
+            "product_id": normalized["product_id"],
+            "status": normalized["status"],
+            "entitled": normalized["entitled"],
+            "expires_at": _ts_iso(normalized["expires_at"]),
+        },
+        "quota": _quota_json(state["quota"]),
+    }, 200)
+
+
+# ============================================================
 # RITUEL AUTOMATIQUE (abonnés)
 # ============================================================
 def get_rituel(user):
