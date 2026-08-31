@@ -80,12 +80,19 @@ V29 = SRC[_m29.start():_m30.start()]
 V30 = SRC[_m30.start():_m31.start()]
 V31 = SRC[_m31.start():_m32.start()]
 
-# --- Isolation de la tranche v32 : du marqueur "# Migration v32" au conn.close()
-# final de init_db().
-_v32 = SRC[_m32.start():]
-_close32 = _v32.find("conn.close()")
-assert _close32 != -1, "conn.close() final introuvable après le bloc v32"
-V32 = _v32[:_close32 + len("conn.close()")]
+# --- Isolation de la tranche v32 : du marqueur "# Migration v32" au marqueur de
+# la migration suivante (v33...) si elle existe, sinon au conn.close() final de
+# init_db(). Même principe que les tranches v27..v31 : chaque tranche s'arrête
+# au début de la suivante pour ne jamais englober une migration plus récente.
+_m33 = re.search(r"#\s*Migration v33\b", SRC)
+if _m33:
+    assert _m33.start() > _m32.start(), "v33 doit venir APRÈS v32"
+    V32 = SRC[_m32.start():_m33.start()]
+else:
+    _v32 = SRC[_m32.start():]
+    _close32 = _v32.find("conn.close()")
+    assert _close32 != -1, "conn.close() final introuvable après le bloc v32"
+    V32 = _v32[:_close32 + len("conn.close()")]
 
 
 def _nocomment(block):

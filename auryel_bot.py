@@ -27,6 +27,46 @@ except Exception as _e:
     print(f"[tarot] mapping non charge : {_e}")
     TAROT_MAPPING = {}
 
+# ------------------------------------------------------------
+# Référentiel CANONIQUE des 22 arcanes majeurs (Tirage mobile — T3).
+# Séparé de TAROT_MAPPING (legacy WhatsApp : 30 PNG figés, noms FR affichés) et
+# de CARTES (jeu 52 belote). Ici : clé snake_case -> {name, interpretation, role}.
+# Source de vérité UNIQUE côté serveur : les interprétations envoyées par un
+# client mobile ne sont JAMAIS utilisées, seules ces valeurs alimentent le
+# contexte conseiller. Fichier invalide -> le boot échoue (fail fast).
+# ------------------------------------------------------------
+_TAROT_ARCANA_EXPECTED_KEYS = frozenset({
+    "le_fou", "le_bateleur", "la_papesse", "l_imperatrice", "l_empereur",
+    "le_pape", "l_amoureux", "le_chariot", "la_justice", "l_ermite",
+    "la_roue_de_fortune", "la_force", "le_pendu", "la_mort", "temperance",
+    "le_diable", "la_maison_dieu", "l_etoile", "la_lune", "le_soleil",
+    "le_jugement", "le_monde",
+})
+_TAROT_ARCANA_PATH = os.path.join(os.path.dirname(__file__), "tarot_arcana.json")
+with open(_TAROT_ARCANA_PATH, encoding="utf-8") as _f:
+    TAROT_ARCANA = _json.load(_f)
+if not isinstance(TAROT_ARCANA, dict):
+    raise RuntimeError("tarot_arcana.json : racine attendue = objet {cle: {...}}")
+if len(TAROT_ARCANA) != 22:
+    raise RuntimeError(f"tarot_arcana.json : 22 arcanes attendus, {len(TAROT_ARCANA)} trouvés")
+if set(TAROT_ARCANA) != set(_TAROT_ARCANA_EXPECTED_KEYS):
+    _manquantes = _TAROT_ARCANA_EXPECTED_KEYS - set(TAROT_ARCANA)
+    _en_trop = set(TAROT_ARCANA) - _TAROT_ARCANA_EXPECTED_KEYS
+    raise RuntimeError(
+        f"tarot_arcana.json : clés non conformes (manquantes={sorted(_manquantes)}, "
+        f"en trop={sorted(_en_trop)})"
+    )
+for _k, _v in TAROT_ARCANA.items():
+    if not isinstance(_v, dict):
+        raise RuntimeError(f"tarot_arcana.json : '{_k}' n'est pas un objet")
+    for _champ in ("name", "interpretation", "role"):
+        _val = _v.get(_champ)
+        if not isinstance(_val, str) or not _val.strip():
+            raise RuntimeError(f"tarot_arcana.json : '{_k}.{_champ}' manquant ou vide")
+# Allowlist STRICTE : toute validation de card_keys passe par cet ensemble.
+TAROT_ARCANA_KEYS = frozenset(TAROT_ARCANA.keys())
+print(f"[tarot] {len(TAROT_ARCANA)} arcanes canoniques chargés")
+
 TAROT_MEDIA_IDS = {}
 _tarot_media_uploaded_at = 0.0
 _tarot_media_upload_lock = threading.Lock()
@@ -943,6 +983,55 @@ def init_db():
             ALTER TABLE consultation_allowance
                 ADD CONSTRAINT fk_allowance_source_subscription
                 FOREIGN KEY (source_subscription_id) REFERENCES mobile_subscriptions(id);
+        EXCEPTION
+            WHEN duplicate_object THEN NULL;
+        END
+        $$;
+    """)
+    conn.commit()
+    # Migration v33 — tirages mobile (T3). PUREMENT ADDITIF : une table neuve +
+    # un index + deux FK idempotentes. Aucune colonne touchée ailleurs, aucun
+    # backfill, aucun DROP/TRUNCATE. `card_keys` = JSONB (liste ordonnée de 3
+    # slugs d'arcane) ; l'ordre EST celui de sélection de l'utilisateur.
+    # consultation_id renseigné plus tard, une seule fois, quand le tirage est
+    # discuté (attach_tirage_to_consultation). Miroir lisible :
+    # migrations/007_tirages.sql.
+    c.execute("""
+        CREATE TABLE IF NOT EXISTS tirages (
+            id              UUID         PRIMARY KEY,
+            user_id         UUID         NOT NULL,
+            card_keys       JSONB        NOT NULL,
+            advisor_id      TEXT         NULL,
+            consultation_id UUID         NULL,
+            created_at      TIMESTAMPTZ  NOT NULL DEFAULT NOW()
+        )
+    """)
+    c.execute("""
+        CREATE INDEX IF NOT EXISTS idx_tirages_user_created
+        ON tirages (user_id, created_at DESC)
+    """)
+    conn.commit()
+    # FK tirages.user_id -> accounts(user_id) et tirages.consultation_id ->
+    # consultations(id), SANS ON DELETE CASCADE (cohérent avec le reste du
+    # schéma app). Idempotence EXPLICITE : DO $$ ... EXCEPTION WHEN
+    # duplicate_object — même style que la FK v32.
+    c.execute("""
+        DO $$
+        BEGIN
+            ALTER TABLE tirages
+                ADD CONSTRAINT fk_tirages_account
+                FOREIGN KEY (user_id) REFERENCES accounts(user_id);
+        EXCEPTION
+            WHEN duplicate_object THEN NULL;
+        END
+        $$;
+    """)
+    c.execute("""
+        DO $$
+        BEGIN
+            ALTER TABLE tirages
+                ADD CONSTRAINT fk_tirages_consultation
+                FOREIGN KEY (consultation_id) REFERENCES consultations(id);
         EXCEPTION
             WHEN duplicate_object THEN NULL;
         END
@@ -2848,6 +2937,23 @@ def api_consultation_message():
 
     user_id = g.app_account["user_id"]   # jamais lu dans le body
 
+    # B'. tirage_id OPTIONNEL (T3) — résolu AVANT toute ouverture/consommation.
+    #     Un tirage_id absent, malformé, inexistant ou appartenant à un AUTRE
+    #     compte NE DOIT JAMAIS ouvrir une consultation ni débiter first_free /
+    #     monthly / earned : le 404 part ici, avant open_or_get_consultation.
+    #     Le contexte est construit UNIQUEMENT depuis le référentiel serveur.
+    tirage_id = data.get("tirage_id")
+    tirage_context = None
+    if tirage_id is not None:
+        if not _is_uuid(tirage_id):
+            return _auth_json({"error": "tirage_not_found"}, 404)
+        tirage_row = get_tirage(user_id, tirage_id)           # SELECT id + user_id STRICT
+        if tirage_row is None:
+            return _auth_json({"error": "tirage_not_found"}, 404)
+        tirage_context = render_tirage_context(
+            _tirage_card_keys_from_db(tirage_row["card_keys"])
+        )
+
     # C. conseiller CHOISI dans le profil — sert uniquement à OUVRIR une session.
     #    Une fois ouverte, c'est consultation.advisor_id qui prime (conseiller figé).
     profile = get_or_create_app_profile(user_id)
@@ -2880,7 +2986,13 @@ def api_consultation_message():
         user_id, msg,
         advisor_override=advisor_session,
         consultation_id=consultation["id"],
+        tirage_context=tirage_context,
     )
+
+    # Rattachement du tirage à la session où il a servi — APRÈS la réponse, une
+    # seule fois (le premier lien historique n'est jamais écrasé).
+    if tirage_id is not None and tirage_context is not None:
+        attach_tirage_to_consultation(user_id, tirage_id, consultation["id"])
 
     state = get_consultation_state(user_id)
     return _auth_json({
@@ -3027,6 +3139,301 @@ def api_app_profile_patch():
 
     fresh = get_app_profile(user_id) or profile
     return _auth_json(_app_profile_public(fresh), 200)
+
+
+# ============================================================
+# TIRAGES MOBILE (T3) — save + historique « Mon parcours » + contexte conseiller
+# ------------------------------------------------------------
+# Identité = jeton Bearer uniquement (g.app_account["user_id"]), jamais le body.
+# Les interprétations / la lecture d'ensemble sont TOUJOURS reconstruites depuis
+# tarot_arcana.json (référentiel canonique) : un client ne peut pas injecter de
+# texte dans le contexte conseiller. POST /api/tirages ne consomme AUCUN crédit
+# et n'ouvre AUCUNE consultation — c'est un simple SAVE.
+# ============================================================
+
+_TIRAGE_CARDS_PER_DRAW = 3
+
+
+def _is_uuid(s):
+    """True si s est une chaîne UUID valide (n'importe quelle version)."""
+    if not isinstance(s, str):
+        return False
+    try:
+        uuid.UUID(s)
+        return True
+    except (ValueError, AttributeError, TypeError):
+        return False
+
+
+def validate_tirage_card_keys(card_keys):
+    """Validation STRICTE des clés de cartes fournies par un client mobile.
+
+    Retourne (keys:list[str] | None, error:str | None). L'ORDRE est conservé
+    exactement (ordre de sélection de l'utilisateur).
+
+    Rejette : non-liste ; ≠ 3 éléments ; élément non-str (int, bool, None,
+    dict...) ; doublon ; clé absente du référentiel canonique
+    TAROT_ARCANA_KEYS. Aucune donnée arbitraire ne peut ainsi atteindre le
+    contexte conseiller."""
+    if not isinstance(card_keys, list):
+        return None, "invalid_card_keys"
+    if len(card_keys) != _TIRAGE_CARDS_PER_DRAW:
+        return None, "invalid_card_keys"
+    if not all(isinstance(k, str) for k in card_keys):
+        return None, "invalid_card_keys"
+    if len(set(card_keys)) != _TIRAGE_CARDS_PER_DRAW:
+        return None, "invalid_card_keys"
+    if any(k not in TAROT_ARCANA_KEYS for k in card_keys):
+        return None, "invalid_card_keys"
+    return list(card_keys), None
+
+
+def render_tirage_cards(card_keys):
+    """[{key, name, interpretation}] dans l'ordre EXACT de card_keys, construit
+    uniquement depuis le référentiel serveur. card_keys DOIT être déjà validé."""
+    out = []
+    for k in card_keys:
+        a = TAROT_ARCANA[k]
+        out.append({"key": k, "name": a["name"], "interpretation": a["interpretation"]})
+    return out
+
+
+def combined_tirage_interpretation(card_keys):
+    """Lecture d'ensemble = assemblage ORDONNÉ des 3 interprétations
+    canoniques. Aucune lecture IA, aucun texte inventé ici."""
+    return "\n\n".join(
+        f"{i}. {TAROT_ARCANA[k]['interpretation']}"
+        for i, k in enumerate(card_keys, start=1)
+    )
+
+
+def render_tirage_context(card_keys):
+    """Bloc système décrivant un tirage app DÉJÀ choisi par l'utilisateur.
+    Construit UNIQUEMENT depuis tarot_arcana.json — jamais de texte client.
+    Même esprit que le bloc `=== TIRAGE TAROT (déjà effectué) ===` legacy,
+    adapté au flux mobile (l'utilisateur a choisi ses 3 cartes dans l'appli)."""
+    blocs = ["\n\n=== TIRAGE TAROT (déjà choisi dans l'application) ==="]
+    for i, k in enumerate(card_keys, start=1):
+        a = TAROT_ARCANA[k]
+        blocs.append(
+            f"Carte {i} : {a['name']}\n"
+            f"Interprétation : {a['interpretation']}\n"
+            f"Rôle : {a['role']}"
+        )
+    blocs.append(
+        "[SYSTÈME : la personne a choisi elle-même ces 3 cartes dans l'application, "
+        "dans cet ordre. Le tirage est FAIT : tu ne proposes pas d'en refaire un, "
+        "tu ne redemandes pas la permission. Appuie-toi sur ces trois cartes "
+        "précises dans ta réponse et relie leur sens à ce que la personne vient "
+        "de dire, avec ses mots à elle. Ces interprétations viennent du "
+        "référentiel Auryel : ne dis jamais que la personne te les a fournies. "
+        "Pas de lecture générique qui irait pour n'importe qui. Commence "
+        "directement par la lecture.]"
+    )
+    return "\n".join(blocs)
+
+
+def _tirage_card_keys_from_db(raw):
+    """card_keys stocké en JSONB peut revenir en list (psycopg2 décode) ou en
+    str JSON selon la version/adaptateur. Normalise en list[str]."""
+    if isinstance(raw, list):
+        return raw
+    if isinstance(raw, str):
+        try:
+            v = _json.loads(raw)
+        except Exception:
+            return []
+        return v if isinstance(v, list) else []
+    return []
+
+
+def _tirage_public(row):
+    """row (dict) -> objet public rendu SERVEUR (cartes + lecture canoniques)."""
+    keys = _tirage_card_keys_from_db(row["card_keys"])
+    return {
+        "tirage_id": str(row["id"]),
+        "card_keys": keys,
+        "cards": render_tirage_cards(keys),
+        "combined_interpretation": combined_tirage_interpretation(keys),
+        "advisor_id": row.get("advisor_id"),
+        "consultation_id": str(row["consultation_id"]) if row.get("consultation_id") else None,
+        "created_at": _ts_iso(row["created_at"]),
+    }
+
+
+def save_tirage(user_id, card_keys, advisor_id=None):
+    """INSERT d'un tirage. card_keys DOIT être déjà validé (3 clés canoniques,
+    ordre = ordre de sélection). Retourne le dict row inséré. Aucun crédit,
+    aucun LLM, aucune consultation."""
+    tid = str(uuid.uuid4())
+    now = _utcnow()
+    conn = get_conn()
+    try:
+        c = conn.cursor()
+        c.execute(
+            "INSERT INTO tirages (id, user_id, card_keys, advisor_id, consultation_id, created_at) "
+            "VALUES (%s, %s, %s::jsonb, %s, NULL, %s)",
+            (tid, str(user_id), _json.dumps(list(card_keys)), advisor_id, now),
+        )
+        conn.commit()
+    finally:
+        try: conn.close()
+        except Exception: pass
+    return {"id": tid, "user_id": str(user_id), "card_keys": list(card_keys),
+            "advisor_id": advisor_id, "consultation_id": None, "created_at": now}
+
+
+def get_tirage(user_id, tirage_id):
+    """SELECT STRICT : id = %s AND user_id = %s. Renvoie le dict row ou None.
+    Le tirage d'un autre utilisateur -> None (l'appelant répond 404)."""
+    conn = get_conn()
+    try:
+        c = conn.cursor()
+        c.execute(
+            "SELECT id, user_id, card_keys, advisor_id, consultation_id, created_at "
+            "FROM tirages WHERE id=%s AND user_id=%s",
+            (str(tirage_id), str(user_id)),
+        )
+        r = c.fetchone()
+    finally:
+        try: conn.close()
+        except Exception: pass
+    if not r:
+        return None
+    return {"id": r[0], "user_id": r[1], "card_keys": r[2], "advisor_id": r[3],
+            "consultation_id": r[4], "created_at": r[5]}
+
+
+def list_tirages(user_id, limit=20, before=None):
+    """Historique « Mon parcours », newest-first. limit borné [1, 50].
+    before = datetime -> created_at < before. Récupère limit + 1 pour calculer
+    next_cursor. Retourne (rows:list[dict], next_cursor:str | None)."""
+    try:
+        limit = int(limit)
+    except (TypeError, ValueError):
+        limit = 20
+    limit = max(1, min(50, limit))
+    conn = get_conn()
+    try:
+        c = conn.cursor()
+        if before is not None:
+            c.execute(
+                "SELECT id, user_id, card_keys, advisor_id, consultation_id, created_at "
+                "FROM tirages WHERE user_id=%s AND created_at < %s "
+                "ORDER BY created_at DESC LIMIT %s",
+                (str(user_id), before, limit + 1),
+            )
+        else:
+            c.execute(
+                "SELECT id, user_id, card_keys, advisor_id, consultation_id, created_at "
+                "FROM tirages WHERE user_id=%s "
+                "ORDER BY created_at DESC LIMIT %s",
+                (str(user_id), limit + 1),
+            )
+        rows = c.fetchall() or []
+    finally:
+        try: conn.close()
+        except Exception: pass
+    has_more = len(rows) > limit
+    rows = rows[:limit]
+    out = [{"id": r[0], "user_id": r[1], "card_keys": r[2], "advisor_id": r[3],
+            "consultation_id": r[4], "created_at": r[5]} for r in rows]
+    next_cursor = _ts_iso(out[-1]["created_at"]) if (has_more and out) else None
+    return out, next_cursor
+
+
+def attach_tirage_to_consultation(user_id, tirage_id, consultation_id):
+    """Rattache un tirage à la consultation où il a servi. N'ÉCRASE JAMAIS un
+    rattachement existant (WHERE consultation_id IS NULL) : le premier lien
+    historique est conservé. Retourne True si une ligne a été mise à jour."""
+    conn = get_conn()
+    try:
+        c = conn.cursor()
+        c.execute(
+            "UPDATE tirages SET consultation_id=%s "
+            "WHERE id=%s AND user_id=%s AND consultation_id IS NULL",
+            (str(consultation_id), str(tirage_id), str(user_id)),
+        )
+        updated = (c.rowcount == 1)
+        conn.commit()
+    finally:
+        try: conn.close()
+        except Exception: pass
+    return updated
+
+
+@app.route("/api/tirages", methods=["POST"])
+@limiter.limit("30 per 10 minutes")
+@require_app_auth
+def api_tirages_create():
+    """SAVE d'un tirage 3 cartes. Identité = Bearer uniquement. Ne consomme
+    RIEN (aucune consultation, aucun crédit, aucun LLM). Le client ne fournit
+    QUE card_keys ; user_id / advisor_id / interpretation / consultation_id
+    éventuellement présents dans le body sont IGNORÉS."""
+    data = request.get_json(silent=True)
+    if not isinstance(data, dict):
+        return _auth_json({"error": "invalid_request"}, 400)
+    keys, err = validate_tirage_card_keys(data.get("card_keys"))
+    if err is not None:
+        return _auth_json({"error": "invalid_request"}, 400)
+
+    user_id = g.app_account["user_id"]
+    profile = get_or_create_app_profile(user_id)
+    if profile is None:
+        return _auth_json({"error": "unauthorized"}, 401)
+    advisor_id = profile.get("guide") or None   # dérivé du profil app, jamais du body
+
+    row = save_tirage(user_id, keys, advisor_id)
+    return _auth_json(_tirage_public(row), 201)
+
+
+@app.route("/api/tirages", methods=["GET"])
+@require_app_auth
+def api_tirages_list():
+    """Historique « Mon parcours » de l'utilisateur authentifié. newest-first ;
+    pagination par curseur `before` (ISO 8601) ; limit 1..50 (défaut 20)."""
+    user_id = g.app_account["user_id"]
+
+    limit_raw = request.args.get("limit", "20")
+    try:
+        limit = int(limit_raw)
+    except (TypeError, ValueError):
+        return _auth_json({"error": "invalid_request"}, 400)
+    if limit < 1 or limit > 50:
+        return _auth_json({"error": "invalid_request"}, 400)
+
+    before_raw = request.args.get("before")
+    before = None
+    if before_raw:
+        # Un '+' de fuseau ISO arrive souvent décodé en espace dans une query
+        # string : on le retolère (un espace n'est jamais valide dans le curseur).
+        before_norm = before_raw.strip().replace(" ", "+").replace("Z", "+00:00")
+        try:
+            before = datetime.fromisoformat(before_norm)
+        except ValueError:
+            return _auth_json({"error": "invalid_request"}, 400)
+
+    rows, next_cursor = list_tirages(user_id, limit=limit, before=before)
+    return _auth_json({
+        "tirages": [_tirage_public(r) for r in rows],
+        "next_cursor": next_cursor,
+    }, 200)
+
+
+@app.route("/api/tirages/<tirage_id>", methods=["GET"])
+@require_app_auth
+def api_tirages_get(tirage_id):
+    """Un tirage précis de l'utilisateur authentifié. SELECT strict
+    (id + user_id). Tirage d'un autre utilisateur, id inexistant OU id
+    malformé -> 404 (jamais 403 : ne révèle pas l'existence)."""
+    user_id = g.app_account["user_id"]
+    if not _is_uuid(tirage_id):
+        return _auth_json({"error": "tirage_not_found"}, 404)
+    row = get_tirage(user_id, tirage_id)
+    if row is None:
+        return _auth_json({"error": "tirage_not_found"}, 404)
+    return _auth_json(_tirage_public(row), 200)
+
 
 # ============================================================
 # WHATSAPP
@@ -4161,7 +4568,7 @@ def gerer_onboarding(phone, user, user_message):
 # ============================================================
 def _reply_core(user, key, user_message, io, *, depuis_pub=False,
                 user_msg_pre_inserted=False, onboarding_vient_de_finir=False,
-                channel="whatsapp", advisor_override=None):
+                channel="whatsapp", advisor_override=None, tirage_context=None):
     """Cœur PARTAGÉ de get_reply : détecteurs, assemblage du system prompt,
     personas, garde-fous détresse/sécurité, appel LLM, persistance de l'historique.
     `io` injecte les accès données/canal (legacy = phone ; app = user_id).
@@ -4425,6 +4832,11 @@ def _reply_core(user, key, user_message, io, *, depuis_pub=False,
     if message_court in {"ok", "oui", "rien", "je sais pas", "j'sais pas", "sais pas", "donc"}:
         system += "\n\n=== MESSAGE COURT ===\nLa personne répond brièvement. Ne ferme pas la conversation. Fais une lecture active, précise, incarnée. Continue d'interpréter au lieu de t'arrêter."
 
+    # T3 — tirage choisi dans l'application (app uniquement). Bloc DÉJÀ rendu
+    # côté serveur (render_tirage_context) : aucun texte client n'entre ici.
+    if tirage_context:
+        system += tirage_context
+
     reply = tronquer_reponse(call_llm(
         [{"role":"system","content":system}, *history, {"role":"user","content":user_message}],
         temperature=0.85,
@@ -4507,7 +4919,8 @@ def _app_persist_emotional_context(user_id, message):
     )
 
 
-def get_reply_for_user_id(user_id, user_message, advisor_override=None, consultation_id=None):
+def get_reply_for_user_id(user_id, user_message, advisor_override=None, consultation_id=None,
+                          tirage_context=None):
     """Chemin APP (utilisateur = accounts.user_id, sans phone). Réutilise
     intégralement _reply_core (prompts / personas / détecteurs / garde-fous).
     AUCUN quota DAILY_LIMIT, AUCUN onboarding legacy, AUCUN WhatsApp/Telegram,
@@ -4516,7 +4929,11 @@ def get_reply_for_user_id(user_id, user_message, advisor_override=None, consulta
 
     B4.2 : advisor_override = conseiller de la consultation 2 h (persona figé pour
     ce tour, app_profiles.guide jamais modifié). consultation_id = session à
-    laquelle rattacher les messages user + assistant de ce tour."""
+    laquelle rattacher les messages user + assistant de ce tour.
+
+    T3 : tirage_context = bloc système DÉJÀ rendu par render_tirage_context()
+    (référentiel serveur uniquement, jamais de texte client). None = aucun
+    tirage rattaché à ce tour. Additif : le chemin legacy ne le passe jamais."""
     profile = get_or_create_app_profile(user_id)
     if not profile:
         return "Je suis là..."
@@ -4558,7 +4975,8 @@ def get_reply_for_user_id(user_id, user_message, advisor_override=None, consulta
     return _reply_core(user, str(user_id), user_message, _io,
                        depuis_pub=False, user_msg_pre_inserted=False,
                        onboarding_vient_de_finir=False, channel="app",
-                       advisor_override=advisor_override)
+                       advisor_override=advisor_override,
+                       tirage_context=tirage_context)
 
 # ============================================================
 # MOTEUR DE CONSULTATIONS 2 h / CRÉDITS (B4.1)

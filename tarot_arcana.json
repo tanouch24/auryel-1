@@ -1,0 +1,112 @@
+{
+  "le_fou": {
+    "name": "LE FOU",
+    "interpretation": "Le Fou indique qu'un nouveau commencement spontané ou inattendu va se présenter.",
+    "role": "nouveau départ spontané et inattendu, liberté retrouvée, commencement imprévu"
+  },
+  "le_bateleur": {
+    "name": "LE BATELEUR",
+    "interpretation": "Le Bateleur indique que tu possèdes toutes les ressources pour agir maintenant.",
+    "role": "pouvoir d'action immédiat, ressources disponibles, prise d'initiative"
+  },
+  "la_papesse": {
+    "name": "LA PAPESSE",
+    "interpretation": "La Papesse indique qu'une vérité intérieure attend d'être écoutée.",
+    "role": "intuition profonde, savoir caché, vérité intérieure non écoutée"
+  },
+  "l_imperatrice": {
+    "name": "L'IMPÉRATRICE",
+    "interpretation": "L'Impératrice signale une phase de renouveau et d'abondance.",
+    "role": "abondance, renouveau, création, nouvelle phase positive"
+  },
+  "l_empereur": {
+    "name": "L'EMPEREUR",
+    "interpretation": "L'Empereur indique qu'une structure ou une autorité joue un rôle central.",
+    "role": "contrôle repris, autorité, structure, stabilité nécessaire"
+  },
+  "le_pape": {
+    "name": "LE PAPE",
+    "interpretation": "Le Pape indique qu'une décision doit être alignée avec tes convictions profondes.",
+    "role": "décision selon ses valeurs, conscience morale, choix réfléchi"
+  },
+  "l_amoureux": {
+    "name": "LES AMOUREUX",
+    "interpretation": "Les Amoureux indiquent qu'une décision cruciale concerne une relation ou un engagement.",
+    "role": "choix amoureux déterminant, connexion profonde, engagement ou rupture"
+  },
+  "le_chariot": {
+    "name": "LE CHARIOT",
+    "interpretation": "Le Chariot indique une progression et un succès à portée grâce à la volonté.",
+    "role": "victoire proche, progression active, volonté qui triomphe"
+  },
+  "la_justice": {
+    "name": "LA JUSTICE",
+    "interpretation": "La Justice indique qu'une situation va être clarifiée et les responsabilités établies.",
+    "role": "vérité révélée, clarification imminente, équilibre rétabli"
+  },
+  "l_ermite": {
+    "name": "L'ERMITE",
+    "interpretation": "L'Ermite indique une période de retrait nécessaire pour trouver une réponse intérieure.",
+    "role": "recul nécessaire, solitude productive, réponse à trouver seul"
+  },
+  "la_roue_de_fortune": {
+    "name": "LA ROUE DE FORTUNE",
+    "interpretation": "La Roue de Fortune annonce un changement de cycle imminent dans ta situation.",
+    "role": "changement de cycle imminent, tournant inattendu, destin en mouvement"
+  },
+  "la_force": {
+    "name": "LA FORCE",
+    "interpretation": "La Force indique que tu possèdes la capacité intérieure de surmonter ce qui résiste.",
+    "role": "force intérieure disponible, obstacles surmontables, courage qui paie"
+  },
+  "le_pendu": {
+    "name": "LE PENDU",
+    "interpretation": "Le Pendu indique qu'agir maintenant serait prématuré — une attente stratégique est nécessaire.",
+    "role": "attente stratégique obligatoire, moment pas encore venu, nouvelle perspective à adopter"
+  },
+  "la_mort": {
+    "name": "LA MORT",
+    "interpretation": "La Mort indique une transformation profonde — quelque chose doit se terminer pour du neuf.",
+    "role": "fin nécessaire d'un cycle, transformation radicale, nouveau départ imposé"
+  },
+  "temperance": {
+    "name": "LA TEMPÉRANCE",
+    "interpretation": "La Tempérance indique qu'une situation instable retrouve progressivement son équilibre.",
+    "role": "équilibre en cours de rétablissement, harmonie retrouvée, réconciliation possible"
+  },
+  "le_diable": {
+    "name": "LE DIABLE",
+    "interpretation": "Le Diable indique un attachement ou une dépendance qui bloque un mouvement nécessaire.",
+    "role": "attachement toxique qui bloque, dépendance à une situation ou personne, chaîne invisible"
+  },
+  "la_maison_dieu": {
+    "name": "LA MAISON DIEU",
+    "interpretation": "La Maison Dieu annonce la destruction soudaine d'une structure qui ne tenait plus.",
+    "role": "rupture brutale libératrice, révélation forcée, effondrement nécessaire"
+  },
+  "l_etoile": {
+    "name": "L'ÉTOILE",
+    "interpretation": "L'Étoile indique que la situation évolue vers une guérison et un renouveau authentique.",
+    "role": "espoir fondé sur des bases réelles, guérison en cours, renouveau après la crise"
+  },
+  "la_lune": {
+    "name": "LA LUNE",
+    "interpretation": "La Lune indique qu'une vérité n'a pas encore été révélée et que la situation reste floue.",
+    "role": "vérité cachée délibérément, illusion entretenue, secret non révélé"
+  },
+  "le_soleil": {
+    "name": "LE SOLEIL",
+    "interpretation": "Le Soleil annonce une clarification positive et une période favorable qui s'ouvre.",
+    "role": "bonne nouvelle concrète, clarification positive, succès confirmé"
+  },
+  "le_jugement": {
+    "name": "LE JUGEMENT",
+    "interpretation": "Le Jugement indique qu'une situation n'est pas terminée et qu'un retour reste possible.",
+    "role": "retour ou contact possible, situation non close, renaissance d'une relation"
+  },
+  "le_monde": {
+    "name": "LE MONDE",
+    "interpretation": "Le Monde indique l'accomplissement d'un cycle complet et une conclusion réussie.",
+    "role": "accomplissement total, cycle complètement terminé, réussite confirmée"
+  }
+}
