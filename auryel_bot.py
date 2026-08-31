@@ -1539,6 +1539,27 @@ def get_conversation_for_user_id(user_id):
     return rows
 
 
+def get_consultation_messages_for_user_id(user_id, consultation_id):
+    """Messages d'UNE consultation précise, pour CET utilisateur (identité issue du
+    jeton Bearer côté route). Filtre STRICT sur messages.user_id ET
+    messages.consultation_id — jamais l'historique global, jamais deux sessions
+    mélangées. Seuls les rôles conversationnels (user / assistant) sont exposés à
+    l'app. Ordre chronologique stable : timestamp ASC puis id ASC."""
+    conn = get_conn()
+    try:
+        c = conn.cursor()
+        c.execute(
+            "SELECT role, content, timestamp FROM messages "
+            "WHERE user_id=%s AND consultation_id=%s AND role IN ('user','assistant') "
+            "ORDER BY timestamp ASC, id ASC",
+            (str(user_id), str(consultation_id)),
+        )
+        rows = c.fetchall()
+        return [{"role": r[0], "content": r[1], "timestamp": _ts_iso(r[2])} for r in rows]
+    finally:
+        conn.close()
+
+
 def get_all_users():
     conn = get_conn()
     c = conn.cursor()
@@ -3025,6 +3046,27 @@ def api_consultation_state():
         "consultation": consultation,
         "quota": _quota_json(state["quota"]),
     }, 200)
+
+
+@app.route("/api/consultation/messages", methods=["GET"])
+@require_app_auth
+def api_consultation_messages():
+    """Messages de la consultation ACTIVE de l'utilisateur — pour que « Reprendre
+    ma consultation » réaffiche la conversation en cours côté app.
+
+    Lecture seule stricte : aucune ouverture de consultation, aucune consommation
+    de crédit/quota, aucun appel LLM. « Consultation active » = exactement la même
+    définition que GET /api/consultation/state (get_consultation_state). Identité
+    prise UNIQUEMENT dans le jeton Bearer — aucun user_id lu dans la query/le body.
+    Jamais les messages d'une ancienne consultation ni d'un autre utilisateur.
+    Aucune session active -> { "consultation_id": null, "messages": [] }."""
+    user_id = g.app_account["user_id"]   # identité = Bearer, jamais la query/le body
+    state = get_consultation_state(user_id)
+    sc = state["consultation"]
+    if sc is None:
+        return _auth_json({"consultation_id": None, "messages": []}, 200)
+    messages = get_consultation_messages_for_user_id(user_id, sc["id"])
+    return _auth_json({"consultation_id": sc["id"], "messages": messages}, 200)
 
 
 # ------------------------------------------------------------

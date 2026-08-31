@@ -176,6 +176,15 @@ class FakeCursor:
             rows = sorted([m for m in FAKE["messages"] if m["user_id"] == uid],
                           key=lambda m: m["id"], reverse=True)
             self._rows = [(m["role"], m["content"]) for m in rows[:limit]]
+        elif k == ("SELECT role, content, timestamp FROM messages "
+                   "WHERE user_id=%s AND consultation_id=%s AND role IN ('user','assistant') "
+                   "ORDER BY timestamp ASC, id ASC"):
+            uid, cid = p
+            rows = [m for m in FAKE["messages"]
+                    if m["user_id"] == uid and m["consultation_id"] == cid
+                    and m["role"] in ("user", "assistant")]
+            rows.sort(key=lambda m: (m["timestamp"], m["id"]))
+            self._rows = [(m["role"], m["content"], m["timestamp"]) for m in rows]
 
         # ---- moteur consultations 2 h / crédits (B4.1) ----
         elif k == ("SELECT user_id, first_consultation_used_at FROM accounts "
@@ -624,6 +633,146 @@ with patch.object(A, "call_llm", return_value=REPLY):
 check(j15f["consultation"]["credit_source"] == "monthly"
       and j15f["quota"]["monthly_used"] == 1,
       "15f après la gratuite -> 1re Premium, monthly_used 0 -> 1")
+
+# === GET /api/consultation/messages — historique de la consultation ACTIVE ===
+# (l'app "Reprendre ma consultation" doit réafficher la conversation en cours)
+
+def _get_msgs(tok, qs=""):
+    return client.get("/api/consultation/messages" + qs,
+                      headers={"Authorization": f"Bearer {tok}"})
+
+
+# --- M-A. auth Bearer obligatoire ------------------------------------------
+r_noauth = client.get("/api/consultation/messages")
+r_badauth = client.get("/api/consultation/messages",
+                       headers={"Authorization": "Bearer pas-un-vrai-jeton"})
+check(r_noauth.status_code == 401, "M-A1 sans Bearer -> 401")
+check(r_badauth.status_code == 401, "M-A2 Bearer invalide -> 401")
+
+# --- M-B. aucune consultation active -> { consultation_id: null, messages: [] }
+tok = fresh()
+with patch.object(A, "call_llm", return_value=REPLY) as m_llm_b:
+    rb = _get_msgs(tok)
+jb = rb.get_json()
+check(rb.status_code == 200, "M-B1 aucune session active -> 200")
+check(jb == {"consultation_id": None, "messages": []},
+      "M-B2 payload = { consultation_id: null, messages: [] }")
+check(m_llm_b.call_count == 0 and len(FAKE["consultations"]) == 0,
+      "M-B3 aucun LLM, aucune consultation ouverte par le GET")
+check("no-store" in rb.headers.get("Cache-Control", ""), "M-B4 Cache-Control: no-store")
+
+# --- M-C. consultation active SANS message -> [] --------------------------
+tok = fresh()
+_now = A._utcnow()
+FAKE["consultations"].append({
+    "id": "c-vide", "user_id": UID1, "advisor_id": "selena",
+    "started_at": _now, "expires_at": _now + timedelta(hours=2),
+    "credit_source": "monthly", "created_at": _now,
+})
+jc = _get_msgs(tok).get_json()
+check(jc["consultation_id"] == "c-vide" and jc["messages"] == [],
+      "M-C consultation active vide -> messages []")
+
+# --- M-D. consultation active avec plusieurs messages -> ordre chronologique
+tok = fresh()
+with patch.object(A, "call_llm", return_value="reponse-1"):
+    _post(tok, "question-1")
+with patch.object(A, "call_llm", return_value="reponse-2"):
+    _post(tok, "question-2")
+jd = _get_msgs(tok).get_json()
+check([m["content"] for m in jd["messages"]] == ["question-1", "reponse-1",
+                                                 "question-2", "reponse-2"],
+      "M-D messages rendus dans l'ordre chronologique (timestamp/id ASC)")
+check(len(jd["messages"]) == 4, "M-D2 exactement les 4 messages de la session")
+
+# --- M-E / M-F. seule la consultation ACTIVE compte ; l'ancienne est exclue
+tok = fresh()
+with patch.object(A, "call_llm", return_value="vieille-reponse"):
+    r_old = _post(tok, "vieux-message")
+old_cid = r_old.get_json()["consultation"]["id"]
+_expire_active_consultations()
+with patch.object(A, "call_llm", return_value="nouvelle-reponse"):
+    r_new = _post(tok, "nouveau-message")
+new_cid = r_new.get_json()["consultation"]["id"]
+jef = _get_msgs(tok).get_json()
+check(new_cid != old_cid, "M-E1 nouvelle consultation != ancienne")
+check(jef["consultation_id"] == new_cid, "M-E2 renvoie l'id de la consultation active")
+check([m["content"] for m in jef["messages"]] == ["nouveau-message", "nouvelle-reponse"],
+      "M-F messages de l'ancienne consultation exclus (seule l'active)")
+
+# --- M-G. messages d'un AUTRE utilisateur jamais renvoyés ----------------
+tok1 = fresh(UID1)
+seed_account(UID2, first_consultation_used_at=_FF_USED)
+_seed_premium(UID2)
+tok2 = A.create_app_session(UID2)
+with patch.object(A, "call_llm", return_value="reponse-pour-user1"):
+    _post(tok1, "message-prive-user1")
+with patch.object(A, "call_llm", return_value="reponse-pour-user2"):
+    client.post("/api/consultation/message", json={"message": "message-user2"},
+                headers={"Authorization": f"Bearer {tok2}"})
+jg = _get_msgs(tok2).get_json()
+check([m["content"] for m in jg["messages"]] == ["message-user2", "reponse-pour-user2"],
+      "M-G1 user2 ne reçoit que ses propres messages")
+check(all("user1" not in m["content"] for m in jg["messages"]),
+      "M-G2 aucun contenu de user1 dans la réponse de user2")
+
+# --- M-H. rôles : seuls user / assistant sont exposés --------------------
+tok = fresh()
+with patch.object(A, "call_llm", return_value=REPLY):
+    jc_h = _post(tok, "coucou").get_json()
+cid_h = jc_h["consultation"]["id"]
+FAKE["messages"].append({"id": 999999, "user_id": UID1, "phone": None,
+                         "role": "system", "content": "PROMPT-INTERNE-CONFIDENTIEL",
+                         "timestamp": A._utcnow().isoformat(), "consultation_id": cid_h})
+jh = _get_msgs(tok).get_json()
+check([m["role"] for m in jh["messages"]] == ["user", "assistant"],
+      "M-H1 rôles sérialisés = user puis assistant")
+check(all(m["role"] in ("user", "assistant") for m in jh["messages"]),
+      "M-H2 rôle 'system' non exposé à l'app")
+check(all("CONFIDENTIEL" not in m["content"] for m in jh["messages"]),
+      "M-H3 contenu d'un message non-conversationnel non exposé")
+check(all(set(m.keys()) == {"role", "content", "timestamp"} for m in jh["messages"]),
+      "M-H4 clés de chaque message = role / content / timestamp")
+
+# --- M-I. timestamps présents ------------------------------------------
+check(all(isinstance(m["timestamp"], str) and m["timestamp"] for m in jh["messages"]),
+      "M-I timestamp présent (chaîne non vide) sur chaque message")
+
+# --- M-J. le GET ne consomme aucun quota, n'ouvre aucune consultation ----
+tok = fresh()
+with patch.object(A, "call_llm", return_value=REPLY):
+    _post(tok, "on démarre")
+_snap_j = (len(FAKE["consultations"]),
+           FAKE["consultation_allowance"][0]["monthly_used"],
+           len(FAKE["messages"]),
+           sum(1 for e in FAKE["earned_credits"] if e["consumed_at"] is None))
+with patch.object(A, "call_llm", return_value=REPLY) as m_llm_j2:
+    for _ in range(3):
+        _get_msgs(tok)
+check(m_llm_j2.call_count == 0, "M-J1 3 GET consécutifs : aucun appel LLM")
+check((len(FAKE["consultations"]),
+       FAKE["consultation_allowance"][0]["monthly_used"],
+       len(FAKE["messages"]),
+       sum(1 for e in FAKE["earned_credits"] if e["consumed_at"] is None)) == _snap_j,
+      "M-J2 consultations / quota / messages / earned inchangés après 3 GET")
+
+# --- M-K. identité = Bearer uniquement : ?user_id= ignoré ---------------
+tok1 = fresh(UID1)
+seed_account(UID2, first_consultation_used_at=_FF_USED)
+_seed_premium(UID2)
+tok2 = A.create_app_session(UID2)
+with patch.object(A, "call_llm", return_value="reponse-pour-user2"):
+    client.post("/api/consultation/message", json={"message": "message-user2"},
+                headers={"Authorization": f"Bearer {tok2}"})
+# user1 n'a AUCUNE session active et tente de forcer user_id=UID2 en query
+jk = _get_msgs(tok1, "?user_id=" + UID2).get_json()
+check(jk == {"consultation_id": None, "messages": []},
+      "M-K ?user_id= ignoré : user1 (sans session) reste vide malgré la query")
+
+# --- M-L. route enregistrée -------------------------------------------
+_rules_m = {r.rule for r in A.app.url_map.iter_rules()}
+check("/api/consultation/messages" in _rules_m,
+      "M-L route GET /api/consultation/messages enregistrée")
 
 print("-" * 64)
 _total = _STATE["pass"] + _STATE["fail"]
