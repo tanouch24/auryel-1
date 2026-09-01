@@ -3379,25 +3379,56 @@ def api_consultation_state():
     }, 200)
 
 
+def _latest_consultation_id_for_user_id(user_id):
+    """TIMER-A.3d — LECTURE SEULE ABSOLUE : l'id de la consultation LOGIQUE la
+    plus récente de l'utilisateur (la même notion que la « consultation
+    courante » du moteur temps, cf. get_or_open_time_consultation_tx), SANS
+    AUCUN cutoff temporel : ni `expires_at > now` (legacy 2 h, périmé pour
+    l'historique dès que le moteur temps peut reprendre une consultation bien
+    plus vieille), ni fenêtre d'activité 300 s, ni `window_active`.
+
+    N'ouvre aucune transaction de mutation : simple SELECT sans FOR UPDATE, ni
+    commit ni rollback nécessaires. Dédiée à GET /api/consultation/messages —
+    ne JAMAIS réutiliser pour une décision de facturation (settle / débit /
+    ouverture / touch), qui reste exclusivement du ressort de
+    `_open_time_consultation_flow_tx` (POST) et `_state_with_time_settle`
+    (GET /state)."""
+    conn = get_conn()
+    try:
+        c = conn.cursor()
+        c.execute(
+            "SELECT id FROM consultations WHERE user_id=%s "
+            "ORDER BY started_at DESC LIMIT 1",
+            (str(user_id),),
+        )
+        row = c.fetchone()
+        return str(row[0]) if row is not None else None
+    finally:
+        conn.close()
+
+
 @app.route("/api/consultation/messages", methods=["GET"])
 @require_app_auth
 def api_consultation_messages():
-    """Messages de la consultation ACTIVE de l'utilisateur — pour que « Reprendre
-    ma consultation » réaffiche la conversation en cours côté app.
+    """Messages de la consultation LOGIQUE la plus récente de l'utilisateur —
+    pour que « Reprendre ma consultation » réaffiche tout l'historique en cours
+    côté app, y compris après la fin de la fenêtre d'activité de 5 min du
+    moteur temps (TIMER-A.3d : la fenêtre facture, elle ne masque pas
+    l'historique).
 
-    Lecture seule stricte : aucune ouverture de consultation, aucune consommation
-    de crédit/quota, aucun appel LLM. « Consultation active » = exactement la même
-    définition que GET /api/consultation/state (get_consultation_state). Identité
-    prise UNIQUEMENT dans le jeton Bearer — aucun user_id lu dans la query/le body.
-    Jamais les messages d'une ancienne consultation ni d'un autre utilisateur.
-    Aucune session active -> { "consultation_id": null, "messages": [] }."""
+    Lecture seule stricte : aucune ouverture de consultation, aucun settle,
+    aucun débit (first_free / Premium / purchased), aucun touch, aucun
+    changement de conseiller, aucune mutation de tirage, aucun appel LLM,
+    aucun FOR UPDATE. Identité prise UNIQUEMENT dans le jeton Bearer — aucun
+    user_id lu dans la query/le body. Jamais les messages d'un autre
+    utilisateur. Aucune consultation -> { "consultation_id": null,
+    "messages": [] }."""
     user_id = g.app_account["user_id"]   # identité = Bearer, jamais la query/le body
-    state = get_consultation_state(user_id)
-    sc = state["consultation"]
-    if sc is None:
+    cid = _latest_consultation_id_for_user_id(user_id)
+    if cid is None:
         return _auth_json({"consultation_id": None, "messages": []}, 200)
-    messages = get_consultation_messages_for_user_id(user_id, sc["id"])
-    return _auth_json({"consultation_id": sc["id"], "messages": messages}, 200)
+    messages = get_consultation_messages_for_user_id(user_id, cid)
+    return _auth_json({"consultation_id": cid, "messages": messages}, 200)
 
 
 # ------------------------------------------------------------

@@ -220,6 +220,16 @@ class FakeCursor:
             if rows:
                 self._result = (rows[0]["id"], rows[0].get("last_activity_at"))
 
+        # ---- GET /api/consultation/messages (TIMER-A.3d) : lecture seule ABSOLUE,
+        # consultation la plus récente, SANS aucun cutoff temporel.
+        elif k == ("SELECT id FROM consultations "
+                   "WHERE user_id=%s ORDER BY started_at DESC LIMIT 1"):
+            (uid,) = p
+            rows = sorted([c for c in FAKE["consultations"] if c["user_id"] == uid],
+                          key=lambda c: c["started_at"], reverse=True)
+            if rows:
+                self._result = (rows[0]["id"],)
+
         elif k == ("SELECT id, advisor_id, last_activity_at, billed_until FROM consultations "
                    "WHERE user_id=%s ORDER BY started_at DESC LIMIT 1"):
             (uid,) = p
@@ -1336,6 +1346,107 @@ check((len(FAKE["consultations"]),
        len(FAKE["messages"]),
        sum(1 for e in FAKE["earned_credits"] if e["consumed_at"] is None)) == _snap_j,
       "M-J2 consultations / quota / messages / earned inchangés après 3 GET")
+
+# --- M-N. TIMER-A.3d : expires_at dépassé (legacy 2h) n'exclut plus l'historique
+tok = fresh()
+_T0n = A._utcnow()
+with patch.object(A, "_utcnow", return_value=_T0n), \
+     patch.object(A, "call_llm", return_value="reponse-vieille"):
+    _post(tok, "message-vieux")
+_cid_n = FAKE["consultations"][0]["id"]
+# expires_at = T0 + 2h (valeur compat) largement dépassée, 24h plus tard
+with patch.object(A, "_utcnow", return_value=_T0n + timedelta(hours=24)):
+    jn = _get_msgs(tok).get_json()
+check(jn["consultation_id"] == _cid_n
+      and [m["content"] for m in jn["messages"]] == ["message-vieux", "reponse-vieille"],
+      "M-N expires_at dépassé (24h) -> l'historique reste visible (plus de cutoff expires_at)")
+
+# --- M-O. TIMER-A.3d : fenêtre d'activité 300 s inactive depuis 1h -----------
+tok = fresh()
+with patch.object(A, "call_llm", return_value="reponse-inactive"):
+    _post(tok, "message-inactif")
+_cid_o = FAKE["consultations"][0]["id"]
+_expire_window()          # last_activity_at = billed_until = now - 1h
+_snap_acc_o = dict(FAKE["accounts"][0])
+_snap_alw_o = dict(FAKE["consultation_allowance"][0])
+_snap_con_o = dict(FAKE["consultations"][0])
+jo = _get_msgs(tok).get_json()
+check(jo["consultation_id"] == _cid_o
+      and [m["content"] for m in jo["messages"]] == ["message-inactif", "reponse-inactive"],
+      "M-O fenêtre inactive (1h) -> consultation + messages toujours renvoyés")
+check(FAKE["accounts"][0] == _snap_acc_o
+      and FAKE["consultation_allowance"][0] == _snap_alw_o
+      and FAKE["consultations"][0] == _snap_con_o,
+      "M-O2 aucune mutation : accounts / consultation_allowance / consultations inchangés "
+      "(ni settle, ni touch, ni débit first_free/premium/purchased)")
+
+# --- M-P. même conseiller repris après fenêtre expirée -> historique COMPLET -
+tok = fresh()
+_TP0 = A._utcnow()
+with patch.object(A, "_utcnow", return_value=_TP0), \
+     patch.object(A, "call_llm", return_value="reponse-1-p"):
+    _post(tok, "message-1-p")
+_cid_p = FAKE["consultations"][0]["id"]
+_expire_window()
+with patch.object(A, "_utcnow", return_value=_TP0 + timedelta(hours=6)), \
+     patch.object(A, "call_llm", return_value="reponse-2-p"):
+    _post(tok, "message-2-p")     # même advisor (selena) -> reprend la MÊME consultation
+check(len(FAKE["consultations"]) == 1 and FAKE["consultations"][0]["id"] == _cid_p,
+      "M-P0 même conseiller après fenêtre expirée -> même consultation logique reprise")
+jp = _get_msgs(tok).get_json()
+check(jp["consultation_id"] == _cid_p
+      and [m["content"] for m in jp["messages"]] == ["message-1-p", "reponse-1-p",
+                                                      "message-2-p", "reponse-2-p"],
+      "M-P historique COMPLET (pas seulement les messages de la dernière fenêtre de 5 min)")
+
+# --- M-Q. lecture seule ABSOLUE : preuve AST/code-only -----------------------
+def _code_only(fn):
+    """Source de `fn` sans son docstring — pour ne jamais confondre un mot
+    mentionné en PROSE (docstring/commentaire) avec du code exécuté."""
+    tree = _ast.parse(inspect.getsource(fn))
+    fn_node = tree.body[0]
+    if (fn_node.body and isinstance(fn_node.body[0], _ast.Expr)
+            and isinstance(fn_node.body[0].value, _ast.Constant)
+            and isinstance(fn_node.body[0].value.value, str)):
+        fn_node.body = fn_node.body[1:]
+    return _ast.unparse(fn_node)
+
+
+_FORBIDDEN_M = ("_settle_consultation_time_tx", "_debit_consultation_seconds_tx",
+                "_touch_consultation_activity_tx", "_open_time_consultation_flow_tx",
+                "get_or_open_time_consultation_tx", "open_or_get_consultation",
+                "attach_tirage_to_consultation", "get_reply_for_user_id")
+_src_latest_full = inspect.getsource(A._latest_consultation_id_for_user_id)
+_src_route_m_full = inspect.getsource(A.api_consultation_messages)
+_code_latest = _code_only(A._latest_consultation_id_for_user_id)
+_code_route_m = _code_only(A.api_consultation_messages)
+_tree_m = _ast.parse(_src_latest_full + "\n" + _src_route_m_full)
+_calls_m = {n.func.id for n in _ast.walk(_tree_m)
+            if isinstance(n, _ast.Call) and isinstance(n.func, _ast.Name)}
+_calls_m |= {n.func.attr for n in _ast.walk(_tree_m)
+             if isinstance(n, _ast.Call) and isinstance(n.func, _ast.Attribute)}
+check(not (_calls_m & set(_FORBIDDEN_M)),
+      "M-Q AST : GET /messages n'appelle AUCUNE primitive de mutation/settle/LLM du moteur temps")
+check("expires_at" not in _code_latest,
+      "M-Q2 code-only : _latest_consultation_id_for_user_id ne référence PAS expires_at "
+      "(seule la docstring en parle, en PROSE, pour expliquer ce qui n'est plus fait)")
+check("FOR UPDATE" not in _code_latest and "FOR UPDATE" not in _code_route_m,
+      "M-Q3 code-only : aucun FOR UPDATE dans le chemin GET /messages")
+
+# --- M-R. appels répétés : idempotence stricte y compris sur les buckets ----
+tok = fresh()
+with patch.object(A, "call_llm", return_value=REPLY):
+    _post(tok, "idempotence")
+_before_r = (dict(FAKE["accounts"][0]), dict(FAKE["consultation_allowance"][0]),
+             dict(FAKE["consultations"][0]))
+_json_before_r = _get_msgs(tok).get_json()
+for _ in range(3):
+    _json_r = _get_msgs(tok).get_json()
+check(_json_r == _json_before_r, "M-R1 JSON identique sur appels répétés")
+check((FAKE["accounts"][0], FAKE["consultation_allowance"][0], FAKE["consultations"][0]) == _before_r,
+      "M-R2 accounts / consultation_allowance / consultations strictement inchangés "
+      "(first_free, monthly_used_seconds, purchased, first_consultation_used_at, "
+      "last_activity_at, billed_until)")
 
 # --- M-K. identité = Bearer uniquement : ?user_id= ignoré ---------------
 tok1 = fresh(UID1)
