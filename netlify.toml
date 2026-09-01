@@ -308,16 +308,28 @@
   status = 200
 [[redirects]]
   from = "/blog/voyance-par-chat-sans-attente"
-  to = "/blog/voyance-par-chat-sans-attente.html"
-  status = 200
+  to = "/voyance-par-chat"
+  status = 301
+  force = true
+[[redirects]]
+  from = "/blog/voyance-par-chat-sans-attente.html"
+  to = "/voyance-par-chat"
+  status = 301
+  force = true
 [[redirects]]
   from = "/blog/voyance-serieuse-en-ligne"
   to = "/blog/voyance-serieuse-en-ligne.html"
   status = 200
 [[redirects]]
   from = "/blog/voyance-tchat-en-ligne"
-  to = "/blog/voyance-tchat-en-ligne.html"
-  status = 200
+  to = "/voyance-par-chat"
+  status = 301
+  force = true
+[[redirects]]
+  from = "/blog/voyance-tchat-en-ligne.html"
+  to = "/voyance-par-chat"
+  status = 301
+  force = true
 
 # ── Redirects 301 : anciennes URLs racine → /blog/ ─────────────────────────
 [[redirects]]
@@ -422,7 +434,7 @@
   status = 301
 [[redirects]]
   from = "/voyance-par-chat-sans-attente"
-  to = "/blog/voyance-par-chat-sans-attente"
+  to = "/voyance-par-chat"
   status = 301
 [[redirects]]
   from = "/voyance-serieuse-en-ligne"
@@ -430,7 +442,7 @@
   status = 301
 [[redirects]]
   from = "/voyance-tchat-en-ligne"
-  to = "/blog/voyance-tchat-en-ligne"
+  to = "/voyance-par-chat"
   status = 301
 
 [[redirects]]
