@@ -62,10 +62,20 @@ def reset_db():
 
 
 def seed_account(user_id, deleted_at=None, email="u@example.com",
-                 first_consultation_used_at=None):
-    FAKE["accounts"].append({"user_id": user_id, "email": email,
-                             "deleted_at": deleted_at,
-                             "first_consultation_used_at": first_consultation_used_at})
+                 first_consultation_used_at=None,
+                 first_free_seconds_remaining="__backfill__",
+                 purchased_seconds_remaining=0):
+    # first_free_seconds_remaining : miroir du backfill migration v34
+    # (3600 si la gratuite n'a jamais été consommée, 0 sinon), sauf override.
+    if first_free_seconds_remaining == "__backfill__":
+        first_free_seconds_remaining = (
+            3600 if first_consultation_used_at is None else 0)
+    FAKE["accounts"].append({
+        "user_id": user_id, "email": email, "deleted_at": deleted_at,
+        "first_consultation_used_at": first_consultation_used_at,
+        "first_free_seconds_remaining": first_free_seconds_remaining,
+        "purchased_seconds_remaining": purchased_seconds_remaining,
+    })
 
 
 _APP_SELECT = "SELECT " + ", ".join(A._APP_PROFILE_FIELDS) + " FROM app_profiles WHERE user_id=%s"
@@ -259,6 +269,8 @@ class FakeCursor:
                 "id": str(cid), "user_id": str(uid), "advisor_id": advisor,
                 "started_at": started, "expires_at": expires,
                 "credit_source": src, "created_at": created,
+                # colonnes moteur temps (migration v34) : NULL à l'INSERT.
+                "last_activity_at": None, "billed_until": None,
             })
             self.rowcount = 1
 
@@ -303,6 +315,8 @@ class FakeCursor:
                     "user_id": str(uid), "period_start": ps, "period_end": pe,
                     "monthly_limit": lim, "monthly_used": 0, "created_at": created,
                     "source_subscription_id": src_sub, "source_period_start": src_ps,
+                    # DEFAULT migration v34 : 8 h Premium / période, 0 consommée.
+                    "monthly_allowance_seconds": 28800, "monthly_used_seconds": 0,
                 })
                 self.rowcount = 1
 
@@ -314,6 +328,109 @@ class FakeCursor:
                 "consumed_at": None, "consultation_id": None, "metadata": meta,
             })
             self.rowcount = 1
+
+        # ---- moteur TEMPS (TIMER-A.2) + câblage GET /state (TIMER-A.3a) ----
+        elif k == ("SELECT id, advisor_id, started_at, expires_at, credit_source, "
+                   "last_activity_at, billed_until FROM consultations "
+                   "WHERE user_id=%s AND expires_at > %s ORDER BY started_at DESC LIMIT 1"):
+            uid, now = p
+            rows = [c for c in FAKE["consultations"]
+                    if c["user_id"] == uid and c["expires_at"] > now]
+            rows.sort(key=lambda c: c["started_at"], reverse=True)
+            if rows:
+                c0 = rows[0]
+                self._result = (c0["id"], c0["advisor_id"], c0["started_at"],
+                                c0["expires_at"], c0["credit_source"],
+                                c0.get("last_activity_at"), c0.get("billed_until"))
+
+        elif k == ("SELECT user_id, last_activity_at, billed_until "
+                   "FROM consultations WHERE id=%s"):
+            (cid,) = p
+            c0 = next((c for c in FAKE["consultations"] if c["id"] == str(cid)), None)
+            self._result = ((c0["user_id"], c0.get("last_activity_at"),
+                             c0.get("billed_until")) if c0 else None)
+
+        elif k == "UPDATE consultations SET billed_until=%s WHERE id=%s":
+            bu, cid = p
+            c0 = next((c for c in FAKE["consultations"] if c["id"] == str(cid)), None)
+            if c0 is not None:
+                c0["billed_until"] = bu
+                self.rowcount = 1
+            else:
+                self.rowcount = 0
+
+        elif k == ("UPDATE consultations SET last_activity_at=%s, billed_until=%s "
+                   "WHERE id=%s"):
+            la, bu, cid = p
+            c0 = next((c for c in FAKE["consultations"] if c["id"] == str(cid)), None)
+            if c0 is not None:
+                c0["last_activity_at"] = la
+                c0["billed_until"] = bu
+                self.rowcount = 1
+            else:
+                self.rowcount = 0
+
+        elif k in ("SELECT first_free_seconds_remaining, purchased_seconds_remaining "
+                   "FROM accounts WHERE user_id=%s",
+                   "SELECT first_free_seconds_remaining, purchased_seconds_remaining "
+                   "FROM accounts WHERE user_id=%s FOR UPDATE"):
+            (uid,) = p
+            a = next((x for x in FAKE["accounts"] if x["user_id"] == str(uid)), None)
+            self._result = ((a.get("first_free_seconds_remaining"),
+                             a.get("purchased_seconds_remaining")) if a else None)
+
+        elif k in ("SELECT monthly_allowance_seconds, monthly_used_seconds "
+                   "FROM consultation_allowance WHERE user_id=%s AND period_start <= %s "
+                   "AND period_end > %s ORDER BY period_start DESC LIMIT 1",
+                   "SELECT period_start, monthly_allowance_seconds, monthly_used_seconds "
+                   "FROM consultation_allowance WHERE user_id=%s AND period_start <= %s "
+                   "AND period_end > %s ORDER BY period_start DESC LIMIT 1 FOR UPDATE"):
+            uid, now, _n2 = p
+            rows = [a for a in FAKE["consultation_allowance"]
+                    if a["user_id"] == str(uid)
+                    and a["period_start"] <= now and a["period_end"] > now]
+            rows.sort(key=lambda a: a["period_start"], reverse=True)
+            if rows:
+                a0 = rows[0]
+                _al = a0.get("monthly_allowance_seconds", 28800)
+                _us = a0.get("monthly_used_seconds", 0)
+                if k.startswith("SELECT period_start,"):
+                    self._result = (a0["period_start"], _al, _us)
+                else:
+                    self._result = (_al, _us)
+
+        elif k == ("SELECT period_start, period_end FROM consultation_allowance "
+                   "WHERE user_id=%s AND period_start <= %s AND period_end > %s "
+                   "ORDER BY period_start DESC LIMIT 1"):
+            uid, now, _n2 = p
+            rows = [a for a in FAKE["consultation_allowance"]
+                    if a["user_id"] == str(uid)
+                    and a["period_start"] <= now and a["period_end"] > now]
+            rows.sort(key=lambda a: a["period_start"], reverse=True)
+            if rows:
+                self._result = (rows[0]["period_start"], rows[0]["period_end"])
+
+        elif k == ("UPDATE accounts SET first_free_seconds_remaining=%s, "
+                   "purchased_seconds_remaining=%s WHERE user_id=%s"):
+            ff, pu, uid = p
+            a = next((x for x in FAKE["accounts"] if x["user_id"] == str(uid)), None)
+            if a is not None:
+                a["first_free_seconds_remaining"] = ff
+                a["purchased_seconds_remaining"] = pu
+                self.rowcount = 1
+            else:
+                self.rowcount = 0
+
+        elif k == ("UPDATE consultation_allowance SET monthly_used_seconds=%s "
+                   "WHERE user_id=%s AND period_start=%s"):
+            used, uid, ps = p
+            a = next((x for x in FAKE["consultation_allowance"]
+                      if x["user_id"] == str(uid) and x["period_start"] == ps), None)
+            if a is not None:
+                a["monthly_used_seconds"] = used
+                self.rowcount = 1
+            else:
+                self.rowcount = 0
 
         else:
             raise AssertionError("SQL non géré par le fake B4.2 : " + k)
@@ -471,35 +588,154 @@ check(r6.get_json()["consultation"]["advisor_id"] == "selena", "6b consultation.
 check(A.get_app_profile(UID1)["guide"] == "maia",
       "6c app_profiles.guide vaut maia (jamais réécrit par la route)")
 
-# --- 7. GET /api/consultation/state -----------------------------------------
-# 7a. inactif (aucune consultation, allowance active)
+# --- 7. GET /api/consultation/state — TIMER-A.3a (bloc time + shim quota) -----
+def _state(tok):
+    return client.get("/api/consultation/state",
+                      headers={"Authorization": f"Bearer {tok}"}).get_json()
+
+
+def _set_time_meter(cid, last_activity_at, billed_until):
+    """Simule ce que _touch câblera en A.3c : pose les curseurs de fenêtre."""
+    c0 = next(c for c in FAKE["consultations"] if c["id"] == cid)
+    c0["last_activity_at"] = last_activity_at
+    c0["billed_until"] = billed_until
+
+
+# 7a. inactif : aucune consultation, Premium actif -> time + shim.
 tok = fresh()
-rs = client.get("/api/consultation/state", headers={"Authorization": f"Bearer {tok}"})
-js = rs.get_json()
-check(rs.status_code == 200 and js["consultation"] is None, "7a state : consultation = null si inactif")
-check(js["quota"]["is_premium"] is True and js["quota"]["monthly_used"] == 0
-      and js["quota"]["monthly_remaining"] == 4, "7b state : quota renvoyé (4), rien consommé")
+js = _state(tok)
+check(js["consultation"] is None, "7a state : consultation = null si inactif")
+check(js["time"]["premium_remaining_seconds"] == 28800
+      and js["time"]["total_remaining_seconds"] == 28800
+      and js["time"]["window_active"] is False
+      and js["time"]["window_expires_at"] is None,
+      "7b state : time = 28800 Premium, fenêtre inactive")
+check(js["quota"]["is_premium"] is True and js["quota"]["monthly_limit"] == 8
+      and js["quota"]["monthly_remaining"] == 8 and js["quota"]["monthly_used"] == 0,
+      "7b2 shim : monthly_limit 8, remaining 8, used 0")
 check(len(FAKE["consultations"]) == 0, "7c state n'ouvre AUCUNE consultation")
 
-# 7d. actif après un message
+# 7d. actif après un message + earned credit préservé.
 with patch.object(A, "call_llm", return_value=REPLY):
     _post(tok, "on commence")
 A.grant_earned_credit(UID1, "share_30d")
-rs = client.get("/api/consultation/state", headers={"Authorization": f"Bearer {tok}"})
-js = rs.get_json()
+js = _state(tok)
 check(js["consultation"] is not None and js["consultation"]["advisor_id"] == "selena",
-      "7d state : consultation active renvoyée")
-check(isinstance(js["consultation"]["seconds_remaining"], int)
-      and 0 < js["consultation"]["seconds_remaining"] <= 7200,
-      "7e state : seconds_remaining cohérent")
-check(js["quota"]["monthly_used"] == 1 and js["quota"]["earned_available"] == 1,
-      "7f state : quota + earned credits reflétés, aucune consommation par le GET")
-_snap = (len(FAKE["consultations"]), FAKE["consultation_allowance"][0]["monthly_used"],
+      "7d state : consultation courante renvoyée")
+check(js["consultation"]["seconds_remaining"] == js["time"]["total_remaining_seconds"]
+      == 28800,
+      "7e state : consultation.seconds_remaining == time.total_remaining_seconds (plus un countdown 2 h)")
+check(js["quota"]["earned_available"] == 1 and js["quota"]["monthly_used"] == 0,
+      "7f state : earned_credits legacy préservé (1) ; shim monthly_used=0 (aucune SECONDE débitée)")
+_snap = (len(FAKE["consultations"]),
+         FAKE["consultation_allowance"][0]["monthly_used"],
+         FAKE["consultation_allowance"][0]["monthly_used_seconds"],
+         FAKE["accounts"][0]["first_free_seconds_remaining"],
          sum(1 for e in FAKE["earned_credits"] if e["consumed_at"] is None))
-client.get("/api/consultation/state", headers={"Authorization": f"Bearer {tok}"})
-check((len(FAKE["consultations"]), FAKE["consultation_allowance"][0]["monthly_used"],
+_state(tok)
+check((len(FAKE["consultations"]),
+       FAKE["consultation_allowance"][0]["monthly_used"],
+       FAKE["consultation_allowance"][0]["monthly_used_seconds"],
+       FAKE["accounts"][0]["first_free_seconds_remaining"],
        sum(1 for e in FAKE["earned_credits"] if e["consumed_at"] is None)) == _snap,
-      "7g deux appels state consécutifs : état inchangé")
+      "7g deux appels state (last_activity NULL) : rien consommé, aucun monthly_used legacy incrémenté")
+
+# --- 7.A/B/C/D — snapshot par bucket ---------------------------------------
+tok = fresh(premium=False, first_free=True)          # nouveau compte
+check(_state(tok)["time"]["first_free_remaining_seconds"] == 3600,
+      "7.A nouveau compte -> time.first_free_remaining_seconds = 3600")
+tok = fresh()                                        # Premium, gratuite consommée
+check(_state(tok)["time"]["premium_remaining_seconds"] == 28800,
+      "7.B Premium actif -> time.premium_remaining_seconds = 28800")
+reset_db(); seed_account(UID1, first_consultation_used_at=_FF_USED,
+                         purchased_seconds_remaining=4200)
+tok = A.create_app_session(UID1)
+jt = _state(tok)["time"]
+check(jt["purchased_remaining_seconds"] == 4200, "7.C purchased persisté exposé (4200)")
+check(jt["total_remaining_seconds"]
+      == jt["first_free_remaining_seconds"] + jt["premium_remaining_seconds"]
+      + jt["purchased_remaining_seconds"],
+      "7.D total = somme exacte des 3 buckets")
+
+# --- 7.E/F — window_active / window_expires_at ---------------------------------
+tok = fresh()
+with patch.object(A, "call_llm", return_value=REPLY):
+    _post(tok, "démarre")
+_cid7 = FAKE["consultations"][0]["id"]
+check(_state(tok)["time"]["window_active"] is False
+      and _state(tok)["time"]["window_expires_at"] is None,
+      "7.E fenêtre inactive (last_activity NULL) -> window_active false, window_expires_at null")
+_la = A._utcnow()
+_set_time_meter(_cid7, _la, _la)
+jt = _state(tok)["time"]
+_expected = A._ts_iso(_la + timedelta(seconds=300))
+check(jt["window_active"] is True and jt["window_expires_at"] == _expected,
+      "7.F fenêtre active -> window_active true, window_expires_at = last_activity + 5 min")
+
+# --- 7.G/H/I — settle progressif via /state ----------------------------------
+tok = fresh()
+with patch.object(A, "call_llm", return_value=REPLY):
+    _post(tok, "go")
+_cid7 = FAKE["consultations"][0]["id"]
+_t0 = A._utcnow()
+_set_time_meter(_cid7, _t0, _t0)
+with patch.object(A, "_utcnow", return_value=_t0 + timedelta(seconds=180)):
+    _state(tok)
+check(FAKE["accounts"][0]["first_free_seconds_remaining"] == 0
+      and FAKE["consultation_allowance"][0]["monthly_used_seconds"] == 180,
+      "7.G state à +3 min -> 180 s Premium consommées (first_free déjà à 0)")
+with patch.object(A, "_utcnow", return_value=_t0 + timedelta(seconds=180)):
+    _state(tok)
+check(FAKE["consultation_allowance"][0]["monthly_used_seconds"] == 180,
+      "7.H même state répété au même instant -> aucun double débit")
+with patch.object(A, "_utcnow", return_value=_t0 + timedelta(seconds=480)):
+    _state(tok)
+check(FAKE["consultation_allowance"][0]["monthly_used_seconds"] == 300,
+      "7.I state à +8 min -> fenêtre plafonnée à 300 s au total")
+
+# --- 7.J — seconds_remaining == total_remaining_seconds ----------------------
+js = _state(tok)
+check(js["consultation"]["seconds_remaining"] == js["time"]["total_remaining_seconds"],
+      "7.J consultation.seconds_remaining == time.total_remaining_seconds")
+
+# --- 7.K — shim quota exact -------------------------------------------------
+tok = fresh()
+FAKE["consultation_allowance"][0]["monthly_used_seconds"] = 5400   # 1 h 30 consommée
+jq = _state(tok)["quota"]
+check(jq["monthly_limit"] == 8
+      and jq["monthly_remaining"] == 7          # ceil((28800-5400)/3600) = ceil(6.5) = 7
+      and jq["monthly_used"] == 1,              # 8 - 7
+      "7.K shim : monthly_limit 8, monthly_remaining ceil(premium/3600)=7, monthly_used 1")
+
+# --- 7.L — first_free_available dérivé du temps -----------------------------
+tok = fresh(premium=False, first_free=True)
+check(_state(tok)["quota"]["first_free_available"] is True, "7.L compte neuf -> first_free_available true")
+tok = fresh(premium=False)                                       # gratuite consommée
+check(_state(tok)["quota"]["first_free_available"] is False, "7.L2 gratuite consommée -> false")
+
+# --- 7.M — earned_available legacy préservé --------------------------------
+tok = fresh(premium=False)
+A.grant_earned_credit(UID1, "referral")
+A.grant_earned_credit(UID1, "share_30d")
+check(_state(tok)["quota"]["earned_available"] == 2
+      and sum(1 for e in FAKE["earned_credits"] if e["consumed_at"] is None) == 2,
+      "7.M earned_credits legacy exposés (2) et NON consommés par le GET")
+
+# --- 7.N/O/P — endpoint sans LLM, ne crée rien, n'incrémente pas le legacy ---
+tok = fresh()
+with patch.object(A, "call_llm", return_value=REPLY) as m_llm7:
+    _post(tok, "x")
+_before = (len(FAKE["consultations"]), FAKE["consultation_allowance"][0]["monthly_used"])
+_cid7 = FAKE["consultations"][0]["id"]
+_t0 = A._utcnow()
+_set_time_meter(_cid7, _t0, _t0)
+with patch.object(A, "call_llm", return_value=REPLY) as m_llm7b, \
+     patch.object(A, "_utcnow", return_value=_t0 + timedelta(seconds=120)):
+    _state(tok)
+check(m_llm7b.call_count == 0, "7.N GET /state n'appelle JAMAIS le LLM")
+check(len(FAKE["consultations"]) == _before[0], "7.O GET /state ne crée AUCUNE consultation")
+check(FAKE["consultation_allowance"][0]["monthly_used"] == _before[1],
+      "7.P GET /state n'incrémente JAMAIS monthly_used legacy (seul monthly_used_seconds bouge)")
 
 # --- 8. session expirée : le message suivant tente une NOUVELLE ouverture -----
 tok = fresh()

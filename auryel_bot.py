@@ -2990,7 +2990,11 @@ def _ts_iso(dt):
 
 
 def _quota_json(quota):
-    """Bloc quota public (get_consultation_state -> JSON mobile)."""
+    """Bloc quota public (get_consultation_state -> JSON mobile).
+
+    Toujours utilisé par POST /api/consultation/message (modèle par-compte,
+    inchangé jusqu'à A.3c). GET /api/consultation/state utilise désormais
+    `_quota_shim_json` (approximation UI dérivée du TEMPS)."""
     return {
         "is_premium": quota["is_premium"],
         "monthly_limit": quota["monthly_limit"],
@@ -3000,6 +3004,180 @@ def _quota_json(quota):
         "first_free_available": quota["first_free_available"],
         "period_start": _ts_iso(quota["period_start"]),
         "period_end": _ts_iso(quota["period_end"]),
+    }
+
+
+# ------------------------------------------------------------
+# TIMER-A.3a — GET /api/consultation/state branché sur le MOTEUR TEMPS.
+# Ne touche NI open_or_get_consultation NI POST /api/consultation/message NI
+# GET /api/consultation/messages NI resync_premium_entitlement (câblage = A.3c).
+# ------------------------------------------------------------
+
+_QUOTA_SHIM_MONTHLY_LIMIT_HOURS = 8   # 8 h Premium / période (affichage UI)
+
+
+def _state_with_time_settle(user_id, now=None):
+    """État pour GET /api/consultation/state : UNE transaction qui verrouille
+    `accounts` FOR UPDATE (mutex par utilisateur), settle la fenêtre d'activité
+    de la consultation COURANTE si elle existe (débite les secondes réellement
+    écoulées via le moteur A.2 : accounts FOR UPDATE -> consultation_allowance
+    FOR UPDATE, AUCUN FOR UPDATE sur consultations), lit le snapshot temps,
+    commit.
+
+    N'OUVRE / NE CRÉE aucune consultation. N'incrémente PAS monthly_used
+    (legacy). Ne consomme AUCUN earned_credit. N'appelle AUCUN LLM. La
+    consultation « courante » est identifiée par la logique 2 h ENCORE EN
+    VIGUEUR (expires_at > now) — refactor = A.3c.
+
+    Retour (dict interne, sérialisé par l'endpoint) :
+      { consultation: {id, advisor_id, started_at, expires_at, credit_source}|None,
+        time_snapshot: {first_free_remaining_seconds, premium_remaining_seconds,
+                        purchased_remaining_seconds, total_remaining_seconds},
+        window_active: bool, window_expires_at: datetime|None,
+        earned_available: int,
+        quota_legacy: {is_premium, period_start, period_end}|None }
+    """
+    if now is None:
+        now = _utcnow()
+    uid = str(user_id)
+    conn = get_conn()
+    try:
+        c = conn.cursor()
+
+        # C. mutex par utilisateur (même verrou que open_or_get_consultation).
+        c.execute(
+            "SELECT user_id, first_consultation_used_at FROM accounts "
+            "WHERE user_id=%s AND deleted_at IS NULL FOR UPDATE",
+            (uid,),
+        )
+        if c.fetchone() is None:
+            conn.rollback()
+            return {
+                "consultation": None,
+                "time_snapshot": {
+                    "first_free_remaining_seconds": 0,
+                    "premium_remaining_seconds": 0,
+                    "purchased_remaining_seconds": 0,
+                    "total_remaining_seconds": 0,
+                },
+                "window_active": False, "window_expires_at": None,
+                "earned_available": 0, "quota_legacy": None,
+            }
+
+        # D. consultation « courante » — logique 2 h ACTUELLE (inchangée ici).
+        c.execute(
+            """SELECT id, advisor_id, started_at, expires_at, credit_source,
+                      last_activity_at, billed_until
+               FROM consultations
+               WHERE user_id=%s AND expires_at > %s
+               ORDER BY started_at DESC
+               LIMIT 1""",
+            (uid, now),
+        )
+        crow = c.fetchone()
+        consultation = None
+        last_activity_at = None
+        if crow is not None:
+            (cid, advisor_id, started_at, expires_at, credit_source,
+             last_activity_at, _billed_until) = crow
+            consultation = {
+                "id": str(cid), "advisor_id": advisor_id,
+                "started_at": started_at, "expires_at": expires_at,
+                "credit_source": credit_source,
+            }
+            # E. settle de la fenêtre temps (no-op si last_activity_at NULL —
+            #    c'est le cas en production tant que _touch n'est pas câblé).
+            _settle_consultation_time_tx(c, uid, cid, now)
+
+        # F. snapshot temps APRÈS settle (lecture seule).
+        snap = _get_time_snapshot_tx(c, uid, now)
+
+        # Legacy (lecture seule) : period_* / is_premium / earned_available du
+        # shim. monthly_limit / monthly_used legacy NE sont PAS relus ici.
+        c.execute(
+            """SELECT period_start, period_end
+               FROM consultation_allowance
+               WHERE user_id=%s AND period_start <= %s AND period_end > %s
+               ORDER BY period_start DESC
+               LIMIT 1""",
+            (uid, now, now),
+        )
+        arow = c.fetchone()
+        c.execute(
+            "SELECT COUNT(*) FROM earned_credits "
+            "WHERE user_id=%s AND consumed_at IS NULL",
+            (uid,),
+        )
+        earned_available = int(c.fetchone()[0])
+
+        conn.commit()
+
+        # window_active : consultation + fenêtre non expirée + temps dispo > 0.
+        window_active = False
+        window_expires_at = None
+        if consultation is not None and last_activity_at is not None:
+            win_end = _window_end(last_activity_at)
+            if now < win_end and snap["total_remaining_seconds"] > 0:
+                window_active = True
+                window_expires_at = win_end
+
+        quota_legacy = None
+        if arow is not None:
+            quota_legacy = {"is_premium": True,
+                            "period_start": arow[0], "period_end": arow[1]}
+
+        return {
+            "consultation": consultation,
+            "time_snapshot": snap,
+            "window_active": window_active,
+            "window_expires_at": window_expires_at,
+            "earned_available": earned_available,
+            "quota_legacy": quota_legacy,
+        }
+    finally:
+        conn.close()
+
+
+def _time_json(st):
+    """Bloc `time` public — SOURCE DE VÉRITÉ des secondes disponibles."""
+    snap = st["time_snapshot"]
+    return {
+        "first_free_remaining_seconds": int(snap["first_free_remaining_seconds"]),
+        "premium_remaining_seconds": int(snap["premium_remaining_seconds"]),
+        "purchased_remaining_seconds": int(snap["purchased_remaining_seconds"]),
+        "total_remaining_seconds": int(snap["total_remaining_seconds"]),
+        "window_active": bool(st["window_active"]),
+        "window_expires_at": _ts_iso(st["window_expires_at"]),
+    }
+
+
+def _quota_shim_json(st):
+    """SHIM de compatibilité pour le Flutter ACTUEL (remplacé par TIMER-D).
+
+    ⚠️ APPROXIMATION UI UNIQUEMENT. Ce bloc n'est JAMAIS relu par le moteur
+    pour débiter — la SOURCE DE VÉRITÉ des secondes est le bloc `time`.
+      monthly_limit        : 8 (heures Premium / période, constante d'affichage)
+      monthly_remaining    : ceil(premium_remaining_seconds / 3600)
+      monthly_used         : max(0, 8 - monthly_remaining)
+      first_free_available : first_free_remaining_seconds > 0  (dérivé du TEMPS)
+      earned_available     : compteur legacy earned_credits (lecture seule)
+      is_premium / period_*: entitlement Premium réel existant
+    """
+    snap = st["time_snapshot"]
+    ql = st.get("quota_legacy")
+    premium_remaining = int(snap["premium_remaining_seconds"])
+    # ceil(a / 3600) sans import : -(-a // 3600) pour a >= 0.
+    monthly_remaining = -(-premium_remaining // 3600) if premium_remaining > 0 else 0
+    limit = _QUOTA_SHIM_MONTHLY_LIMIT_HOURS
+    return {
+        "is_premium": bool(ql is not None),
+        "monthly_limit": limit,
+        "monthly_used": max(0, limit - monthly_remaining),
+        "monthly_remaining": monthly_remaining,
+        "earned_available": int(st.get("earned_available", 0)),
+        "first_free_available": int(snap["first_free_remaining_seconds"]) > 0,
+        "period_start": _ts_iso(ql["period_start"]) if ql else None,
+        "period_end": _ts_iso(ql["period_end"]) if ql else None,
     }
 
 
@@ -3116,12 +3294,26 @@ def api_consultation_message():
 @app.route("/api/consultation/state", methods=["GET"])
 @require_app_auth
 def api_consultation_state():
-    """État de la consultation courante + quota. Lecture seule stricte : aucune
-    ouverture, aucune consommation de crédit, aucun appel LLM. La consultation ne
-    démarre QUE via /api/consultation/message (1er message) — pas de route /start."""
+    """État de la consultation courante + TEMPS (TIMER-A.3a).
+
+    N'ouvre / ne crée AUCUNE consultation, n'incrémente PAS monthly_used
+    (legacy), ne consomme AUCUN earned_credit, n'appelle AUCUN LLM. La
+    consultation ne démarre QUE via /api/consultation/message (1er message).
+
+    En revanche cet endpoint RÉGULARISE désormais le compteur temps : UNE
+    transaction, `accounts` FOR UPDATE (mutex par utilisateur), settle de la
+    fenêtre d'activité de la consultation courante si elle existe (moteur A.2,
+    ordre de verrous accounts -> consultation_allowance, jamais consultations),
+    snapshot temps, commit.
+
+    Réponse : `consultation` (champs inchangés ; `seconds_remaining` vaut
+    désormais le TEMPS TOTAL restant, plus `expires_at - now`), `time` (SOURCE
+    DE VÉRITÉ), `quota` (SHIM de compat UI — jamais relu pour débiter).
+    `open_or_get_consultation` / POST message / GET messages / resync :
+    INCHANGÉS (câblage = A.3c)."""
     user_id = g.app_account["user_id"]
-    state = get_consultation_state(user_id)
-    sc = state["consultation"]
+    st = _state_with_time_settle(user_id)
+    sc = st["consultation"]
     consultation = None
     if sc is not None:
         consultation = {
@@ -3129,12 +3321,14 @@ def api_consultation_state():
             "advisor_id": sc["advisor_id"],
             "started_at": _ts_iso(sc["started_at"]),
             "expires_at": _ts_iso(sc["expires_at"]),
-            "seconds_remaining": sc["seconds_remaining"],
+            # A.3a : plus un countdown 2 h -> temps TOTAL restant (tous buckets).
+            "seconds_remaining": int(st["time_snapshot"]["total_remaining_seconds"]),
             "credit_source": sc["credit_source"],
         }
     return _auth_json({
         "consultation": consultation,
-        "quota": _quota_json(state["quota"]),
+        "time": _time_json(st),
+        "quota": _quota_shim_json(st),
     }, 200)
 
 
