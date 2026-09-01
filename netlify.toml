@@ -4,6 +4,19 @@
 [build]
   publish = "."
 
+# ── Domaine canonique sans www ─────────────────────────────────────────────
+[[redirects]]
+  from = "https://www.auryelvoyance.com/*"
+  to = "https://auryelvoyance.com/:splat"
+  status = 301
+  force = true
+
+[[redirects]]
+  from = "http://www.auryelvoyance.com/*"
+  to = "https://auryelvoyance.com/:splat"
+  status = 301
+  force = true
+
 [[headers]]
   for = "/*"
   [headers.values]
@@ -70,6 +83,56 @@
   to = "/"
   status = 301
 
+# ── Anciennes entrées : transfert vers l’application ───────────────────────
+[[redirects]]
+  from = "/inscription"
+  to = "/application"
+  status = 301
+  force = true
+
+[[redirects]]
+  from = "/inscription/"
+  to = "/application"
+  status = 301
+  force = true
+
+[[redirects]]
+  from = "/inscription.html"
+  to = "/application"
+  status = 301
+  force = true
+
+[[redirects]]
+  from = "/voyance-par-whatsapp"
+  to = "/voyance-par-whatsapp.html"
+  status = 200
+  force = true
+
+[[redirects]]
+  from = "/voyance-par-whatsapp.html"
+  to = "/voyance-par-whatsapp"
+  status = 301
+  force = true
+
+# ── Une seule URL par page principale ──────────────────────────────────────
+[[redirects]]
+  from = "/tarifs/"
+  to = "/tarifs"
+  status = 301
+  force = true
+
+[[redirects]]
+  from = "/comment-ca-marche/"
+  to = "/comment-ca-marche"
+  status = 301
+  force = true
+
+[[redirects]]
+  from = "/conseillers/"
+  to = "/conseillers"
+  status = 301
+  force = true
+
 # ── Clean URLs : pages principales (200 rewrite) ────────────────────────────
 [[redirects]]
   from = "/resiliation"
@@ -92,15 +155,9 @@
   status = 200
 
 [[redirects]]
-  from = "/inscription"
-  to = "/inscription/index.html"
+  from = "/application"
+  to = "/application.html"
   status = 200
-
-[[redirects]]
-  from = "/inscription.html"
-  to = "/inscription"
-  status = 301
-  force = true
 
 [[redirects]]
   from = "/blog"
@@ -251,16 +308,28 @@
   status = 200
 [[redirects]]
   from = "/blog/voyance-par-chat-sans-attente"
-  to = "/blog/voyance-par-chat-sans-attente.html"
-  status = 200
+  to = "/voyance-par-chat"
+  status = 301
+  force = true
+[[redirects]]
+  from = "/blog/voyance-par-chat-sans-attente.html"
+  to = "/voyance-par-chat"
+  status = 301
+  force = true
 [[redirects]]
   from = "/blog/voyance-serieuse-en-ligne"
   to = "/blog/voyance-serieuse-en-ligne.html"
   status = 200
 [[redirects]]
   from = "/blog/voyance-tchat-en-ligne"
-  to = "/blog/voyance-tchat-en-ligne.html"
-  status = 200
+  to = "/voyance-par-chat"
+  status = 301
+  force = true
+[[redirects]]
+  from = "/blog/voyance-tchat-en-ligne.html"
+  to = "/voyance-par-chat"
+  status = 301
+  force = true
 
 # ── Redirects 301 : anciennes URLs racine → /blog/ ─────────────────────────
 [[redirects]]
@@ -365,7 +434,7 @@
   status = 301
 [[redirects]]
   from = "/voyance-par-chat-sans-attente"
-  to = "/blog/voyance-par-chat-sans-attente"
+  to = "/voyance-par-chat"
   status = 301
 [[redirects]]
   from = "/voyance-serieuse-en-ligne"
@@ -373,7 +442,7 @@
   status = 301
 [[redirects]]
   from = "/voyance-tchat-en-ligne"
-  to = "/blog/voyance-tchat-en-ligne"
+  to = "/voyance-par-chat"
   status = 301
 
 [[redirects]]
@@ -428,6 +497,26 @@
 
 # ── Clean URLs : pages SEO racine (200 rewrite) ─────────────────────────────
 [[redirects]]
+  from = "/voyance"
+  to = "/voyance.html"
+  status = 200
+[[redirects]]
+  from = "/voyance-en-ligne"
+  to = "/voyance-en-ligne.html"
+  status = 200
+[[redirects]]
+  from = "/voyance-par-chat"
+  to = "/voyance-par-chat.html"
+  status = 200
+[[redirects]]
+  from = "/voyance-gratuite"
+  to = "/voyance-gratuite.html"
+  status = 200
+[[redirects]]
+  from = "/voyance-ia"
+  to = "/voyance-ia.html"
+  status = 200
+[[redirects]]
   from = "/guidance-spirituelle"
   to = "/guidance-spirituelle.html"
   status = 200
@@ -450,6 +539,14 @@
 [[redirects]]
   from = "/medium-serieux"
   to = "/medium-serieux.html"
+  status = 200
+[[redirects]]
+  from = "/numerologie"
+  to = "/numerologie.html"
+  status = 200
+[[redirects]]
+  from = "/tarot-oui-non"
+  to = "/tarot-oui-non.html"
   status = 200
 
 # ── Clean URLs : nouveaux articles blog batch 3 (200 rewrite) ────────────────

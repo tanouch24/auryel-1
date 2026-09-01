@@ -2,24 +2,24 @@
 <urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
 
   <!-- Pages principales -->
-  <url><loc>https://auryelvoyance.com/</loc><lastmod>2026-05-15</lastmod><changefreq>weekly</changefreq><priority>1.0</priority></url>
-  <url><loc>https://auryelvoyance.com/conseillers</loc><lastmod>2026-05-15</lastmod><changefreq>weekly</changefreq><priority>0.9</priority></url>
-  <url><loc>https://auryelvoyance.com/tarifs</loc><lastmod>2026-05-15</lastmod><changefreq>monthly</changefreq><priority>0.9</priority></url>
-  <url><loc>https://auryelvoyance.com/inscription</loc><lastmod>2026-05-15</lastmod><changefreq>monthly</changefreq><priority>0.9</priority></url>
-  <url><loc>https://auryelvoyance.com/comment-ca-marche</loc><lastmod>2026-05-15</lastmod><changefreq>monthly</changefreq><priority>0.7</priority></url>
-  <url><loc>https://auryelvoyance.com/blog</loc><lastmod>2026-05-15</lastmod><changefreq>daily</changefreq><priority>0.8</priority></url>
+  <url><loc>https://auryelvoyance.com/</loc><lastmod>2026-08-31</lastmod><changefreq>weekly</changefreq><priority>1.0</priority></url>
+  <url><loc>https://auryelvoyance.com/application</loc><lastmod>2026-08-31</lastmod><changefreq>monthly</changefreq><priority>0.95</priority></url>
+  <url><loc>https://auryelvoyance.com/conseillers</loc><lastmod>2026-08-31</lastmod><changefreq>weekly</changefreq><priority>0.9</priority></url>
+  <url><loc>https://auryelvoyance.com/tarifs</loc><lastmod>2026-08-31</lastmod><changefreq>monthly</changefreq><priority>0.9</priority></url>
+  <url><loc>https://auryelvoyance.com/comment-ca-marche</loc><lastmod>2026-08-31</lastmod><changefreq>monthly</changefreq><priority>0.7</priority></url>
+  <url><loc>https://auryelvoyance.com/blog</loc><lastmod>2026-08-31</lastmod><changefreq>daily</changefreq><priority>0.8</priority></url>
   <url><loc>https://auryelvoyance.com/recrutement</loc><lastmod>2026-05-15</lastmod><changefreq>monthly</changefreq><priority>0.4</priority></url>
 
   <!-- Articles SEO -->
   <url><loc>https://auryelvoyance.com/blog/ascendant-astrologique</loc><lastmod>2026-05-19</lastmod><changefreq>monthly</changefreq><priority>0.8</priority></url>
-  <url><loc>https://auryelvoyance.com/blog/avenir-sentimental-gratuit</loc><lastmod>2026-05-19</lastmod><changefreq>monthly</changefreq><priority>0.8</priority></url>
+  <url><loc>https://auryelvoyance.com/blog/avenir-sentimental-gratuit</loc><lastmod>2026-08-31</lastmod><changefreq>monthly</changefreq><priority>0.8</priority></url>
   <url><loc>https://auryelvoyance.com/blog/calcul-numerologie-prenom</loc><lastmod>2026-05-19</lastmod><changefreq>monthly</changefreq><priority>0.8</priority></url>
   <url><loc>https://auryelvoyance.com/blog/chakras-et-energie</loc><lastmod>2026-05-19</lastmod><changefreq>monthly</changefreq><priority>0.8</priority></url>
   <url><loc>https://auryelvoyance.com/blog/comment-choisir-son-voyant-en-ligne</loc><lastmod>2026-05-19</lastmod><changefreq>monthly</changefreq><priority>0.8</priority></url>
   <url><loc>https://auryelvoyance.com/blog/compatibilite-amoureuse-signe-astrologique</loc><lastmod>2026-05-19</lastmod><changefreq>monthly</changefreq><priority>0.8</priority></url>
   <url><loc>https://auryelvoyance.com/blog/interpretation-reves-symbolique</loc><lastmod>2026-05-19</lastmod><changefreq>monthly</changefreq><priority>0.8</priority></url>
-  <url><loc>https://auryelvoyance.com/blog/medium-gratuit-premiere-consultation</loc><lastmod>2026-05-19</lastmod><changefreq>monthly</changefreq><priority>0.8</priority></url>
-  <url><loc>https://auryelvoyance.com/blog/mon-ex-va-t-il-revenir-voyance</loc><lastmod>2026-05-19</lastmod><changefreq>monthly</changefreq><priority>0.8</priority></url>
+  <url><loc>https://auryelvoyance.com/blog/medium-gratuit-premiere-consultation</loc><lastmod>2026-08-31</lastmod><changefreq>monthly</changefreq><priority>0.8</priority></url>
+  <url><loc>https://auryelvoyance.com/blog/mon-ex-va-t-il-revenir-voyance</loc><lastmod>2026-08-31</lastmod><changefreq>monthly</changefreq><priority>0.8</priority></url>
   <url><loc>https://auryelvoyance.com/blog/numerologie-date-naissance-chemin-de-vie</loc><lastmod>2026-05-19</lastmod><changefreq>monthly</changefreq><priority>0.8</priority></url>
   <url><loc>https://auryelvoyance.com/blog/oracle-gratuit-en-ligne</loc><lastmod>2026-05-19</lastmod><changefreq>monthly</changefreq><priority>0.8</priority></url>
   <url><loc>https://auryelvoyance.com/blog/pierre-de-protection-esoterisme</loc><lastmod>2026-05-19</lastmod><changefreq>monthly</changefreq><priority>0.8</priority></url>
@@ -29,16 +29,14 @@
   <url><loc>https://auryelvoyance.com/blog/reves-et-leur-signification</loc><lastmod>2026-05-19</lastmod><changefreq>monthly</changefreq><priority>0.8</priority></url>
   <url><loc>https://auryelvoyance.com/blog/signification-des-lames-du-tarot</loc><lastmod>2026-05-19</lastmod><changefreq>monthly</changefreq><priority>0.8</priority></url>
   <url><loc>https://auryelvoyance.com/blog/signification-reves-voyance</loc><lastmod>2026-05-19</lastmod><changefreq>monthly</changefreq><priority>0.8</priority></url>
-  <url><loc>https://auryelvoyance.com/blog/tarot-amour-gratuit-en-ligne</loc><lastmod>2026-05-19</lastmod><changefreq>monthly</changefreq><priority>0.8</priority></url>
+  <url><loc>https://auryelvoyance.com/blog/tarot-amour-gratuit-en-ligne</loc><lastmod>2026-09-01</lastmod><changefreq>monthly</changefreq><priority>0.8</priority></url>
   <url><loc>https://auryelvoyance.com/blog/tarot-de-marseille-en-ligne</loc><lastmod>2026-05-19</lastmod><changefreq>monthly</changefreq><priority>0.8</priority></url>
-  <url><loc>https://auryelvoyance.com/blog/tarot-oui-non-reponse-immediate</loc><lastmod>2026-08-29</lastmod><changefreq>monthly</changefreq><priority>0.8</priority></url>
+  <url><loc>https://auryelvoyance.com/blog/tarot-oui-non-reponse-immediate</loc><lastmod>2026-09-01</lastmod><changefreq>monthly</changefreq><priority>0.8</priority></url>
   <url><loc>https://auryelvoyance.com/blog/theme-astral-gratuit</loc><lastmod>2026-05-19</lastmod><changefreq>monthly</changefreq><priority>0.8</priority></url>
-  <url><loc>https://auryelvoyance.com/blog/voyance-amour-gratuite</loc><lastmod>2026-05-19</lastmod><changefreq>monthly</changefreq><priority>0.8</priority></url>
+  <url><loc>https://auryelvoyance.com/blog/voyance-amour-gratuite</loc><lastmod>2026-08-31</lastmod><changefreq>monthly</changefreq><priority>0.8</priority></url>
   <url><loc>https://auryelvoyance.com/blog/voyance-argent-et-finances</loc><lastmod>2026-05-19</lastmod><changefreq>monthly</changefreq><priority>0.8</priority></url>
   <url><loc>https://auryelvoyance.com/blog/voyance-avenir-professionnel</loc><lastmod>2026-05-19</lastmod><changefreq>monthly</changefreq><priority>0.8</priority></url>
-  <url><loc>https://auryelvoyance.com/blog/voyance-par-chat-sans-attente</loc><lastmod>2026-05-19</lastmod><changefreq>monthly</changefreq><priority>0.8</priority></url>
-  <url><loc>https://auryelvoyance.com/blog/voyance-serieuse-en-ligne</loc><lastmod>2026-05-19</lastmod><changefreq>monthly</changefreq><priority>0.8</priority></url>
-  <url><loc>https://auryelvoyance.com/blog/voyance-tchat-en-ligne</loc><lastmod>2026-05-19</lastmod><changefreq>monthly</changefreq><priority>0.8</priority></url>
+  <url><loc>https://auryelvoyance.com/blog/voyance-serieuse-en-ligne</loc><lastmod>2026-08-31</lastmod><changefreq>monthly</changefreq><priority>0.8</priority></url>
   <url><loc>https://auryelvoyance.com/blog/pourquoi-mon-ex-revient-puis-repart</loc><lastmod>2026-05-19</lastmod><changefreq>monthly</changefreq><priority>0.8</priority></url>
   <url><loc>https://auryelvoyance.com/blog/il-ne-repond-plus-que-faire</loc><lastmod>2026-05-19</lastmod><changefreq>monthly</changefreq><priority>0.8</priority></url>
   <url><loc>https://auryelvoyance.com/blog/comment-oublier-quelqu-un-qu-on-aime-encore</loc><lastmod>2026-05-19</lastmod><changefreq>monthly</changefreq><priority>0.8</priority></url>
@@ -46,24 +44,26 @@
   <url><loc>https://auryelvoyance.com/blog/pourquoi-je-pense-encore-a-lui</loc><lastmod>2026-05-19</lastmod><changefreq>monthly</changefreq><priority>0.8</priority></url>
   <url><loc>https://auryelvoyance.com/blog/dependance-affective-comment-s-en-sortir</loc><lastmod>2026-05-19</lastmod><changefreq>monthly</changefreq><priority>0.8</priority></url>
   <url><loc>https://auryelvoyance.com/blog/silence-radio-amour-signification</loc><lastmod>2026-05-19</lastmod><changefreq>monthly</changefreq><priority>0.8</priority></url>
+  <url><loc>https://auryelvoyance.com/blog/23h23-signification-amour</loc><lastmod>2026-08-31</lastmod><changefreq>monthly</changefreq><priority>0.8</priority></url>
   <url><loc>https://auryelvoyance.com/blog/heure-miroir-22h22-signification</loc><lastmod>2026-05-19</lastmod><changefreq>monthly</changefreq><priority>0.8</priority></url>
   <url><loc>https://auryelvoyance.com/blog/relation-karmique-signes-signification</loc><lastmod>2026-05-19</lastmod><changefreq>monthly</changefreq><priority>0.8</priority></url>
   <url><loc>https://auryelvoyance.com/blog/synchronicites-amour-signification</loc><lastmod>2026-05-19</lastmod><changefreq>monthly</changefreq><priority>0.8</priority></url>
 
   <!-- Pages SEO racine -->
-  <url><loc>https://auryelvoyance.com/voyance</loc><lastmod>2026-08-29</lastmod><changefreq>monthly</changefreq><priority>0.9</priority></url>
-  <url><loc>https://auryelvoyance.com/guidance-spirituelle</loc><lastmod>2026-05-19</lastmod><changefreq>monthly</changefreq><priority>0.85</priority></url>
-  <url><loc>https://auryelvoyance.com/voyance-amour</loc><lastmod>2026-06-24</lastmod><changefreq>monthly</changefreq><priority>0.85</priority></url>
-  <url><loc>https://auryelvoyance.com/tirage-tarot</loc><lastmod>2026-05-19</lastmod><changefreq>monthly</changefreq><priority>0.85</priority></url>
-  <url><loc>https://auryelvoyance.com/flamme-jumelle</loc><lastmod>2026-05-19</lastmod><changefreq>monthly</changefreq><priority>0.85</priority></url>
-  <url><loc>https://auryelvoyance.com/heure-miroir</loc><lastmod>2026-05-19</lastmod><changefreq>monthly</changefreq><priority>0.85</priority></url>
-  <url><loc>https://auryelvoyance.com/medium-serieux</loc><lastmod>2026-05-19</lastmod><changefreq>monthly</changefreq><priority>0.85</priority></url>
-  <url><loc>https://auryelvoyance.com/numerologie</loc><lastmod>2026-05-26</lastmod><changefreq>monthly</changefreq><priority>0.9</priority></url>
-  <url><loc>https://auryelvoyance.com/voyance-par-whatsapp</loc><lastmod>2026-06-29</lastmod><changefreq>monthly</changefreq><priority>0.9</priority></url>
-  <url><loc>https://auryelvoyance.com/voyance-par-chat</loc><lastmod>2026-06-05</lastmod><changefreq>monthly</changefreq><priority>0.9</priority></url>
-  <url><loc>https://auryelvoyance.com/voyance-en-ligne</loc><lastmod>2026-08-29</lastmod><changefreq>monthly</changefreq><priority>0.95</priority></url>
-  <url><loc>https://auryelvoyance.com/voyance-gratuite</loc><lastmod>2026-06-05</lastmod><changefreq>monthly</changefreq><priority>0.9</priority></url>
-  <url><loc>https://auryelvoyance.com/tarot-oui-non</loc><lastmod>2026-06-18</lastmod><changefreq>monthly</changefreq><priority>0.9</priority></url>
+  <url><loc>https://auryelvoyance.com/voyance</loc><lastmod>2026-08-31</lastmod><changefreq>monthly</changefreq><priority>0.9</priority></url>
+  <url><loc>https://auryelvoyance.com/guidance-spirituelle</loc><lastmod>2026-08-31</lastmod><changefreq>monthly</changefreq><priority>0.85</priority></url>
+  <url><loc>https://auryelvoyance.com/voyance-amour</loc><lastmod>2026-08-31</lastmod><changefreq>monthly</changefreq><priority>0.85</priority></url>
+  <url><loc>https://auryelvoyance.com/tirage-tarot</loc><lastmod>2026-08-31</lastmod><changefreq>monthly</changefreq><priority>0.85</priority></url>
+  <url><loc>https://auryelvoyance.com/flamme-jumelle</loc><lastmod>2026-08-31</lastmod><changefreq>monthly</changefreq><priority>0.85</priority></url>
+  <url><loc>https://auryelvoyance.com/heure-miroir</loc><lastmod>2026-08-31</lastmod><changefreq>monthly</changefreq><priority>0.85</priority></url>
+  <url><loc>https://auryelvoyance.com/medium-serieux</loc><lastmod>2026-08-31</lastmod><changefreq>monthly</changefreq><priority>0.85</priority></url>
+  <url><loc>https://auryelvoyance.com/numerologie</loc><lastmod>2026-08-31</lastmod><changefreq>monthly</changefreq><priority>0.9</priority></url>
+  <url><loc>https://auryelvoyance.com/voyance-par-chat</loc><lastmod>2026-08-31</lastmod><changefreq>monthly</changefreq><priority>0.9</priority></url>
+  <url><loc>https://auryelvoyance.com/voyance-par-whatsapp</loc><lastmod>2026-09-01</lastmod><changefreq>monthly</changefreq><priority>0.8</priority></url>
+  <url><loc>https://auryelvoyance.com/voyance-en-ligne</loc><lastmod>2026-08-31</lastmod><changefreq>monthly</changefreq><priority>0.95</priority></url>
+  <url><loc>https://auryelvoyance.com/voyance-gratuite</loc><lastmod>2026-08-31</lastmod><changefreq>monthly</changefreq><priority>0.9</priority></url>
+  <url><loc>https://auryelvoyance.com/voyance-ia</loc><lastmod>2026-09-01</lastmod><changefreq>monthly</changefreq><priority>0.9</priority></url>
+  <url><loc>https://auryelvoyance.com/tarot-oui-non</loc><lastmod>2026-08-31</lastmod><changefreq>monthly</changefreq><priority>0.9</priority></url>
 
   <!-- Nouveaux articles blog batch 3 -->
   <url><loc>https://auryelvoyance.com/blog/pourquoi-certaines-ruptures-obseident-autant</loc><lastmod>2026-05-19</lastmod><changefreq>monthly</changefreq><priority>0.8</priority></url>
