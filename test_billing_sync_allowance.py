@@ -118,6 +118,12 @@ GS_ALW = _norm("SELECT period_start, period_end, monthly_limit, monthly_used "
 GS_EARNED = _norm("SELECT COUNT(*) FROM earned_credits "
                   "WHERE user_id=%s AND consumed_at IS NULL")
 GS_FF = _norm("SELECT first_consultation_used_at FROM accounts WHERE user_id=%s")
+# _get_time_snapshot_tx (moteur temps, lecture seule)
+TS_ACC = _norm("SELECT first_free_seconds_remaining, purchased_seconds_remaining "
+               "FROM accounts WHERE user_id=%s")
+TS_ALW = _norm("SELECT monthly_allowance_seconds, monthly_used_seconds "
+               "FROM consultation_allowance WHERE user_id=%s AND period_start <= %s "
+               "AND period_end > %s ORDER BY period_start DESC LIMIT 1")
 
 
 class FakeCursor:
@@ -225,12 +231,16 @@ class FakeCursor:
                 exists = any(a for a in DB["consultation_allowance"]
                              if a["user_id"] == uid and a["period_start"] == ps)
                 if exists:
-                    self.rowcount = 0
+                    self.rowcount = 0     # ON CONFLICT DO NOTHING : rien touché
                 else:
                     DB["consultation_allowance"].append({
                         "user_id": uid, "period_start": ps, "period_end": pe,
                         "monthly_limit": lim, "monthly_used": 0, "created_at": created,
                         "source_subscription_id": src, "source_period_start": sps,
+                        # DEFAULT migration v34 (colonnes non énumérées par l'INSERT) :
+                        # 8 h Premium / période, 0 s consommée.
+                        "monthly_allowance_seconds": 28800,
+                        "monthly_used_seconds": 0,
                     })
                     self.rowcount = 1
 
@@ -274,6 +284,26 @@ class FakeCursor:
             with _STORE_LOCK:
                 r = next((a for a in DB["accounts"] if a["user_id"] == uid), None)
             self._result = (r["first_consultation_used_at"],) if r is not None else None
+
+        elif k == TS_ACC:
+            (uid,) = p
+            uid = str(uid)
+            with _STORE_LOCK:
+                r = next((a for a in DB["accounts"] if a["user_id"] == uid), None)
+            self._result = ((r.get("first_free_seconds_remaining"),
+                             r.get("purchased_seconds_remaining")) if r else None)
+
+        elif k == TS_ALW:
+            uid, now, _n2 = p
+            uid = str(uid)
+            with _STORE_LOCK:
+                rows = [a for a in DB["consultation_allowance"]
+                        if a["user_id"] == uid and a["period_start"] <= now
+                        and a["period_end"] > now]
+            rows.sort(key=lambda a: a["period_start"], reverse=True)
+            if rows:
+                self._result = (rows[0].get("monthly_allowance_seconds", 28800),
+                                rows[0].get("monthly_used_seconds", 0))
 
         else:
             raise AssertionError("SQL non modélisé par le fake B3-B : " + k)
@@ -321,10 +351,15 @@ def dt(y, m, d, h=0):
     return datetime(y, m, d, h, tzinfo=timezone.utc)
 
 
-def seed_account(uid=UID, deleted_at=None, first_consultation_used_at=None):
+def seed_account(uid=UID, deleted_at=None, first_consultation_used_at=None,
+                 first_free_seconds_remaining=1200, purchased_seconds_remaining=7200):
     with _STORE_LOCK:
-        DB["accounts"].append({"user_id": uid, "deleted_at": deleted_at,
-                               "first_consultation_used_at": first_consultation_used_at})
+        DB["accounts"].append({
+            "user_id": uid, "deleted_at": deleted_at,
+            "first_consultation_used_at": first_consultation_used_at,
+            # A.3b : le resync Premium ne doit JAMAIS toucher ces colonnes.
+            "first_free_seconds_remaining": first_free_seconds_remaining,
+            "purchased_seconds_remaining": purchased_seconds_remaining})
 
 
 def seed_sub(sub_id, store, cps, expires, entitled, uid=UID):
@@ -342,12 +377,15 @@ def set_sub(sub_id, **kw):
                 s.update(kw)
 
 
-def seed_alw(ps, pe, used=0, src=None, sps=None, limit=4, uid=UID):
+def seed_alw(ps, pe, used=0, src=None, sps=None, limit=4, uid=UID,
+             allowance_secs=28800, used_secs=0):
     with _STORE_LOCK:
         DB["consultation_allowance"].append({
             "user_id": uid, "period_start": ps, "period_end": pe,
             "monthly_limit": limit, "monthly_used": used, "created_at": ps,
-            "source_subscription_id": src, "source_period_start": sps})
+            "source_subscription_id": src, "source_period_start": sps,
+            "monthly_allowance_seconds": allowance_secs,
+            "monthly_used_seconds": used_secs})
 
 
 def alw(uid=UID):
@@ -709,6 +747,104 @@ check(_res_a == _res_b,
       "24a carrier identique quel que soit l'ordre des rows du fake DB")
 check(_res_a[0] == _ID_HIGH and _res_a[1] == _cps_high,
       "24b départage par str(id) : l'id le plus grand l'emporte (expires_at & store égaux)")
+
+print("-" * 64)
+print("TIMER-A.3b — périodes Premium en SECONDES")
+
+_MISC = {"h": None}
+
+# A. nouvelle période -> monthly_allowance_seconds = 28800, monthly_used_seconds = 0
+reset(); seed_account()
+seed_sub(G_ID, "google_play", dt(2026, 8, 15), dt(2026, 9, 15), True)
+resync(dt(2026, 8, 20))
+_a = alw()[0]
+check(_a["monthly_allowance_seconds"] == 28800 and _a["monthly_used_seconds"] == 0,
+      "A.3b-A nouvelle période -> monthly_allowance_seconds 28800, monthly_used_seconds 0")
+check(_a["monthly_limit"] == 4 and _a["monthly_used"] == 0,
+      "A.3b-I legacy monthly_limit/monthly_used inchangés (4 / 0)")
+
+# B. période existante rejouée (même cycle) -> monthly_used_seconds préservé
+with _STORE_LOCK:
+    alw()[0]["monthly_used_seconds"] = 4321
+    alw()[0]["monthly_used"] = 2
+r = resync(dt(2026, 8, 21))
+check(r["action"] == "noop" and len(alw()) == 1
+      and alw()[0]["monthly_used_seconds"] == 4321
+      and alw()[0]["monthly_allowance_seconds"] == 28800
+      and alw()[0]["monthly_used"] == 2,
+      "A.3b-B reverify même cycle -> noop, monthly_used_seconds 4321 et legacy 2 préservés")
+
+# C + D. ancienne période consommée + NOUVELLE période store.
+reset(); seed_account()
+# ancienne période (déjà écoulée) avec conso temps historique
+seed_alw(dt(2026, 7, 15), dt(2026, 8, 15), used=3, used_secs=12345,
+         src=G_ID, sps=dt(2026, 7, 15))
+# le store renouvelle : nouveau current_period_start
+seed_sub(G_ID, "google_play", dt(2026, 8, 15), dt(2026, 9, 15), True)
+r = resync(dt(2026, 8, 20))
+_old = next(a for a in alw() if a["period_start"] == dt(2026, 7, 15))
+_new = next(a for a in alw() if a["period_start"] == dt(2026, 8, 15))
+check(_old["monthly_used_seconds"] == 12345 and _old["monthly_used"] == 3,
+      "A.3b-C ancienne période : monthly_used_seconds 12345 (et legacy 3) PRÉSERVÉS")
+check(_new["monthly_allowance_seconds"] == 28800 and _new["monthly_used_seconds"] == 0,
+      "A.3b-D nouvelle période : allowance 28800, used_seconds 0 (uniquement sur la neuve)")
+check(len(alw()) == 2, "A.3b-D2 ancienne ligne CONSERVÉE (aucun DELETE destructif)")
+
+# E + F. first_free / purchased NON reset par le resync.
+check(DB["accounts"][0]["first_free_seconds_remaining"] == 1200
+      and DB["accounts"][0]["purchased_seconds_remaining"] == 7200,
+      "A.3b-E/F resync -> accounts.first_free_seconds_remaining=1200 et "
+      "purchased_seconds_remaining=7200 STRICTEMENT inchangés")
+# preuve structurelle : aucun chemin resync ne NOMME ces colonnes
+import inspect as _inspect
+_resync_src = (_inspect.getsource(A.resync_premium_entitlement)
+               + _inspect.getsource(A._resync_premium_entitlement_tx)
+               + _inspect.getsource(A._insert_allowance)
+               + _inspect.getsource(A.provision_allowance))
+check("first_free_seconds_remaining" not in _resync_src
+      and "purchased_seconds_remaining" not in _resync_src,
+      "A.3b-E2 resync/_insert_allowance/provision : ne NOMMENT jamais "
+      "first_free_seconds_remaining ni purchased_seconds_remaining")
+
+# G. resync identique deux fois -> aucun double crédit.
+reset(); seed_account()
+seed_sub(G_ID, "google_play", dt(2026, 8, 15), dt(2026, 9, 15), True)
+resync(dt(2026, 8, 20))
+with _STORE_LOCK:
+    alw()[0]["monthly_used_seconds"] = 900
+resync(dt(2026, 8, 20))
+check(len(alw()) == 1 and alw()[0]["monthly_used_seconds"] == 900
+      and alw()[0]["monthly_allowance_seconds"] == 28800,
+      "A.3b-G resync rejoué -> 1 seule ligne, monthly_used_seconds 900 non remis à 0, "
+      "pas de 28800 supplémentaire")
+
+# H. entitlement expiré -> aucune période active -> premium_remaining_seconds = 0.
+reset(); seed_account()
+seed_alw(dt(2026, 7, 1), dt(2026, 8, 1), used_secs=5000, src=G_ID, sps=dt(2026, 7, 1))
+seed_sub(G_ID, "google_play", dt(2026, 7, 1), dt(2026, 8, 1), False)   # plus entitled
+resync(dt(2026, 9, 1))
+conn = A.get_conn(); cur = conn.cursor()
+_snap = A._get_time_snapshot_tx(cur, UID, dt(2026, 9, 1))
+check(_snap["premium_remaining_seconds"] == 0,
+      "A.3b-H période Premium expirée -> premium_remaining_seconds = 0")
+check(any(a["period_start"] == dt(2026, 7, 1) for a in alw()),
+      "A.3b-H2 l'ancienne ligne allowance n'est PAS supprimée")
+check(DB["accounts"][0]["first_free_seconds_remaining"] == 1200
+      and DB["accounts"][0]["purchased_seconds_remaining"] == 7200,
+      "A.3b-H3 first_free / purchased toujours intacts après désentitlement")
+
+# J. ordre de verrouillage préservé : accounts FOR UPDATE pris par le wrapper,
+#    consultation_allowance FOR UPDATE seulement dans le helper curseur-in.
+import re as _re
+_wrap = _inspect.getsource(A.resync_premium_entitlement)
+_tx = _inspect.getsource(A._resync_premium_entitlement_tx)
+_fu = _re.compile(r'FROM\s+(accounts|consultation_allowance)\b[^"]*?FOR UPDATE')
+check(_fu.search(_wrap) is not None and _fu.search(_wrap).group(1) == "accounts"
+      and _fu.search(_wrap.replace(_fu.search(_wrap).group(0), "", 1)) is None,
+      "A.3b-J wrapper resync : SEUL FOR UPDATE = accounts (mutex par utilisateur)")
+check(_fu.search(_tx) is not None
+      and _fu.search(_tx).group(1) == "consultation_allowance",
+      "A.3b-J2 helper _resync_..._tx : consultation_allowance FOR UPDATE (après accounts)")
 
 print("-" * 64)
 print(f"RÉSULTAT : {_STATE['pass']} ok / {_STATE['fail']} ko")

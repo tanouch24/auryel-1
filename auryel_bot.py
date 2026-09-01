@@ -5349,12 +5349,24 @@ def _insert_allowance(cursor, user_id, period_start, period_end, monthly_limit, 
 
     `monthly_used` = 0 est écrit littéralement : il ne concerne donc QUE la
     nouvelle ligne. `ON CONFLICT (user_id, period_start) DO NOTHING` -> si la PK
-    existe déjà, aucune ligne touchée, `monthly_used` d'une période existante
-    n'est JAMAIS remis à zéro.
+    existe déjà, aucune ligne touchée, `monthly_used` / `monthly_used_seconds`
+    d'une période existante ne sont JAMAIS remis à zéro.
+
+    TIMER-A.3b — le compteur TEMPS de chaque NOUVELLE période :
+      monthly_allowance_seconds -> DEFAULT 28800 (= 8 h, migration v34) ;
+      monthly_used_seconds      -> DEFAULT 0 (migration v34).
+    Cet INSERT n'énumère PAS ces colonnes : elles prennent leur DEFAULT de
+    schéma (même parti pris que v26/v29 pour `monthly_limit`). Une période
+    EXISTANTE (ON CONFLICT) n'est jamais retouchée -> `monthly_used_seconds`
+    déjà consommé est préservé. Le moteur temps ne débite QUE
+    `monthly_used_seconds` (jamais `monthly_used` legacy, conservé pour compat).
+    SOURCE DE VÉRITÉ TEMPS : monthly_allowance_seconds / monthly_used_seconds.
+    SOURCE LEGACY TEMPORAIRE (jamais lue pour débiter du temps) :
+    monthly_limit / monthly_used.
 
     Retourne True si une ligne a été insérée, False sinon (`cursor.rowcount == 1`).
     `source_subscription_id` / `source_period_start` sont NULL pour les appels
-    standalone (tests / admin) ; renseignés par le futur resync B3."""
+    standalone (tests / admin) ; renseignés par le resync store."""
     cursor.execute(
         """INSERT INTO consultation_allowance
                (user_id, period_start, period_end, monthly_limit, monthly_used,

@@ -194,13 +194,31 @@ check(_i_backfill != -1 and _i_default != -1 and _i_default > _i_backfill,
       "(ne transforme pas les comptes deja consommes en 3600)")
 
 print("-" * 64)
-print("H. Moteur NON cable — aucune fonction consultation ne lit/ecrit les 6 colonnes")
+print("H. Modele par-compte : aucune fonction NE LIT/N'ECRIT en CODE les 6 colonnes")
+
+import ast as _ast
+import textwrap as _tw
 
 _NEW_COLS = [
     "first_free_seconds_remaining", "purchased_seconds_remaining",
     "monthly_allowance_seconds", "monthly_used_seconds",
     "last_activity_at", "billed_until",
 ]
+
+
+def _code_only(fn):
+    """Source de `fn` SANS docstring ni commentaires (ast.unparse) : on teste le
+    CODE, pas la doc. TIMER-A.3b documente monthly_*_seconds dans le docstring de
+    _insert_allowance sans les écrire (DEFAULT de schéma v34)."""
+    _t = _ast.parse(_tw.dedent(inspect.getsource(fn)))
+    _f = _t.body[0]
+    if (_f.body and isinstance(_f.body[0], _ast.Expr)
+            and isinstance(getattr(_f.body[0], "value", None), _ast.Constant)
+            and isinstance(_f.body[0].value.value, str)):
+        _f.body = _f.body[1:]
+    return _ast.unparse(_f)
+
+
 for _fn_name in ("open_or_get_consultation", "get_consultation_state",
                  "api_consultation_message", "api_consultation_state",
                  "resync_premium_entitlement", "_resync_premium_entitlement_tx",
@@ -209,9 +227,8 @@ for _fn_name in ("open_or_get_consultation", "get_consultation_state",
     if _fn is None:
         check(False, f"24 fonction {_fn_name} introuvable")
         continue
-    _fsrc = inspect.getsource(_fn)
-    _hits = [col for col in _NEW_COLS if col in _fsrc]
-    check(not _hits, f"24 {_fn_name} n'utilise AUCUNE nouvelle colonne temps"
+    _hits = [col for col in _NEW_COLS if col in _code_only(_fn)]
+    check(not _hits, f"24 {_fn_name} n'utilise AUCUNE nouvelle colonne temps EN CODE"
           + (f" (trouve : {_hits})" if _hits else ""))
 
 print("-" * 64)
