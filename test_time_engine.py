@@ -628,34 +628,42 @@ for _fn in ("api_consultation_message", "api_consultation_state",
     check(not _hits, f"iso {_fn} ne reference NI le moteur temps NI ses colonnes"
           + (f" (trouve : {_hits})" if _hits else ""))
 
-# Le CŒUR du moteur (debit / touch / process / active_allowance / constantes)
-# n'apparait NULLE PART hors de sa section. `_settle` et `_get_time_snapshot_tx`
-# sont désormais appelés par le câblage TIMER-A.3a de GET /api/consultation/state
-# (fonctions `_state_with_time_settle` / `api_consultation_state`) — c'est le
-# SEUL point d'appel externe autorisé.
+# Le CŒUR du moteur (debit / process / active_allowance / constantes) n'apparait
+# NULLE PART hors de sa section. `_settle` / `_get_time_snapshot_tx` / `_touch`
+# sont appelés par le CÂBLAGE TIMER-A.3 : GET /state (A.3a :
+# `_state_with_time_settle` / `api_consultation_state`) ET le helper de flux
+# (A.3c-2b : `_open_time_consultation_flow_tx`) — seuls points d'appel externes
+# autorisés.
 _full = inspect.getsource(A)
 _eng_start = _full.index("# MOTEUR TEMPS (TIMER-A.2)")
 _eng_end = _full.index("# BILLING MOBILE (B2)", _eng_start)
 _OUTSIDE = _full[:_eng_start] + _full[_eng_end:]
+# helpers : jamais APPELÉS hors section (`nom(`) ; les docstrings du câblage A.3
+# peuvent les CITER pour documenter (backtick, pas de paren) -> autorisé.
 for _name in ("_debit_consultation_seconds_tx",
-              "_touch_consultation_activity_tx", "_process_consultation_activity_tx",
-              "_active_allowance_seconds_for_update",
-              "FIRST_FREE_SECONDS", "PREMIUM_MONTHLY_SECONDS",
+              "_process_consultation_activity_tx",
+              "_active_allowance_seconds_for_update"):
+    check(_name + "(" not in _OUTSIDE,
+          f"iso {_name}() : jamais APPELÉ hors de la section MOTEUR TEMPS")
+# constantes : jamais référencées du tout hors section.
+for _name in ("FIRST_FREE_SECONDS", "PREMIUM_MONTHLY_SECONDS",
               "ACTIVITY_GRACE_SECONDS"):
     check(_name not in _OUTSIDE,
           f"iso {_name} : n'apparait NULLE PART hors de la section MOTEUR TEMPS")
 
-# _settle / _get_time_snapshot_tx : hors section, UNIQUEMENT dans le câblage
-# A.3a (fonction interne + endpoint), jamais ailleurs.
-_A3A = (inspect.getsource(A._state_with_time_settle)
-        + inspect.getsource(A.api_consultation_state))
-for _name in ("_settle_consultation_time_tx", "_get_time_snapshot_tx"):
-    check(_name + "(" in _A3A, f"iso {_name} : bien appelé par le câblage A.3a")
+# _settle / _get_time_snapshot_tx / _touch : hors section, UNIQUEMENT dans le
+# câblage A.3 (A.3a state + A.3c-2b flow helper), jamais ailleurs.
+_A3_WIRING = (inspect.getsource(A._state_with_time_settle)
+              + inspect.getsource(A.api_consultation_state)
+              + inspect.getsource(A._open_time_consultation_flow_tx))
+for _name in ("_settle_consultation_time_tx", "_get_time_snapshot_tx",
+              "_touch_consultation_activity_tx"):
+    check(_name + "(" in _A3_WIRING, f"iso {_name} : bien appelé par le câblage A.3")
     _rogue = [ln.strip() for ln in _OUTSIDE.splitlines()
-              if _name + "(" in ln and ln.strip() not in _A3A]
+              if _name + "(" in ln and ln.strip() not in _A3_WIRING]
     check(not _rogue,
-          f"iso {_name} : hors section MOTEUR TEMPS, appelé SEULEMENT par A.3a "
-          f"(appels intrus : {_rogue})")
+          f"iso {_name} : hors section MOTEUR TEMPS, appelé SEULEMENT par le "
+          f"câblage A.3 (appels intrus : {_rogue})")
 for _fn in ("open_or_get_consultation", "api_consultation_message",
             "api_consultation_messages", "resync_premium_entitlement",
             "_resync_premium_entitlement_tx", "get_consultation_state"):
@@ -663,10 +671,12 @@ for _fn in ("open_or_get_consultation", "api_consultation_message",
     _bad = [n for n in ("_settle_consultation_time_tx", "_get_time_snapshot_tx",
                         "_debit_consultation_seconds_tx",
                         "_touch_consultation_activity_tx",
-                        "_process_consultation_activity_tx")
+                        "_process_consultation_activity_tx",
+                        "_open_time_consultation_flow_tx",
+                        "get_or_open_time_consultation_tx")
             if n + "(" in _src]
-    check(not _bad, f"iso {_fn} : n'appelle AUCUN helper moteur temps"
-          + (f" (trouvé : {_bad})" if _bad else ""))
+    check(not _bad, f"iso {_fn} : n'appelle NI le moteur temps NI le flux A.3c "
+          + (f"(trouvé : {_bad})" if _bad else ""))
 
 print("-" * 64)
 print(f"RESULTAT : {_STATE['pass']} ok / {_STATE['fail']} ko")

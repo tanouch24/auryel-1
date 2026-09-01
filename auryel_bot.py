@@ -3668,19 +3668,33 @@ def list_tirages(user_id, limit=20, before=None):
     return out, next_cursor
 
 
+def _attach_tirage_to_consultation_tx(cursor, user_id, tirage_id, consultation_id):
+    """Variante CURSEUR-IN de attach_tirage_to_consultation (TIMER-A.3c-2b) :
+    même règle (WHERE consultation_id IS NULL : premier lien conservé, jamais
+    écrasé ; user_id strict), sur un curseur DÉJÀ ouvert — NI commit NI rollback
+    NI close. Permet de rattacher le tirage DANS la même transaction que la
+    sélection/le touch de la consultation. Retourne True si une ligne a été
+    mise à jour."""
+    cursor.execute(
+        "UPDATE tirages SET consultation_id=%s "
+        "WHERE id=%s AND user_id=%s AND consultation_id IS NULL",
+        (str(consultation_id), str(tirage_id), str(user_id)),
+    )
+    return cursor.rowcount == 1
+
+
 def attach_tirage_to_consultation(user_id, tirage_id, consultation_id):
     """Rattache un tirage à la consultation où il a servi. N'ÉCRASE JAMAIS un
     rattachement existant (WHERE consultation_id IS NULL) : le premier lien
-    historique est conservé. Retourne True si une ligne a été mise à jour."""
+    historique est conservé. Retourne True si une ligne a été mise à jour.
+
+    Contrat public inchangé (ouvre / commit / ferme sa propre connexion) ;
+    délègue le DDL à `_attach_tirage_to_consultation_tx` (curseur-in)."""
     conn = get_conn()
     try:
         c = conn.cursor()
-        c.execute(
-            "UPDATE tirages SET consultation_id=%s "
-            "WHERE id=%s AND user_id=%s AND consultation_id IS NULL",
-            (str(consultation_id), str(tirage_id), str(user_id)),
-        )
-        updated = (c.rowcount == 1)
+        updated = _attach_tirage_to_consultation_tx(
+            c, user_id, tirage_id, consultation_id)
         conn.commit()
     finally:
         try: conn.close()
@@ -6049,6 +6063,159 @@ def get_or_open_time_consultation_tx(cursor, user_id, preferred_advisor_id, now,
 
     return _open_time_consultation_tx(cursor, uid, preferred_advisor_id, now,
                                       "opened_new_advisor")
+
+
+def _open_time_consultation_flow_tx(user_id, preferred_advisor_id, tirage_id, now):
+    """TIMER-A.3c-2b — PLOMBERIE transactionnelle complète du futur POST temps.
+    UNE transaction, AUCUN LLM, NON câblée dans api_consultation_message
+    (le POST garde le flux legacy `open_or_get_consultation` jusqu'à A.3c-2c).
+
+    Ordre (le helper POSSÈDE le mutex utilisateur, aucun verrou tenu après
+    commit) :
+      1. ouvre conn.
+      2. gate tirage LECTURE SEULE : `tirage_id` fourni mais inexistant / d'un
+         autre compte -> rollback, status='tirage_not_found' (0 débit, 0 touch,
+         0 création).
+      3. `accounts` FOR UPDATE (mutex par utilisateur). Compte absent ->
+         status='unknown_account'.
+      4. dernière consultation logique (SANS `expires_at > now`).
+      5. settle de son ancienne fenêtre (moteur A.2 : débite [billed_until,
+         min(now, window_end)], coupe à l'épuisement — corrections U→W
+         préservées). Ordre de verrous accounts -> consultation_allowance,
+         JAMAIS `consultations ... FOR UPDATE`.
+      6. snapshot temps APRÈS settle.
+      7. total_remaining_seconds <= 0 -> commit (le settle a pu débiter /
+         couper la fenêtre), status='time_exhausted' : AUCUN open, AUCUN touch,
+         AUCUN attach tirage.
+      8. sinon get_or_open_time_consultation_tx (A.3c-1) : reprise (advisor figé
+         si fenêtre active) ou nouvelle conversation (advisor préféré).
+      9. touch la consultation choisie (_touch_consultation_activity_tx).
+     10. attach tirage (curseur-in) si `tirage_id` fourni.
+     11. snapshot final + commit.
+
+    N'incrémente JAMAIS `monthly_used` legacy, ne lit / consomme JAMAIS
+    `earned_credits`. `first_consultation_used_at` est posé par
+    `_debit_consultation_seconds_tx` (A.3c-2a) au 1er débit réel de first_free,
+    pas ici.
+
+    Retour :
+      { "status": "ok" | "time_exhausted" | "unknown_account" | "tirage_not_found",
+        "consultation": {"id", "advisor_id", "created": bool, "phase"} | None,
+        "time": { first_free_remaining_seconds, premium_remaining_seconds,
+                  purchased_remaining_seconds, total_remaining_seconds,
+                  window_active: bool, window_expires_at: datetime|None } | None,
+        "tirage_attached": bool }
+    """
+    if now is None:
+        now = _utcnow()
+    uid = str(user_id)
+    conn = get_conn()
+    try:
+        c = conn.cursor()
+
+        # 2. gate tirage (lecture seule, AVANT toute mutation).
+        if tirage_id is not None:
+            c.execute(
+                "SELECT id FROM tirages WHERE id=%s AND user_id=%s",
+                (str(tirage_id), uid),
+            )
+            if c.fetchone() is None:
+                conn.rollback()
+                return {"status": "tirage_not_found", "consultation": None,
+                        "time": None, "tirage_attached": False}
+
+        # 3. mutex utilisateur.
+        c.execute(
+            "SELECT user_id FROM accounts "
+            "WHERE user_id=%s AND deleted_at IS NULL FOR UPDATE",
+            (uid,),
+        )
+        if c.fetchone() is None:
+            conn.rollback()
+            return {"status": "unknown_account", "consultation": None,
+                    "time": None, "tirage_attached": False}
+
+        # 4. dernière consultation logique.
+        c.execute(
+            """SELECT id, last_activity_at
+               FROM consultations
+               WHERE user_id=%s
+               ORDER BY started_at DESC
+               LIMIT 1""",
+            (uid,),
+        )
+        crow = c.fetchone()
+
+        # 5. settle de son ancienne fenêtre (no-op si last_activity_at NULL).
+        if crow is not None and crow[1] is not None:
+            _settle_consultation_time_tx(c, uid, str(crow[0]), now)
+
+        # 6. snapshot APRÈS settle.
+        snap = _get_time_snapshot_tx(c, uid, now)
+
+        # 7. plus de temps -> time_exhausted.
+        if snap["total_remaining_seconds"] <= 0:
+            conn.commit()
+            return {
+                "status": "time_exhausted", "consultation": None,
+                "time": {
+                    "first_free_remaining_seconds":
+                        int(snap["first_free_remaining_seconds"]),
+                    "premium_remaining_seconds":
+                        int(snap["premium_remaining_seconds"]),
+                    "purchased_remaining_seconds":
+                        int(snap["purchased_remaining_seconds"]),
+                    "total_remaining_seconds": 0,
+                    "window_active": False, "window_expires_at": None,
+                },
+                "tirage_attached": False,
+            }
+
+        # 8. sélection / création de la conversation logique.
+        sel = get_or_open_time_consultation_tx(
+            c, uid, preferred_advisor_id, now, snap["total_remaining_seconds"])
+        cid = sel["consultation_id"]
+
+        # 9. touch.
+        touched = _touch_consultation_activity_tx(c, cid, now)
+
+        # 10. attach tirage (déjà validé possédé par le gate).
+        tirage_attached = False
+        if tirage_id is not None:
+            tirage_attached = _attach_tirage_to_consultation_tx(
+                c, uid, tirage_id, cid)
+
+        # 11. snapshot final (un 1er message / touch ne débite rien) + commit.
+        snap2 = _get_time_snapshot_tx(c, uid, now)
+        conn.commit()
+
+        return {
+            "status": "ok",
+            "consultation": {"id": cid, "advisor_id": sel["advisor_id"],
+                             "created": bool(sel["created"]),
+                             "phase": sel["phase"]},
+            "time": {
+                "first_free_remaining_seconds":
+                    int(snap2["first_free_remaining_seconds"]),
+                "premium_remaining_seconds":
+                    int(snap2["premium_remaining_seconds"]),
+                "purchased_remaining_seconds":
+                    int(snap2["purchased_remaining_seconds"]),
+                "total_remaining_seconds":
+                    int(snap2["total_remaining_seconds"]),
+                "window_active": snap2["total_remaining_seconds"] > 0,
+                "window_expires_at": touched.get("window_expires_at"),
+            },
+            "tirage_attached": tirage_attached,
+        }
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        try:
+            conn.close()
+        except Exception:
+            pass
 
 
 # ============================================================

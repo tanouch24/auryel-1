@@ -295,14 +295,32 @@ print("ISOLATION — POST message / open_or_get_consultation inchangés")
 for _fn in ("api_consultation_message", "open_or_get_consultation"):
     _s = inspect.getsource(getattr(A, _fn))
     check("get_or_open_time_consultation_tx" not in _s
-          and "_open_time_consultation_tx" not in _s,
-          f"iso {_fn} n'appelle PAS la nouvelle logique consultation (modèle 2 h conservé)")
-# la nouvelle fonction n'est appelée par aucun endpoint
-_mod = inspect.getsource(A)
-_calls = len(re.findall(r"get_or_open_time_consultation_tx\s*\(", _mod))
-check(_calls == 1,
-      f"iso get_or_open_time_consultation_tx : définie mais jamais appelée ailleurs "
-      f"(occurrences call-like = {_calls})")
+          and "_open_time_consultation_tx" not in _s
+          and "_open_time_consultation_flow_tx" not in _s,
+          f"iso {_fn} n'appelle PAS la logique consultation temps (modèle 2 h conservé)")
+# get_or_open_time_consultation_tx : appelée UNIQUEMENT par le helper de flux
+# A.3c-2b (_open_time_consultation_flow_tx). Vérif par fonction (CODE only).
+import types as _types
+_callers_gooc = []
+_callers_flow = []
+for _nm in dir(A):
+    _o = getattr(A, _nm)
+    if not isinstance(_o, _types.FunctionType):
+        continue
+    try:
+        _cc = _code_only(_o)
+    except (OSError, TypeError, SyntaxError):
+        continue
+    if _nm != "get_or_open_time_consultation_tx" and "get_or_open_time_consultation_tx(" in _cc:
+        _callers_gooc.append(_nm)
+    if _nm != "_open_time_consultation_flow_tx" and "_open_time_consultation_flow_tx(" in _cc:
+        _callers_flow.append(_nm)
+check(_callers_gooc == ["_open_time_consultation_flow_tx"],
+      f"iso get_or_open_time_consultation_tx : appelée SEULEMENT par "
+      f"_open_time_consultation_flow_tx (trouvé : {_callers_gooc})")
+check(_callers_flow == [],
+      f"iso _open_time_consultation_flow_tx : appelé par AUCUN endpoint dans ce lot "
+      f"(POST encore legacy) (trouvé : {_callers_flow})")
 
 print("-" * 64)
 print(f"RESULTAT : {_STATE['pass']} ok / {_STATE['fail']} ko")
