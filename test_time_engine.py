@@ -164,6 +164,16 @@ class FakeCursor:
             else:
                 self.rowcount = 0
 
+        elif k == ("UPDATE accounts SET first_consultation_used_at=%s "
+                   "WHERE user_id=%s AND first_consultation_used_at IS NULL"):
+            ts, uid = p
+            a = DB["accounts"].get(str(uid))
+            if a is not None and a.get("first_consultation_used_at") is None:
+                a["first_consultation_used_at"] = ts
+                self.rowcount = 1
+            else:
+                self.rowcount = 0
+
         elif k == ("UPDATE consultation_allowance SET monthly_used_seconds=%s "
                    "WHERE user_id=%s AND period_start=%s"):
             used, uid, ps = p
@@ -555,6 +565,44 @@ check(_FU_RE.search(_resync) is not None
       and _FU_RE.search(_resync_tx).group(1).lower() == "consultation_allowance",
       "Y2b resync_premium_entitlement : accounts FOR UPDATE dans le wrapper, "
       "consultation_allowance FOR UPDATE seulement dans le helper curseur-in (donc apres)")
+
+print("-" * 64)
+print("A.3c-2a — first_consultation_used_at posé au 1er débit RÉEL de first_free")
+
+# 1er débit avec take_ff > 0 -> marque posée.
+reset_db(); seed_account(UID, first_free=3600, first_consultation_used_at=None)
+A._debit_consultation_seconds_tx(cur(), UID, 30, T(10, 0))
+check(DB["accounts"][UID]["first_consultation_used_at"] == T(10, 0)
+      and DB["accounts"][UID]["first_free_seconds_remaining"] == 3570,
+      "3c2a-1 débit 30 s (take_ff>0) -> first_consultation_used_at = now")
+
+# 2e débit -> pas réécrit (idempotent, WHERE ... IS NULL).
+A._debit_consultation_seconds_tx(cur(), UID, 30, T(10, 1))
+check(DB["accounts"][UID]["first_consultation_used_at"] == T(10, 0),
+      "3c2a-2 2e débit -> first_consultation_used_at INCHANGÉ (jamais réécrit)")
+
+# débit qui NE touche PAS first_free (ff=0, premium seul) -> marque NON posée.
+reset_db(); seed_account(UID, first_free=0, first_consultation_used_at=None)
+seed_allowance(UID, PS, PE, allowance_seconds=28800, used_seconds=0)
+A._debit_consultation_seconds_tx(cur(), UID, 120, T(10, 0))
+check(DB["accounts"][UID]["first_consultation_used_at"] is None
+      and DB["allowance"][0]["monthly_used_seconds"] == 120,
+      "3c2a-3 débit premium sans take_ff -> first_consultation_used_at reste NULL")
+
+# touch seul -> ne débite rien -> marque NON posée.
+reset_db(); seed_account(UID, first_free=3600, first_consultation_used_at=None)
+seed_consultation(CID, UID)
+A._touch_consultation_activity_tx(cur(), CID, T(10, 0))
+check(DB["accounts"][UID]["first_consultation_used_at"] is None,
+      "3c2a-4 _touch seul (aucune seconde débitée) -> first_consultation_used_at reste NULL")
+
+# settle qui débite first_free -> marque posée (même chemin _debit).
+reset_db(); seed_account(UID, first_free=3600, first_consultation_used_at=None)
+seed_consultation(CID, UID, last_activity_at=T(10, 0), billed_until=T(10, 0))
+A._settle_consultation_time_tx(cur(), UID, CID, T(10, 2))
+check(DB["accounts"][UID]["first_consultation_used_at"] == T(10, 2)
+      and DB["accounts"][UID]["first_free_seconds_remaining"] == 3600 - 120,
+      "3c2a-5 settle (120 s débitées sur first_free via _debit) -> marque posée")
 
 print("-" * 64)
 print("Isolation — aucune fonction de production ne reference le moteur temps")

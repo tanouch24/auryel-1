@@ -6193,6 +6193,15 @@ def _debit_consultation_seconds_tx(cursor, user_id, seconds, now):
     période Premium active FOR UPDATE. Ni commit ni rollback. Aucun bucket ne
     passe sous 0 ; un intervalle qui traverse plusieurs buckets est réparti.
 
+    TIMER-A.3c-2a — POSE COMMUNE de `first_consultation_used_at` : dès qu'AU
+    MOINS 1 seconde de `first_free_seconds_remaining` est réellement débitée
+    (take_ff > 0) ET que la colonne est encore NULL, on écrit
+    `first_consultation_used_at = now` DANS LA MÊME TRANSACTION. Le marqueur
+    correspond ainsi au PREMIER DÉBIT RÉEL de la gratuite, pas au simple touch
+    (le 1er message ouvre la fenêtre mais ne consomme pas forcément une seconde
+    à cet instant précis). Que le débit vienne de POST /message ou d'un
+    settle déclenché par GET /state, le comportement est IDENTIQUE.
+
     Retour :
       { "debited_seconds": <int>,     # effectivement débité (<= seconds)
         "unbilled_seconds": <int>,    # demandé mais non couvert (buckets vides)
@@ -6250,6 +6259,14 @@ def _debit_consultation_seconds_tx(cursor, user_id, seconds, now):
             "SET first_free_seconds_remaining=%s, purchased_seconds_remaining=%s "
             "WHERE user_id=%s",
             (first_free, purchased, uid),
+        )
+    if take_ff > 0:
+        # 1er débit réel de la gratuite -> marque analytique/rétro-compat.
+        # WHERE ... IS NULL : idempotent, jamais remis à NULL, jamais réécrit.
+        cursor.execute(
+            "UPDATE accounts SET first_consultation_used_at=%s "
+            "WHERE user_id=%s AND first_consultation_used_at IS NULL",
+            (now, uid),
         )
     if take_pr and period_start is not None:
         cursor.execute(
