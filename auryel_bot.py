@@ -5731,6 +5731,391 @@ def get_consultation_state(user_id, now=None):
 
 
 # ============================================================
+# MOTEUR TEMPS (TIMER-A.2) — compteur de secondes consommées.
+#
+# ISOLÉ ET NON CÂBLÉ dans ce lot : aucun endpoint (api_consultation_message /
+# api_consultation_state) ni aucune fonction historique
+# (open_or_get_consultation / get_consultation_state /
+# resync_premium_entitlement) n'appelle ces helpers. Le modèle par-compte
+# (consultation_allowance.monthly_limit / monthly_used + consultations.expires_at
+# = started_at + 2 h) reste la SEULE logique active en production.
+#
+# Contrat commun (_debit / _settle / _touch / _process) :
+#   - reçoivent un curseur DÉJÀ ouvert (curseur-in) ;
+#   - ne font NI commit NI rollback NI close : la transaction appartient à
+#     l'appelant ;
+#   - aucune valeur de bucket ne descend jamais sous 0.
+#
+# ORDRE DE VERROUILLAGE CANONIQUE (identique à open_or_get_consultation /
+# resync_premium_entitlement — la SEULE convention du fichier) :
+#       accounts  FOR UPDATE   (mutex par utilisateur — pris par l'APPELANT)
+#   ->  consultation_allowance FOR UPDATE   (période active, dans _debit)
+# Le moteur ne pose AUCUN autre verrou. En particulier il NE VERROUILLE PAS
+# `consultations` (aucun SELECT ... FOR UPDATE sur cette table nulle part dans
+# le fichier) : _settle / _touch LISENT la ligne consultations sans FOR UPDATE
+# et l'écrivent ; la sérialisation par utilisateur est assurée par le mutex
+# `accounts` que l'appelant (A.3 / _process en test) DOIT détenir avant
+# d'entrer — exactement comme open_or_get_consultation. Aucune inversion
+# possible : le moteur prend un sous-ensemble strict de l'ordre existant.
+#
+# Buckets, ORDRE DE DÉBIT STRICT :
+#   1. accounts.first_free_seconds_remaining        (1 h offerte)
+#   2. consultation_allowance.monthly_used_seconds jusqu'à
+#      monthly_allowance_seconds, sur la PÉRIODE ACTIVE (period_start <= now
+#      < period_end) la plus récente — MÊME sélection que get_consultation_state
+#   3. accounts.purchased_seconds_remaining         (heures achetées, cumulées)
+# Pas de période active -> premium_remaining_seconds = 0 (bucket 2 sauté).
+# monthly_limit / monthly_used (NB de consultations) ne sont JAMAIS lus ni
+# écrits ici. Une nouvelle période Premium (nouvelle ligne allowance,
+# monthly_used_seconds = 0) ne touche NI first_free NI purchased.
+#
+# ÉPUISEMENT EN MILIEU DE FENÊTRE (débit partiel) :
+#   billed_until n'avance QUE de `debited_seconds` réellement débités
+#   (= ancien billed_until + debited), jamais jusqu'à charge_until si des
+#   secondes restent impayées. À l'épuisement (unbilled_seconds > 0) la fenêtre
+#   est MATÉRIELLEMENT COUPÉE au point d'épuisement : last_activity_at est
+#   ramené à billed_until - 300 s, donc window_end == billed_until -> plus
+#   aucune grâce, plus rien à facturer sur cette fenêtre. Une recharge
+#   ultérieure NE rétrofacture PAS la période impayée : le prochain message
+#   (via _process, qui ne fait `touch` que si `available`) ouvre une fenêtre
+#   NEUVE à `now`. exhausted=True est exposé pour que le moment d'épuisement
+#   reste déterministe.
+# ============================================================
+
+FIRST_FREE_SECONDS = 3600
+PREMIUM_MONTHLY_SECONDS = 28800
+ACTIVITY_GRACE_SECONDS = 300
+
+
+def _as_seconds(delta_or_num):
+    """timedelta | int | float -> int de secondes, borné >= 0 (jamais négatif)."""
+    v = delta_or_num.total_seconds() if hasattr(delta_or_num, "total_seconds") \
+        else delta_or_num
+    try:
+        v = int(v)
+    except (TypeError, ValueError):
+        return 0
+    return v if v > 0 else 0
+
+
+def _window_end(last_activity_at):
+    """Fin de la fenêtre d'activité : dernier message + 5 min."""
+    return last_activity_at + timedelta(seconds=ACTIVITY_GRACE_SECONDS)
+
+
+def _time_totals(first_free, premium, purchased):
+    """Normalise (borne >= 0) et calcule le total."""
+    ff = first_free if first_free and first_free > 0 else 0
+    pr = premium if premium and premium > 0 else 0
+    pu = purchased if purchased and purchased > 0 else 0
+    return {
+        "first_free_remaining_seconds": ff,
+        "premium_remaining_seconds": pr,
+        "purchased_remaining_seconds": pu,
+        "total_remaining_seconds": ff + pr + pu,
+    }
+
+
+def _active_allowance_seconds_for_update(cursor, uid, now):
+    """Période Premium ACTIVE (period_start <= now < period_end), la plus
+    récente, VERROUILLÉE FOR UPDATE. Sélection alignée sur
+    get_consultation_state / open_or_get_consultation.
+    Renvoie (period_start, monthly_allowance_seconds, monthly_used_seconds) ou None."""
+    cursor.execute(
+        """SELECT period_start, monthly_allowance_seconds, monthly_used_seconds
+           FROM consultation_allowance
+           WHERE user_id=%s AND period_start <= %s AND period_end > %s
+           ORDER BY period_start DESC
+           LIMIT 1
+           FOR UPDATE""",
+        (str(uid), now, now),
+    )
+    return cursor.fetchone()
+
+
+def _get_time_snapshot_tx(cursor, user_id, now):
+    """LECTURE SEULE (aucune écriture, aucun FOR UPDATE) : secondes restantes
+    par bucket + total. Période Premium active lue exactement comme
+    get_consultation_state (period_start <= now < period_end, la plus récente)."""
+    uid = str(user_id)
+    cursor.execute(
+        "SELECT first_free_seconds_remaining, purchased_seconds_remaining "
+        "FROM accounts WHERE user_id=%s",
+        (uid,),
+    )
+    arow = cursor.fetchone()
+    first_free = arow[0] if arow and arow[0] is not None else 0
+    purchased = arow[1] if arow and arow[1] is not None else 0
+
+    cursor.execute(
+        """SELECT monthly_allowance_seconds, monthly_used_seconds
+           FROM consultation_allowance
+           WHERE user_id=%s AND period_start <= %s AND period_end > %s
+           ORDER BY period_start DESC
+           LIMIT 1""",
+        (uid, now, now),
+    )
+    prow = cursor.fetchone()
+    if prow is not None:
+        allowance = prow[0] if prow[0] is not None else 0
+        used = prow[1] if prow[1] is not None else 0
+        premium = allowance - used
+    else:
+        premium = 0
+
+    return _time_totals(first_free, premium, purchased)
+
+
+def _debit_consultation_seconds_tx(cursor, user_id, seconds, now):
+    """Débite `seconds` (>= 0) dans l'ordre STRICT first_free -> premium ->
+    purchased, sur un curseur DÉJÀ ouvert. Verrous : accounts FOR UPDATE puis la
+    période Premium active FOR UPDATE. Ni commit ni rollback. Aucun bucket ne
+    passe sous 0 ; un intervalle qui traverse plusieurs buckets est réparti.
+
+    Retour :
+      { "debited_seconds": <int>,     # effectivement débité (<= seconds)
+        "unbilled_seconds": <int>,    # demandé mais non couvert (buckets vides)
+        "exhausted": <bool>,          # total restant == 0 après débit
+        "first_free_remaining_seconds": <int>,
+        "premium_remaining_seconds": <int>,
+        "purchased_remaining_seconds": <int>,
+        "total_remaining_seconds": <int> }
+    """
+    uid = str(user_id)
+    remaining = _as_seconds(seconds)
+
+    cursor.execute(
+        "SELECT first_free_seconds_remaining, purchased_seconds_remaining "
+        "FROM accounts WHERE user_id=%s FOR UPDATE",
+        (uid,),
+    )
+    arow = cursor.fetchone()
+    first_free = arow[0] if arow and arow[0] is not None else 0
+    purchased = arow[1] if arow and arow[1] is not None else 0
+    if first_free < 0:
+        first_free = 0
+    if purchased < 0:
+        purchased = 0
+
+    prow = _active_allowance_seconds_for_update(cursor, uid, now)
+    if prow is not None:
+        period_start, allowance, used = prow
+        allowance = allowance if allowance is not None else 0
+        used = used if used is not None else 0
+        premium_remaining = allowance - used
+        if premium_remaining < 0:
+            premium_remaining = 0
+    else:
+        period_start, used, premium_remaining = None, 0, 0
+
+    take_ff = first_free if first_free < remaining else remaining
+    first_free -= take_ff
+    remaining -= take_ff
+
+    take_pr = premium_remaining if premium_remaining < remaining else remaining
+    premium_remaining -= take_pr
+    remaining -= take_pr
+
+    take_pu = purchased if purchased < remaining else remaining
+    purchased -= take_pu
+    remaining -= take_pu
+
+    debited = take_ff + take_pr + take_pu
+    unbilled = remaining  # toujours >= 0
+
+    if take_ff or take_pu:
+        cursor.execute(
+            "UPDATE accounts "
+            "SET first_free_seconds_remaining=%s, purchased_seconds_remaining=%s "
+            "WHERE user_id=%s",
+            (first_free, purchased, uid),
+        )
+    if take_pr and period_start is not None:
+        cursor.execute(
+            "UPDATE consultation_allowance SET monthly_used_seconds=%s "
+            "WHERE user_id=%s AND period_start=%s",
+            (used + take_pr, uid, period_start),
+        )
+
+    totals = _time_totals(first_free, premium_remaining, purchased)
+    totals["debited_seconds"] = debited
+    totals["unbilled_seconds"] = unbilled
+    totals["exhausted"] = totals["total_remaining_seconds"] == 0
+    return totals
+
+
+def _consultation_time_row(cursor, consultation_id):
+    """(user_id, last_activity_at, billed_until) de la consultation.
+
+    SANS FOR UPDATE : `consultations` n'est verrouillée nulle part dans le
+    fichier ; la sérialisation par utilisateur passe par le mutex `accounts`
+    que l'appelant détient (cf. bandeau de section)."""
+    cursor.execute(
+        "SELECT user_id, last_activity_at, billed_until "
+        "FROM consultations WHERE id=%s",
+        (str(consultation_id),),
+    )
+    return cursor.fetchone()
+
+
+def _settle_consultation_time_tx(cursor, user_id, consultation_id, now):
+    """Règle (facture) la fenêtre d'activité EXISTANTE, SANS jamais en ouvrir
+    une nouvelle.
+
+      last_activity_at NULL -> rien à facturer.
+      sinon :
+        window_end   = last_activity_at + 300 s
+        charge_until = min(now, window_end)
+        on TENTE de facturer [ billed_until (ou last_activity_at si NULL) ,
+        charge_until ]. billed_until n'avance QUE des `debited_seconds`
+        RÉELLEMENT débités : jamais au-delà de window_end, jamais en arrière,
+        et JAMAIS jusqu'à charge_until si des secondes restent impayées. Appel
+        répété au même `now` -> 0 s. La tranche window_end -> now (inactivité)
+        n'est JAMAIS facturée.
+
+      ÉPUISEMENT (unbilled_seconds > 0) : la fenêtre est coupée au point
+      d'épuisement -> last_activity_at ramené à billed_until - 300 s
+      (window_end == billed_until) : plus de grâce, plus rien à facturer, une
+      recharge ultérieure ne rétrofacture pas.
+
+    Retour :
+      { "settled_seconds": <int>,     # secondes RÉELLEMENT débitées (0 si rien)
+        "requested_seconds": <int>,   # secondes que la fenêtre appelait
+        "exhausted": <bool>,
+        "billed_until": <datetime|None>, "last_activity_at": <datetime|None>,
+        "window_end": <datetime|None>, "debit": <dict|None> }
+    """
+    row = _consultation_time_row(cursor, consultation_id)
+    if row is None:
+        return {"settled_seconds": 0, "requested_seconds": 0, "exhausted": False,
+                "billed_until": None, "last_activity_at": None,
+                "window_end": None, "debit": None}
+    _uid, last_activity_at, billed_until = row
+    if last_activity_at is None:
+        return {"settled_seconds": 0, "requested_seconds": 0, "exhausted": False,
+                "billed_until": billed_until, "last_activity_at": None,
+                "window_end": None, "debit": None}
+
+    uid = str(user_id) if user_id is not None else str(_uid)
+    win_end = _window_end(last_activity_at)
+    charge_until = now if now < win_end else win_end
+    billed_from = billed_until if billed_until is not None else last_activity_at
+
+    requested = _as_seconds(charge_until - billed_from)  # borné >= 0
+    debit = None
+    debited = 0
+    exhausted = False
+    if requested > 0:
+        debit = _debit_consultation_seconds_tx(cursor, uid, requested, now)
+        debited = debit["debited_seconds"]
+        exhausted = debit["unbilled_seconds"] > 0
+
+    # billed_until n'avance que du temps RÉELLEMENT débité.
+    new_billed_until = billed_from + timedelta(seconds=debited)
+    if billed_until is not None and new_billed_until < billed_until:
+        new_billed_until = billed_until  # jamais en arrière
+    new_last_activity_at = last_activity_at
+
+    if exhausted:
+        # Coupe matérielle : window_end == billed_until -> fenêtre finie.
+        new_last_activity_at = new_billed_until - timedelta(
+            seconds=ACTIVITY_GRACE_SECONDS)
+
+    if new_last_activity_at != last_activity_at:
+        cursor.execute(
+            "UPDATE consultations SET last_activity_at=%s, billed_until=%s "
+            "WHERE id=%s",
+            (new_last_activity_at, new_billed_until, str(consultation_id)),
+        )
+    elif new_billed_until != billed_until:
+        cursor.execute(
+            "UPDATE consultations SET billed_until=%s WHERE id=%s",
+            (new_billed_until, str(consultation_id)),
+        )
+
+    return {"settled_seconds": debited, "requested_seconds": requested,
+            "exhausted": exhausted, "billed_until": new_billed_until,
+            "last_activity_at": new_last_activity_at,
+            "window_end": win_end, "debit": debit}
+
+
+def _touch_consultation_activity_tx(cursor, consultation_id, now):
+    """Ouvre / prolonge la fenêtre d'activité.
+
+      last_activity_at NULL (1er message)      -> last_activity_at = now,
+                                                  billed_until = now.  ("opened")
+      now <= last_activity_at + 300 (active)   -> prolonge :
+            last_activity_at = now (billed_until inchangé — l'appelant DOIT
+            avoir settle AVANT si du temps est dû jusqu'à `now`). ("extended")
+      now > last_activity_at + 300 (expirée)   -> l'ancienne fenêtre est d'abord
+            réglée (settle jusqu'à ancien last_activity_at + 300), PUIS nouvelle
+            fenêtre : last_activity_at = now, billed_until = now. La tranche
+            inactive (ancien window_end -> now) n'est JAMAIS facturée. ("reopened")
+
+    Retour :
+      { "phase": "opened"|"extended"|"reopened"|"unknown_consultation",
+        "window_expires_at": <datetime|None>, "settled": <dict|None> }
+    """
+    row = _consultation_time_row(cursor, consultation_id)
+    if row is None:
+        return {"phase": "unknown_consultation",
+                "window_expires_at": None, "settled": None}
+    uid, last_activity_at, _billed_until = row
+    cid = str(consultation_id)
+
+    if last_activity_at is None:
+        cursor.execute(
+            "UPDATE consultations SET last_activity_at=%s, billed_until=%s "
+            "WHERE id=%s",
+            (now, now, cid),
+        )
+        return {"phase": "opened", "window_expires_at": _window_end(now),
+                "settled": None}
+
+    if now <= _window_end(last_activity_at):
+        cursor.execute(
+            "UPDATE consultations SET last_activity_at=%s WHERE id=%s",
+            (now, cid),
+        )
+        return {"phase": "extended", "window_expires_at": _window_end(now),
+                "settled": None}
+
+    settled = _settle_consultation_time_tx(cursor, uid, consultation_id, now)
+    cursor.execute(
+        "UPDATE consultations SET last_activity_at=%s, billed_until=%s "
+        "WHERE id=%s",
+        (now, now, cid),
+    )
+    return {"phase": "reopened", "window_expires_at": _window_end(now),
+            "settled": settled}
+
+
+def _process_consultation_activity_tx(cursor, user_id, consultation_id, now):
+    """Enchaînement complet pour UN message — NON appelé par aucun endpoint dans
+    ce lot :
+      1. settle de la fenêtre courante (débite ce qui est réellement dû) ;
+      2. snapshot de disponibilité APRÈS settle ;
+      3. touch UNIQUEMENT si `available` : prolonge / rouvre une fenêtre. Si le
+         temps est épuisé (`available` False), la fenêtre reste coupée au point
+         d'épuisement et AUCUNE nouvelle fenêtre n'est ouverte (l'appelant A.3
+         renverra 402 sans LLM). Une recharge ultérieure -> prochain message ->
+         fenêtre neuve, sans rétrofacturation du passé.
+
+    Retour :
+      { "settled": <dict>, "snapshot": <dict>, "touched": <dict|None>,
+        "available": <bool> }
+    """
+    settled = _settle_consultation_time_tx(cursor, user_id, consultation_id, now)
+    snapshot = _get_time_snapshot_tx(cursor, user_id, now)
+    available = snapshot["total_remaining_seconds"] > 0
+    touched = None
+    if available:
+        touched = _touch_consultation_activity_tx(cursor, consultation_id, now)
+    return {"settled": settled, "snapshot": snapshot,
+            "touched": touched, "available": available}
+
+
+# ============================================================
 # BILLING MOBILE (B2) — enregistrement idempotent d'un abonnement
 # DÉJÀ vérifié auprès du store.
 #
