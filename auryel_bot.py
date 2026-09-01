@@ -3210,10 +3210,15 @@ def _consultation_json(slot_consultation, opened_now, state):
 def api_consultation_message():
     """Chat mobile -> cerveau Auryel. Identité = jeton Bearer uniquement.
 
-    B4.2 : la consultation de 2 h démarre au 1er message réellement envoyé
-    (open_or_get_consultation) ; les suivants réutilisent la session active, même
-    conseiller. Le rate-limit `30 per 10 minutes` reste un garde anti-abus
-    TECHNIQUE — jamais le quota commercial (= allowance + earned credits)."""
+    TIMER-A.3c-2c — basculé sur le MOTEUR TEMPS. Le 1er message ouvre une
+    CONVERSATION LOGIQUE persistante (plus une session 2 h) ; le temps est
+    débité seconde par seconde par le settle de la fenêtre d'activité (300 s),
+    dans l'ordre first_free -> premium -> purchased. `open_or_get_consultation`
+    n'est PLUS appelé ici (conservée pour compat legacy / tests). Toute la
+    mutation (settle / crédit temps / consultation logique / conseiller / touch /
+    attach tirage / commit) est faite par `_open_time_consultation_flow_tx` en
+    UNE transaction, AVANT le LLM ; aucun verrou tenu pendant le LLM. Le
+    rate-limit `30 per 10 minutes` reste un garde anti-abus TECHNIQUE."""
     data = request.get_json(silent=True) or {}
     msg = data.get("message")
     if not isinstance(msg, str):
@@ -3226,11 +3231,9 @@ def api_consultation_message():
 
     user_id = g.app_account["user_id"]   # jamais lu dans le body
 
-    # B'. tirage_id OPTIONNEL (T3) — résolu AVANT toute ouverture/consommation.
-    #     Un tirage_id absent, malformé, inexistant ou appartenant à un AUTRE
-    #     compte NE DOIT JAMAIS ouvrir une consultation ni débiter first_free /
-    #     monthly / earned : le 404 part ici, avant open_or_get_consultation.
-    #     Le contexte est construit UNIQUEMENT depuis le référentiel serveur.
+    # tirage_id OPTIONNEL — validé LECTURE SEULE AVANT toute mutation : absent,
+    # malformé, inexistant ou d'un AUTRE compte -> 404, aucun débit / touch /
+    # ouverture. Le contexte LLM est construit UNIQUEMENT depuis le référentiel.
     tirage_id = data.get("tirage_id")
     tirage_context = None
     if tirage_id is not None:
@@ -3243,51 +3246,95 @@ def api_consultation_message():
             _tirage_card_keys_from_db(tirage_row["card_keys"])
         )
 
-    # C. conseiller CHOISI dans le profil — sert uniquement à OUVRIR une session.
-    #    Une fois ouverte, c'est consultation.advisor_id qui prime (conseiller figé).
+    # conseiller PRÉFÉRÉ (profil) — sert à ouvrir/reprendre ; une fois la
+    # consultation choisie, c'est SON advisor_id RÉEL qui prime (figé si la
+    # fenêtre est active, cf. règle conseiller A.3c-1).
     profile = get_or_create_app_profile(user_id)
     if profile is None:
         return _auth_json({"error": "unauthorized"}, 401)
-    advisor_choisi = profile.get("guide") or "selena"
+    preferred_advisor = profile.get("guide") or "selena"
 
-    # D. ouverture atomique (1er message) OU récupération de la session active.
-    slot = open_or_get_consultation(user_id, advisor_choisi)
+    now = _utcnow()
+    flow = _open_time_consultation_flow_tx(
+        user_id, preferred_advisor,
+        tirage_id if tirage_context is not None else None, now,
+    )
 
-    if slot["status"] == "unknown_account":
-        return _auth_json({"error": "unauthorized"}, 401)                      # F.
-
-    if slot["status"] == "no_credit":
-        # E. aucun LLM, aucun message persisté, aucun contexte émotionnel persisté.
-        state = get_consultation_state(user_id)
+    if flow["status"] == "unknown_account":
+        return _auth_json({"error": "unauthorized"}, 401)
+    if flow["status"] == "tirage_not_found":
+        return _auth_json({"error": "tirage_not_found"}, 404)
+    if flow["status"] == "time_exhausted":
+        # AUCUN LLM, aucun message persisté, aucune consultation / touch / tirage.
+        _st = {"time_snapshot": flow["time"],
+               "window_active": flow["time"]["window_active"],
+               "window_expires_at": flow["time"]["window_expires_at"],
+               "earned_available": flow["earned_available"],
+               "quota_legacy": flow["quota_legacy"]}
         return _auth_json({
-            "error": "no_credit",
+            "error": "time_exhausted",
             "consultation": None,
-            "quota": _quota_json(state["quota"]),
+            "time": _time_json(_st),
+            "quota": _quota_shim_json(_st),
         }, 402)
 
-    consultation = slot["consultation"]
-    advisor_session = consultation["advisor_id"]      # G. conseiller figé de la session
+    # status == "ok"
+    cid = flow["consultation"]["id"]
+    advisor_real = flow["consultation"]["advisor_id"]   # figé si fenêtre active
 
-    # 3. contexte émotionnel : SEULEMENT après avoir une consultation active/ouverte.
+    # Lecture ciblée LECTURE SEULE (started_at / expires_at / credit_source) pour
+    # la compat du JSON consultation — aucun FOR UPDATE, aucune mutation de
+    # quota. `expires_at` n'est PLUS un cutoff.
+    _c_started_at = _c_expires_at = _c_credit_source = None
+    _conn = get_conn()
+    try:
+        _cc = _conn.cursor()
+        _cc.execute(
+            "SELECT started_at, expires_at, credit_source "
+            "FROM consultations WHERE id=%s",
+            (str(cid),),
+        )
+        _r = _cc.fetchone()
+        if _r is not None:
+            _c_started_at, _c_expires_at, _c_credit_source = _r
+    finally:
+        try:
+            _conn.close()
+        except Exception:
+            pass
+
+    # contexte émotionnel : APRÈS commit du helper, AVANT le LLM (position
+    # inchangée vs legacy).
     _app_persist_emotional_context(user_id, msg)
 
+    # LLM avec le CONSEILLER RÉEL. La persistance user/assistant reste gérée par
+    # get_reply_for_user_id (inchangée). Le tirage est DÉJÀ rattaché in-tx par le
+    # helper -> pas de ré-attach ici.
     reply = get_reply_for_user_id(
         user_id, msg,
-        advisor_override=advisor_session,
-        consultation_id=consultation["id"],
+        advisor_override=advisor_real,
+        consultation_id=cid,
         tirage_context=tirage_context,
     )
 
-    # Rattachement du tirage à la session où il a servi — APRÈS la réponse, une
-    # seule fois (le premier lien historique n'est jamais écrasé).
-    if tirage_id is not None and tirage_context is not None:
-        attach_tirage_to_consultation(user_id, tirage_id, consultation["id"])
-
-    state = get_consultation_state(user_id)
+    _st = {"time_snapshot": flow["time"],
+           "window_active": flow["time"]["window_active"],
+           "window_expires_at": flow["time"]["window_expires_at"],
+           "earned_available": flow["earned_available"],
+           "quota_legacy": flow["quota_legacy"]}
     return _auth_json({
         "reply": reply,
-        "consultation": _consultation_json(consultation, slot.get("opened_now", False), state),
-        "quota": _quota_json(state["quota"]),
+        "consultation": {
+            "id": cid,
+            "advisor_id": advisor_real,
+            "started_at": _ts_iso(_c_started_at),
+            "expires_at": _ts_iso(_c_expires_at),   # compat physique, JAMAIS cutoff
+            "seconds_remaining": int(flow["time"]["total_remaining_seconds"]),
+            "credit_source": _c_credit_source or "time",
+            "opened_now": bool(flow["consultation"]["created"]),
+        },
+        "time": _time_json(_st),
+        "quota": _quota_shim_json(_st),
     }, 200)
 
 
@@ -6155,6 +6202,21 @@ def _open_time_consultation_flow_tx(user_id, preferred_advisor_id, tirage_id, no
 
         # 7. plus de temps -> time_exhausted.
         if snap["total_remaining_seconds"] <= 0:
+            c.execute(
+                "SELECT COUNT(*) FROM earned_credits "
+                "WHERE user_id=%s AND consumed_at IS NULL",
+                (uid,),
+            )
+            _earned = int(c.fetchone()[0])
+            c.execute(
+                """SELECT period_start, period_end
+                   FROM consultation_allowance
+                   WHERE user_id=%s AND period_start <= %s AND period_end > %s
+                   ORDER BY period_start DESC
+                   LIMIT 1""",
+                (uid, now, now),
+            )
+            _arow = c.fetchone()
             conn.commit()
             return {
                 "status": "time_exhausted", "consultation": None,
@@ -6168,6 +6230,10 @@ def _open_time_consultation_flow_tx(user_id, preferred_advisor_id, tirage_id, no
                     "total_remaining_seconds": 0,
                     "window_active": False, "window_expires_at": None,
                 },
+                "earned_available": _earned,
+                "quota_legacy": ({"is_premium": True, "period_start": _arow[0],
+                                  "period_end": _arow[1]}
+                                 if _arow is not None else None),
                 "tirage_attached": False,
             }
 
@@ -6185,8 +6251,25 @@ def _open_time_consultation_flow_tx(user_id, preferred_advisor_id, tirage_id, no
             tirage_attached = _attach_tirage_to_consultation_tx(
                 c, uid, tirage_id, cid)
 
-        # 11. snapshot final (un 1er message / touch ne débite rien) + commit.
+        # 11. snapshot final (un 1er message / touch ne débite rien) + entrées
+        #     LEGACY LECTURE SEULE pour le shim quota (A.3c-2c) : earned count +
+        #     période Premium active. Aucun débit, aucune écriture.
         snap2 = _get_time_snapshot_tx(c, uid, now)
+        c.execute(
+            "SELECT COUNT(*) FROM earned_credits "
+            "WHERE user_id=%s AND consumed_at IS NULL",
+            (uid,),
+        )
+        earned_available = int(c.fetchone()[0])
+        c.execute(
+            """SELECT period_start, period_end
+               FROM consultation_allowance
+               WHERE user_id=%s AND period_start <= %s AND period_end > %s
+               ORDER BY period_start DESC
+               LIMIT 1""",
+            (uid, now, now),
+        )
+        arow = c.fetchone()
         conn.commit()
 
         return {
@@ -6206,6 +6289,9 @@ def _open_time_consultation_flow_tx(user_id, preferred_advisor_id, tirage_id, no
                 "window_active": snap2["total_remaining_seconds"] > 0,
                 "window_expires_at": touched.get("window_expires_at"),
             },
+            "earned_available": earned_available,
+            "quota_legacy": ({"is_premium": True, "period_start": arow[0],
+                              "period_end": arow[1]} if arow is not None else None),
             "tirage_attached": tirage_attached,
         }
     except Exception:

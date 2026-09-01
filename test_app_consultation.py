@@ -204,6 +204,59 @@ class FakeCursor:
                       if a["user_id"] == uid and a["deleted_at"] is None), None)
             self._result = (uid, r.get("first_consultation_used_at")) if r else None
 
+        # ---- flux transactionnel TEMPS (TIMER-A.3c-2b/2c) ----
+        elif k == ("SELECT user_id FROM accounts "
+                   "WHERE user_id=%s AND deleted_at IS NULL FOR UPDATE"):
+            (uid,) = p
+            r = next((a for a in FAKE["accounts"]
+                      if a["user_id"] == uid and a["deleted_at"] is None), None)
+            self._result = (uid,) if r else None
+
+        elif k == ("SELECT id, last_activity_at FROM consultations "
+                   "WHERE user_id=%s ORDER BY started_at DESC LIMIT 1"):
+            (uid,) = p
+            rows = sorted([c for c in FAKE["consultations"] if c["user_id"] == uid],
+                          key=lambda c: c["started_at"], reverse=True)
+            if rows:
+                self._result = (rows[0]["id"], rows[0].get("last_activity_at"))
+
+        elif k == ("SELECT id, advisor_id, last_activity_at, billed_until FROM consultations "
+                   "WHERE user_id=%s ORDER BY started_at DESC LIMIT 1"):
+            (uid,) = p
+            rows = sorted([c for c in FAKE["consultations"] if c["user_id"] == uid],
+                          key=lambda c: c["started_at"], reverse=True)
+            if rows:
+                c0 = rows[0]
+                self._result = (c0["id"], c0["advisor_id"],
+                                c0.get("last_activity_at"), c0.get("billed_until"))
+
+        elif k == ("INSERT INTO consultations (id, user_id, advisor_id, started_at, expires_at, "
+                   "credit_source, created_at) VALUES (%s, %s, %s, %s, %s, 'time', %s)"):
+            cid, uid, advisor, started, expires, created = p
+            FAKE["consultations"].append({
+                "id": str(cid), "user_id": str(uid), "advisor_id": advisor,
+                "started_at": started, "expires_at": expires,
+                "credit_source": "time", "created_at": created,
+                "last_activity_at": None, "billed_until": None,
+            })
+            self.rowcount = 1
+
+        elif k == ("SELECT started_at, expires_at, credit_source FROM consultations "
+                   "WHERE id=%s"):
+            (cid,) = p
+            c0 = next((c for c in FAKE["consultations"] if c["id"] == str(cid)), None)
+            if c0 is not None:
+                self._result = (c0["started_at"], c0["expires_at"], c0["credit_source"])
+
+        elif k == "UPDATE consultations SET last_activity_at=%s WHERE id=%s":
+            la, cid = p
+            c0 = next((c for c in FAKE["consultations"] if c["id"] == str(cid)), None)
+            if c0 is not None:
+                c0["last_activity_at"] = la
+                self.rowcount = 1
+            else:
+                self.rowcount = 0
+
         elif k == ("UPDATE accounts SET first_consultation_used_at=%s "
                    "WHERE user_id=%s AND first_consultation_used_at IS NULL"):
             ts, uid = p
@@ -486,96 +539,142 @@ def _post(tok, message="j'ai besoin d'y voir clair"):
                        headers={"Authorization": f"Bearer {tok}"})
 
 
-def _expire_active_consultations():
-    past = A._utcnow() - timedelta(hours=1)
-    for c in FAKE["consultations"]:
-        c["expires_at"] = past
-
-
 print("=" * 64)
 print("TEST APP CONSULTATION — B4.2  (route message + route state)")
 print("=" * 64)
 
-# --- 1. premier message premium : ouverture + débit + LLM + messages liés -------
+# ===========================================================================
+# POST /api/consultation/message — CONTRAT MOTEUR TEMPS (TIMER-A.3c-2c)
+# Le POST est passé sur _open_time_consultation_flow_tx : plus de session 2 h,
+# plus de monthly_used += 1, plus de consommation d'earned_credit. Le temps est
+# débité seconde par seconde (settle de la fenêtre 300 s), waterfall
+# first_free -> premium -> purchased. credit_source d'une consultation temps
+# = "time". 402 -> error "time_exhausted".
+# ===========================================================================
+
+def _expire_window(uid=UID1):
+    """Ferme la fenêtre d'activité (last_activity_at loin dans le passé). Dans le
+    modèle TEMPS c'est la fenêtre 300 s — pas expires_at — qui décide de la
+    reprise / réouverture d'une consultation logique."""
+    past = A._utcnow() - timedelta(hours=1)
+    for c in FAKE["consultations"]:
+        if c["user_id"] == uid:
+            c["last_activity_at"] = past
+            c["billed_until"] = past
+
+
+def _drain_first_free(uid=UID1):
+    for a in FAKE["accounts"]:
+        if a["user_id"] == uid:
+            a["first_free_seconds_remaining"] = 0
+
+
+# --- 1. premier message Premium : ouverture consultation TEMPS + LLM + messages
 tok = fresh()
 with patch.object(A, "call_llm", return_value=REPLY) as m_llm, \
      patch("auryel_bot.random.random", return_value=1.0):
     r = _post(tok)
 j = r.get_json()
-check(r.status_code == 200, "1a premier message premium -> 200")
+check(r.status_code == 200, "1a premier message Premium -> 200")
 check(j["reply"] == REPLY and m_llm.call_count == 1, "1b reply renvoyé, call_llm appelé 1x")
-check(j["consultation"]["opened_now"] is True, "1c opened_now = true")
-check(j["consultation"]["credit_source"] == "monthly", "1d credit_source = monthly")
-check(j["consultation"]["advisor_id"] == "selena", "1e advisor_id = selena (guide du profil)")
-check(j["quota"]["monthly_used"] == 1 and j["quota"]["monthly_remaining"] == 3,
-      "1f monthly_used 0 -> 1, remaining 3 (quota 4)")
-check(j["quota"]["is_premium"] is True, "1g is_premium = true")
+check(set(j.keys()) == {"reply", "consultation", "time", "quota"},
+      "1c racine = reply / consultation / time / quota")
+check(j["consultation"]["opened_now"] is True, "1d opened_now = true (flow.consultation.created)")
+check(j["consultation"]["credit_source"] == "time", "1e credit_source = time")
+check(j["consultation"]["advisor_id"] == "selena", "1f advisor_id = selena (guide du profil)")
+check(j["time"]["premium_remaining_seconds"] == 28800
+      and j["time"]["total_remaining_seconds"] == 28800,
+      "1g time : Premium plein (1er touch ne débite rien)")
+check(j["consultation"]["seconds_remaining"] == j["time"]["total_remaining_seconds"] == 28800,
+      "1h consultation.seconds_remaining == time.total_remaining_seconds (PAS expires_at - now)")
+check(j["quota"]["is_premium"] is True and j["quota"]["monthly_limit"] == 8
+      and j["quota"]["monthly_used"] == 0,
+      "1i shim : is_premium, monthly_limit 8, monthly_used 0 (aucun débit legacy)")
+check(FAKE["consultation_allowance"][0]["monthly_used"] == 0,
+      "1j monthly_used legacy JAMAIS incrémenté par le POST")
 _cid = j["consultation"]["id"]
 _msgs = FAKE["messages"]
 check(any(m["role"] == "user" and m["content"] == "j'ai besoin d'y voir clair"
           and m["consultation_id"] == _cid for m in _msgs),
-      "1h message user rattaché à consultation_id")
+      "1k message user rattaché à consultation_id")
 check(any(m["role"] == "assistant" and m["content"] == REPLY
           and m["consultation_id"] == _cid for m in _msgs),
-      "1i message assistant rattaché au MÊME consultation_id")
-check("no-store" in r.headers.get("Cache-Control", ""), "1j Cache-Control: no-store")
+      "1l message assistant rattaché au MÊME consultation_id")
+check("no-store" in r.headers.get("Cache-Control", ""), "1m Cache-Control: no-store")
+_JSON_FIRST_FREE = None
+_JSON_PREMIUM = dict(j)          # §28 B — succès Premium
+_JSON_PURCHASED = None
+_JSON_402 = None
 
-# --- 2. deuxième message < 2 h : même consultation, aucun débit, opened_now=false
+# --- 2. deuxième message < 5 min : même consultation logique, opened_now=false
 with patch.object(A, "call_llm", return_value=REPLY):
     r2 = _post(tok, "et ensuite ?")
 j2 = r2.get_json()
 check(r2.status_code == 200 and j2["consultation"]["id"] == _cid,
-      "2a 2e message -> même consultation")
+      "2a 2e message < 5 min -> même consultation logique")
 check(j2["consultation"]["opened_now"] is False, "2b opened_now = false")
-check(j2["quota"]["monthly_used"] == 1, "2c aucun nouveau débit (monthly_used reste 1)")
-check(len(FAKE["consultations"]) == 1, "2d une seule consultation en base")
+check(FAKE["consultation_allowance"][0]["monthly_used"] == 0,
+      "2c monthly_used legacy toujours 0 (aucun débit d'unité)")
+check(len(FAKE["consultations"]) == 1, "2d une seule consultation en base (pas de duplication)")
 check(all(m["consultation_id"] == _cid for m in FAKE["messages"]),
       "2e tous les messages de la session portent le même consultation_id")
 check(isinstance(j2["consultation"]["seconds_remaining"], int)
-      and 0 < j2["consultation"]["seconds_remaining"] <= 7200,
-      "2f seconds_remaining recalculé côté serveur (0 < x <= 7200)")
+      and j2["consultation"]["seconds_remaining"] == j2["time"]["total_remaining_seconds"],
+      "2f seconds_remaining = time.total_remaining_seconds")
 
-# --- 3. no_credit : 402, aucun LLM, aucun message, aucun contexte émotionnel ----
-tok = fresh(premium=False)           # ni allowance ni earned credit
+# --- 3. aucun temps -> 402 time_exhausted, aucun effet de bord -----------------
+tok = fresh(premium=False)           # first_free consommée, pas de Premium, pas de purchased
 with patch.object(A, "call_llm", return_value=REPLY) as m_llm3, \
      patch.object(A, "_app_persist_emotional_context") as m_emo:
     r3 = _post(tok)
 j3 = r3.get_json()
-check(r3.status_code == 402, "3a sans crédit -> HTTP 402")
-check(j3["error"] == "no_credit" and j3["consultation"] is None, "3b payload { error, consultation:null }")
-check(j3["quota"]["is_premium"] is False and j3["quota"]["monthly_remaining"] == 0,
-      "3c quota présent : is_premium=false, remaining 0")
-check(m_llm3.call_count == 0, "3d call_llm jamais appelé")
-check(m_emo.call_count == 0, "3e _app_persist_emotional_context jamais appelé")
+check(r3.status_code == 402, "3a aucun temps -> HTTP 402")
+check(j3["error"] == "time_exhausted" and j3["consultation"] is None,
+      "3b payload { error: time_exhausted, consultation: null }")
+check(j3["time"]["total_remaining_seconds"] == 0
+      and j3["time"]["window_active"] is False
+      and j3["time"]["window_expires_at"] is None,
+      "3c time = 0, fenêtre inactive")
+check(set(j3["quota"].keys()) == {"is_premium", "monthly_limit", "monthly_used",
+                                   "monthly_remaining", "earned_available",
+                                   "first_free_available", "period_start", "period_end"},
+      "3d quota shim présent sur le 402")
+check(m_llm3.call_count == 0, "3e call_llm jamais appelé")
+check(m_emo.call_count == 0, "3f _app_persist_emotional_context jamais appelé")
 check(len(FAKE["messages"]) == 0 and len(FAKE["consultations"]) == 0,
-      "3f aucun message, aucune consultation créés")
-check("no-store" in r3.headers.get("Cache-Control", ""), "3g 402 -> Cache-Control: no-store")
+      "3g aucun message, aucune consultation créés")
+check("no-store" in r3.headers.get("Cache-Control", ""), "3h 402 -> Cache-Control: no-store")
+_JSON_402 = dict(j3)            # §28 D — 402 time_exhausted
 
-# --- 4. earned credit : ouvre une consultation ---------------------------------
+# --- 4. earned credit NE DÉBLOQUE PLUS l'accès (modèle temps) -----------------
 tok = fresh(premium=False)
 A.grant_earned_credit(UID1, "referral")
-with patch.object(A, "call_llm", return_value=REPLY):
+with patch.object(A, "call_llm", return_value=REPLY) as m_llm4:
     r4 = _post(tok)
 j4 = r4.get_json()
-check(r4.status_code == 200 and j4["consultation"]["credit_source"] == "referral",
-      "4a earned credit -> ouverture via referral")
-check(j4["quota"]["is_premium"] is False and j4["quota"]["earned_available"] == 0,
-      "4b gratuit : is_premium=false, earned_available 1 -> 0")
+check(r4.status_code == 402 and j4["error"] == "time_exhausted",
+      "4a earned credit seul ne donne plus accès -> 402 time_exhausted")
+check(m_llm4.call_count == 0, "4b aucun LLM")
+check(sum(1 for e in FAKE["earned_credits"] if e["consumed_at"] is None) == 1
+      and all(e["consumed_at"] is None for e in FAKE["earned_credits"]),
+      "4c earned credit JAMAIS consommé par le nouveau POST (aucun consumed_at)")
+check(j4["quota"]["earned_available"] == 1, "4d quota.earned_available préservé (1)")
 
-# --- 5. utilisateur gratuit sans earned -> 402 --------------------------------
+# --- 5. gratuit sans aucun temps -> 402 -------------------------------------
 tok = fresh(premium=False)
 with patch.object(A, "call_llm", return_value=REPLY) as m_llm5:
     r5 = _post(tok)
-check(r5.status_code == 402 and m_llm5.call_count == 0,
-      "5 gratuit sans earned -> 402, aucun LLM")
+check(r5.status_code == 402 and r5.get_json()["error"] == "time_exhausted"
+      and m_llm5.call_count == 0,
+      "5 gratuit sans temps -> 402 time_exhausted, aucun LLM")
 
-# --- 6. conseiller FIGÉ 2 h sans modifier app_profiles.guide -----------------
+# --- 6. advisor RÉEL figé pendant la fenêtre active : le LLM parle avec lui ----
 tok = fresh()
 with patch.object(A, "call_llm", return_value=REPLY) as m_llm6a, \
      patch("auryel_bot.random.random", return_value=1.0):
     _post(tok, "bonjour selena")
 _sys_a = m_llm6a.call_args[0][0][0]["content"]
-A.update_app_profile(UID1, guide="maia")          # l'app change de conseiller pendant la session
+A.update_app_profile(UID1, guide="maia")          # l'app change de conseiller préféré
 with patch.object(A, "call_llm", return_value=REPLY) as m_llm6b, \
      patch("auryel_bot.random.random", return_value=1.0):
     r6 = _post(tok, "et là ?")
@@ -583,10 +682,13 @@ _sys_b = m_llm6b.call_args[0][0][0]["content"]
 check(A.GUIDES["selena"].get("nom", "selena") in _sys_a
       and A.GUIDES["selena"].get("nom", "selena") in _sys_b
       and A.GUIDES["maia"].get("nom", "maia") not in _sys_b,
-      "6a persona reste selena sur les 2 tours malgré guide=maia")
-check(r6.get_json()["consultation"]["advisor_id"] == "selena", "6b consultation.advisor_id = selena")
+      "6a fenêtre active : LLM parle avec l'advisor RÉEL (selena) sur les 2 tours malgré guide=maia")
+check(r6.get_json()["consultation"]["advisor_id"] == "selena",
+      "6b consultation.advisor_id = selena (figé)")
 check(A.get_app_profile(UID1)["guide"] == "maia",
       "6c app_profiles.guide vaut maia (jamais réécrit par la route)")
+check(len(FAKE["consultations"]) == 1,
+      "6d aucune nouvelle consultation (changement d'advisor ignoré fenêtre active)")
 
 # --- 7. GET /api/consultation/state — TIMER-A.3a (bloc time + shim quota) -----
 def _state(tok):
@@ -662,9 +764,11 @@ tok = fresh()
 with patch.object(A, "call_llm", return_value=REPLY):
     _post(tok, "démarre")
 _cid7 = FAKE["consultations"][0]["id"]
-check(_state(tok)["time"]["window_active"] is False
-      and _state(tok)["time"]["window_expires_at"] is None,
-      "7.E fenêtre inactive (last_activity NULL) -> window_active false, window_expires_at null")
+# TIMER-A.3c-2c : le POST touche désormais la fenêtre -> elle est ACTIVE juste
+# après (last_activity_at = now), plus NULL comme au temps du câblage A.3a.
+check(_state(tok)["time"]["window_active"] is True
+      and isinstance(_state(tok)["time"]["window_expires_at"], str),
+      "7.E juste après un POST -> fenêtre active, window_expires_at posé")
 _la = A._utcnow()
 _set_time_meter(_cid7, _la, _la)
 jt = _state(tok)["time"]
@@ -697,6 +801,103 @@ check(FAKE["consultation_allowance"][0]["monthly_used_seconds"] == 300,
 js = _state(tok)
 check(js["consultation"]["seconds_remaining"] == js["time"]["total_remaining_seconds"],
       "7.J consultation.seconds_remaining == time.total_remaining_seconds")
+
+# --- 7.PRIO — AUDIT CIBLÉ A.3c-2c : priorité stricte des buckets au settle ---
+# Un débit de N s avec first_free suffisant NE TOUCHE QUE first_free : Premium
+# et purchased restent INCHANGÉS. first_consultation_used_at posé au 1er DÉBIT
+# RÉEL (ici pendant le GET /state à +180 s, jamais au simple POST/touch).
+reset_db()
+seed_account(UID1, first_consultation_used_at=None,          # gratuite JAMAIS consommée
+             first_free_seconds_remaining=3600,
+             purchased_seconds_remaining=7200)
+A.provision_allowance(UID1, A._utcnow() - timedelta(days=1),
+                      A._utcnow() + timedelta(days=29), monthly_limit=4)
+# monthly_allowance_seconds = 28800 / monthly_used_seconds = 0 (DEFAULT v34)
+_TP = A._utcnow()
+tok = A.create_app_session(UID1)
+with patch.object(A, "_utcnow", return_value=_TP), \
+     patch.object(A, "call_llm", return_value=REPLY):
+    _post(tok, "go")
+_acc = FAKE["accounts"][0]
+_alw = FAKE["consultation_allowance"][0]
+_con = FAKE["consultations"][0]
+check(_acc["first_free_seconds_remaining"] == 3600
+      and _alw["monthly_allowance_seconds"] == 28800
+      and _alw["monthly_used_seconds"] == 0
+      and _acc["purchased_seconds_remaining"] == 7200
+      and _acc["first_consultation_used_at"] is None,
+      "7.PRIO-a juste après POST -> AUCUN débit (buckets intacts, fcua NULL)")
+check(_con["last_activity_at"] == _TP and _con["billed_until"] == _TP,
+      "7.PRIO-b consultation ouverte : last_activity_at = billed_until = T0")
+with patch.object(A, "_utcnow", return_value=_TP + timedelta(seconds=180)):
+    _js = _state(tok)
+check(_acc["first_free_seconds_remaining"] == 3420,
+      "7.PRIO-c GET /state +180 s -> first_free 3600 -> 3420")
+check(_alw["monthly_used_seconds"] == 0,
+      "7.PRIO-d Premium INCHANGÉ (monthly_used_seconds reste 0)")
+check(_acc["purchased_seconds_remaining"] == 7200,
+      "7.PRIO-e purchased INCHANGÉ (7200)")
+check(_acc["first_consultation_used_at"] == _TP + timedelta(seconds=180),
+      "7.PRIO-f first_consultation_used_at posé à l'instant du 1er débit réel (T0+180 s)")
+check(_js["time"]["first_free_remaining_seconds"] == 3420
+      and _js["time"]["premium_remaining_seconds"] == 28800
+      and _js["time"]["purchased_remaining_seconds"] == 7200
+      and _js["time"]["total_remaining_seconds"] == 39420,
+      "7.PRIO-g time exposé = 3420 + 28800 + 7200 = 39420")
+
+# --- 7.PRIO2 — frontière first_free -> Premium sur un settle unique ----------
+reset_db()
+seed_account(UID1, first_consultation_used_at=None,
+             first_free_seconds_remaining=100, purchased_seconds_remaining=500)
+A.provision_allowance(UID1, A._utcnow() - timedelta(days=1),
+                      A._utcnow() + timedelta(days=29), monthly_limit=4)
+FAKE["consultation_allowance"][0]["monthly_allowance_seconds"] = 1000
+FAKE["consultation_allowance"][0]["monthly_used_seconds"] = 0
+_TP = A._utcnow()
+tok = A.create_app_session(UID1)
+with patch.object(A, "_utcnow", return_value=_TP), \
+     patch.object(A, "call_llm", return_value=REPLY):
+    _post(tok, "go")
+_acc = FAKE["accounts"][0]
+_alw = FAKE["consultation_allowance"][0]
+with patch.object(A, "_utcnow", return_value=_TP + timedelta(seconds=180)):
+    _state(tok)
+check(_acc["first_free_seconds_remaining"] == 0
+      and _alw["monthly_used_seconds"] == 80
+      and _acc["purchased_seconds_remaining"] == 500
+      and _acc["first_consultation_used_at"] is not None,
+      "7.PRIO2-a débit 180 s -> ff 100->0, premium 1000->920 (used 80), purchased 500 intact, fcua posé")
+with patch.object(A, "_utcnow", return_value=_TP + timedelta(seconds=230)):
+    _state(tok)
+check(_acc["first_free_seconds_remaining"] == 0
+      and _alw["monthly_used_seconds"] == 130
+      and _acc["purchased_seconds_remaining"] == 500,
+      "7.PRIO2-b nouveau débit 50 s -> premium used 80->130 (920->870), ff 0, purchased 500")
+
+# --- 7.PRIO3 — frontière Premium -> purchased, aucun négatif ----------------
+reset_db()
+seed_account(UID1, first_consultation_used_at=_FF_USED,
+             first_free_seconds_remaining=0, purchased_seconds_remaining=500)
+A.provision_allowance(UID1, A._utcnow() - timedelta(days=1),
+                      A._utcnow() + timedelta(days=29), monthly_limit=4)
+FAKE["consultation_allowance"][0]["monthly_allowance_seconds"] = 28800
+FAKE["consultation_allowance"][0]["monthly_used_seconds"] = 28700   # premium restant = 100
+_TP = A._utcnow()
+tok = A.create_app_session(UID1)
+with patch.object(A, "_utcnow", return_value=_TP), \
+     patch.object(A, "call_llm", return_value=REPLY):
+    _post(tok, "go")
+_acc = FAKE["accounts"][0]
+_alw = FAKE["consultation_allowance"][0]
+with patch.object(A, "_utcnow", return_value=_TP + timedelta(seconds=180)):
+    _state(tok)
+check(_alw["monthly_used_seconds"] == 28800
+      and _acc["purchased_seconds_remaining"] == 420
+      and _acc["first_free_seconds_remaining"] == 0
+      and _acc["purchased_seconds_remaining"] >= 0,
+      "7.PRIO3 débit 180 s -> premium 100->0 (used 28800), purchased 500->420, aucun négatif")
+
+tok = fresh()   # rétablit l'état pour les scénarios suivants
 
 # --- 7.K — shim quota exact -------------------------------------------------
 tok = fresh()
@@ -737,37 +938,60 @@ check(len(FAKE["consultations"]) == _before[0], "7.O GET /state ne crée AUCUNE 
 check(FAKE["consultation_allowance"][0]["monthly_used"] == _before[1],
       "7.P GET /state n'incrémente JAMAIS monthly_used legacy (seul monthly_used_seconds bouge)")
 
-# --- 8. session expirée : le message suivant tente une NOUVELLE ouverture -----
+# --- 8. fenêtre expirée : REPRISE même conseiller / NOUVELLE si conseiller change
 tok = fresh()
 with patch.object(A, "call_llm", return_value=REPLY):
     r8a = _post(tok, "premier")
 _cid8 = r8a.get_json()["consultation"]["id"]
-_expire_active_consultations()
+_expire_window()
+# 8a. > 5 min, MÊME conseiller préféré -> reprise de la MÊME consultation logique
 with patch.object(A, "call_llm", return_value=REPLY):
     r8b = _post(tok, "deuxième, bien plus tard")
 j8b = r8b.get_json()
-check(j8b["consultation"]["id"] != _cid8 and j8b["consultation"]["opened_now"] is True,
-      "8a session expirée -> nouvelle consultation ouverte")
-check(j8b["quota"]["monthly_used"] == 2, "8b nouveau débit (monthly_used 1 -> 2)")
+check(j8b["consultation"]["id"] == _cid8 and j8b["consultation"]["opened_now"] is False,
+      "8a fenêtre expirée + même conseiller -> reprise même consultation (opened_now false)")
+check(FAKE["consultation_allowance"][0]["monthly_used"] == 0,
+      "8b aucun débit d'unité legacy (monthly_used reste 0)")
+check(len(FAKE["consultations"]) == 1, "8c toujours une seule consultation logique")
+# 8d. > 5 min, conseiller préféré DIFFÉRENT -> NOUVELLE consultation, ancien advisor intact
+_expire_window()
+A.update_app_profile(UID1, guide="maia")
+with patch.object(A, "call_llm", return_value=REPLY) as m_llm8d:
+    r8d = _post(tok, "je veux changer de guide")
+j8d = r8d.get_json()
+check(j8d["consultation"]["id"] != _cid8 and j8d["consultation"]["opened_now"] is True
+      and j8d["consultation"]["advisor_id"] == "maia",
+      "8d fenêtre expirée + conseiller différent -> nouvelle consultation avec maia")
+check(A.GUIDES["maia"]["nom"] in m_llm8d.call_args[0][0][0]["content"],
+      "8e LLM appelé avec le NOUVEAU conseiller (maia)")
+check(next(c for c in FAKE["consultations"] if c["id"] == _cid8)["advisor_id"] == "selena",
+      "8f ancienne consultation : advisor_id selena JAMAIS modifié")
+check(len(FAKE["consultations"]) == 2, "8g exactement 2 consultations logiques")
 
-# --- 9. payload JSON exact / cohérent --------------------------------------
+# --- 9. payload JSON exact / cohérent (contrat temps) --------------------------
 tok = fresh()
 with patch.object(A, "call_llm", return_value=REPLY):
     j9 = _post(tok).get_json()
-check(set(j9.keys()) == {"reply", "consultation", "quota"}, "9a clés racine = reply/consultation/quota")
+check(set(j9.keys()) == {"reply", "consultation", "time", "quota"},
+      "9a clés racine = reply / consultation / time / quota")
 check(set(j9["consultation"].keys()) == {"id", "advisor_id", "started_at", "expires_at",
                                           "seconds_remaining", "credit_source", "opened_now"},
       "9b clés consultation exactes")
+check(set(j9["time"].keys()) == {"first_free_remaining_seconds", "premium_remaining_seconds",
+                                  "purchased_remaining_seconds", "total_remaining_seconds",
+                                  "window_active", "window_expires_at"},
+      "9c clés time exactes")
 check(set(j9["quota"].keys()) == {"is_premium", "monthly_limit", "monthly_used",
                                    "monthly_remaining", "earned_available",
                                    "first_free_available",
                                    "period_start", "period_end"},
-      "9c clés quota exactes (dont first_free_available)")
-check(j9["quota"]["monthly_limit"] - j9["quota"]["monthly_used"] == j9["quota"]["monthly_remaining"],
-      "9d monthly_remaining cohérent avec limit - used")
+      "9d clés quota shim exactes (dont first_free_available)")
+check(j9["consultation"]["credit_source"] == "time"
+      and j9["consultation"]["seconds_remaining"] == j9["time"]["total_remaining_seconds"],
+      "9e credit_source = time, seconds_remaining = time.total_remaining_seconds")
 check(isinstance(j9["consultation"]["started_at"], str)
       and isinstance(j9["consultation"]["expires_at"], str),
-      "9e started_at / expires_at sérialisés en ISO string")
+      "9f started_at / expires_at sérialisés en ISO string (compat, jamais cutoff)")
 
 # --- 10. messages.consultation_id : user + assistant sur la même session -----
 tok = fresh()
@@ -811,7 +1035,7 @@ check(str(inspect.signature(A.get_reply)) ==
       "(phone, user_message, depuis_pub=False, user_msg_pre_inserted=False)",
       "14 get_reply(phone, ...) : signature legacy inchangée")
 
-# --- 15. PREMIÈRE CONSULTATION OFFERTE via les routes (Q2.1) --------------
+# --- 15. GRATUITE (first_free) via les routes, contrat TEMPS --------------
 # 15a. GET /state d'un compte neuf : first_free_available=true, aucune écriture
 tok = fresh(premium=False, first_free=True)
 for _ in range(3):
@@ -824,51 +1048,168 @@ check(js15["quota"]["first_free_available"] is True
 check(FAKE["accounts"][0]["first_consultation_used_at"] is None,
       "15a2 GET /state n'écrit rien : first_consultation_used_at toujours NULL")
 
-# 15b. 1er POST /message -> 200, credit_source=first_free, marque posée
+# 15b. 1er POST /message -> 200 ; credit_source=time ; le touch NE débite RIEN
+# donc first_consultation_used_at reste NULL (posé seulement au 1er débit réel).
 with patch.object(A, "call_llm", return_value=REPLY) as m_llm15:
     r15 = _post(tok)
 j15 = r15.get_json()
 check(r15.status_code == 200 and m_llm15.call_count == 1
-      and j15["consultation"]["credit_source"] == "first_free"
+      and j15["consultation"]["credit_source"] == "time"
       and j15["consultation"]["opened_now"] is True,
-      "15b 1er message -> 200, credit_source = first_free")
-check(j15["quota"]["first_free_available"] is False
-      and j15["quota"]["monthly_used"] == 0,
-      "15b2 first_free_available passe à false, monthly_used reste 0")
-check(FAKE["accounts"][0]["first_consultation_used_at"] is not None,
-      "15b3 accounts.first_consultation_used_at renseigné")
+      "15b 1er message -> 200, credit_source = time")
+check(j15["time"]["first_free_remaining_seconds"] == 3600
+      and j15["time"]["total_remaining_seconds"] == 3600
+      and j15["quota"]["first_free_available"] is True
+      and FAKE["consultation_allowance"] == [],
+      "15b2 1er touch ne débite rien : first_free 3600 intact, first_free_available true")
+check(FAKE["accounts"][0]["first_consultation_used_at"] is None,
+      "15b3 first_consultation_used_at TOUJOURS NULL après le seul touch (pas de débit)")
+_cid15 = j15["consultation"]["id"]
+_JSON_FIRST_FREE = dict(j15)     # §28 A — succès first_free
 
-# 15c. reprise pendant les 2 h -> même id, aucune 2e consommation
+# 15c. reprise fenêtre active -> même id, opened_now false
 with patch.object(A, "call_llm", return_value=REPLY):
     j15c = _post(tok, "suite").get_json()
-check(j15c["consultation"]["id"] == j15["consultation"]["id"]
+check(j15c["consultation"]["id"] == _cid15
       and j15c["consultation"]["opened_now"] is False
       and len(FAKE["consultations"]) == 1,
-      "15c 2e message < 2 h -> même consultation gratuite, opened_now false")
+      "15c 2e message < 5 min -> même consultation, opened_now false")
 
-# 15d. après consommation + sans autre droit -> 402 no_credit
-_expire_active_consultations()
+# 15R. §26.R — first_consultation_used_at posé au PREMIER DÉBIT RÉEL de first_free
+_t15 = A._utcnow()
+_set_time_meter(_cid15, _t15, _t15)
+with patch.object(A, "call_llm", return_value=REPLY), \
+     patch.object(A, "_utcnow", return_value=_t15 + timedelta(seconds=180)):
+    j15r = _post(tok, "180 s plus tard").get_json()
+check(FAKE["accounts"][0]["first_free_seconds_remaining"] == 3420
+      and FAKE["accounts"][0]["first_consultation_used_at"] is not None,
+      "15R settle 180 s de first_free -> reste 3420, first_consultation_used_at posé")
+check(j15r["consultation"]["credit_source"] == "time"
+      and FAKE["consultation_allowance"] == [],
+      "15R2 credit_source reste time, aucun débit Premium (compte sans allowance)")
+
+# 15d / §26.H — exhaustion : plus aucun temps -> 402 time_exhausted
+_drain_first_free()
+_expire_window()
 with patch.object(A, "call_llm", return_value=REPLY) as m_llm15d:
     r15d = _post(tok)
-check(r15d.status_code == 402 and r15d.get_json()["error"] == "no_credit"
+check(r15d.status_code == 402 and r15d.get_json()["error"] == "time_exhausted"
       and m_llm15d.call_count == 0
       and r15d.get_json()["quota"]["first_free_available"] is False,
-      "15d gratuite épuisée + aucun autre droit -> 402 no_credit")
+      "15d first_free épuisée + aucun autre droit -> 402 time_exhausted")
 
-# 15e. Premium neuf : la gratuite passe AVANT le quota mensuel
+# 15e. Premium + gratuite : le 1er POST expose les DEUX buckets, monthly_used legacy 0
 tok = fresh(premium=True, first_free=True)
 with patch.object(A, "call_llm", return_value=REPLY):
     j15e = _post(tok).get_json()
-check(j15e["consultation"]["credit_source"] == "first_free"
-      and j15e["quota"]["monthly_used"] == 0
-      and j15e["quota"]["monthly_remaining"] == 4,
-      "15e Premium neuf -> 1er message = first_free, monthly_used 0 (4 mensuelles intactes)")
-_expire_active_consultations()
+check(j15e["consultation"]["credit_source"] == "time"
+      and j15e["time"]["first_free_remaining_seconds"] == 3600
+      and j15e["time"]["premium_remaining_seconds"] == 28800
+      and j15e["time"]["total_remaining_seconds"] == 32400,
+      "15e Premium neuf + gratuite -> time = 3600 + 28800 = 32400, credit_source time")
+check(j15e["quota"]["monthly_used"] == 0
+      and FAKE["consultation_allowance"][0]["monthly_used"] == 0,
+      "15e2 monthly_used legacy = 0 (aucune unité débitée)")
+
+# --- 16. §26.I — waterfall first_free -> premium sur un même settle -----------
+tok = fresh(premium=True, first_free=True)
 with patch.object(A, "call_llm", return_value=REPLY):
-    j15f = _post(tok).get_json()
-check(j15f["consultation"]["credit_source"] == "monthly"
-      and j15f["quota"]["monthly_used"] == 1,
-      "15f après la gratuite -> 1re Premium, monthly_used 0 -> 1")
+    _cid16 = _post(tok).get_json()["consultation"]["id"]
+FAKE["accounts"][0]["first_free_seconds_remaining"] = 10
+_t16 = A._utcnow()
+_set_time_meter(_cid16, _t16, _t16)
+with patch.object(A, "call_llm", return_value=REPLY) as m_llm16, \
+     patch.object(A, "_utcnow", return_value=_t16 + timedelta(seconds=30)):
+    j16 = _post(tok, "30 s plus tard").get_json()
+check(FAKE["accounts"][0]["first_free_seconds_remaining"] == 0
+      and FAKE["consultation_allowance"][0]["monthly_used_seconds"] == 20,
+      "16a settle 30 s -> 10 s first_free puis 20 s Premium")
+check(FAKE["accounts"][0]["first_consultation_used_at"] is not None,
+      "16b first_consultation_used_at posé (au moins 1 s de first_free débitée)")
+check(FAKE["consultation_allowance"][0]["monthly_used"] == 0
+      and m_llm16.call_count == 1
+      and j16["consultation"]["credit_source"] == "time",
+      "16c aucun monthly_used legacy, POST autorisé (total > 0), credit_source time")
+
+# --- 17. §26.J — waterfall premium -> purchased, aucun bucket négatif --------
+reset_db()
+seed_account(UID1, first_consultation_used_at=_FF_USED,
+             first_free_seconds_remaining=0, purchased_seconds_remaining=100)
+A.provision_allowance(UID1, A._utcnow() - timedelta(days=1),
+                      A._utcnow() + timedelta(days=29), monthly_limit=4)
+FAKE["consultation_allowance"][0]["monthly_used_seconds"] = 28790     # premium restant = 10
+tok = A.create_app_session(UID1)
+with patch.object(A, "call_llm", return_value=REPLY):
+    _cid17 = _post(tok).get_json()["consultation"]["id"]
+_t17 = A._utcnow()
+_set_time_meter(_cid17, _t17, _t17)
+with patch.object(A, "call_llm", return_value=REPLY), \
+     patch.object(A, "_utcnow", return_value=_t17 + timedelta(seconds=30)):
+    j17 = _post(tok, "30 s plus tard").get_json()
+check(FAKE["consultation_allowance"][0]["monthly_used_seconds"] == 28800
+      and FAKE["accounts"][0]["purchased_seconds_remaining"] == 80,
+      "17a settle 30 s -> 10 s Premium puis 20 s purchased (premium 0, purchased 80)")
+check(FAKE["accounts"][0]["purchased_seconds_remaining"] >= 0
+      and FAKE["consultation_allowance"][0]["monthly_used_seconds"]
+      <= FAKE["consultation_allowance"][0]["monthly_allowance_seconds"],
+      "17b aucun bucket négatif, monthly_used_seconds borné par l'allocation")
+check(j17["consultation"]["credit_source"] == "time"
+      and j17["time"]["purchased_remaining_seconds"] == 80,
+      "17c POST autorisé, time.purchased_remaining_seconds = 80")
+_JSON_PURCHASED = dict(j17)      # §28 C — succès avec purchased
+
+# --- 18. §26.S — POST séquentiels : aucune duplication de consultation -------
+tok = fresh()
+for _i in range(5):
+    with patch.object(A, "call_llm", return_value=REPLY):
+        _post(tok, f"message {_i}")
+check(len(FAKE["consultations"]) == 1,
+      "18 5 POST rapprochés -> UNE seule consultation logique")
+
+# --- 19. §26.V — échec LLM : le helper a déjà commit, fenêtre reste ouverte ---
+tok = fresh()
+with patch.object(A, "call_llm", return_value=REPLY):
+    _post(tok, "ouverture")
+_cid19 = FAKE["consultations"][0]["id"]
+_n_msgs_before = len(FAKE["messages"])
+_expire_window()
+try:
+    with patch.object(A, "call_llm", side_effect=RuntimeError("llm indisponible")):
+        r19 = _post(tok, "et là le LLM tombe")
+    _llm_fail_behaviour = f"HTTP {r19.status_code}"
+except RuntimeError:
+    _llm_fail_behaviour = "exception propagée (pas de compensation dans ce lot)"
+_c19 = next(c for c in FAKE["consultations"] if c["id"] == _cid19)
+check(len(FAKE["consultations"]) == 1 and _c19["last_activity_at"] is not None,
+      "19a échec LLM : consultation/touch du helper déjà commit (fenêtre ouverte)")
+check(sum(1 for m in FAKE["messages"] if m["role"] == "assistant"
+          and m["content"] == "llm indisponible") == 0,
+      "19b aucun message assistant fantôme persisté sur échec LLM")
+
+# --- 20. §27 — preuve structurelle (AST) : plus d'appel open_or_get_consultation
+import ast as _ast
+_src_pm = inspect.getsource(A.api_consultation_message)
+_tree_pm = _ast.parse(_src_pm)
+_calls_pm = {n.func.id for n in _ast.walk(_tree_pm)
+             if isinstance(n, _ast.Call) and isinstance(n.func, _ast.Name)}
+_calls_pm |= {n.func.attr for n in _ast.walk(_tree_pm)
+              if isinstance(n, _ast.Call) and isinstance(n.func, _ast.Attribute)}
+check("_open_time_consultation_flow_tx" in _calls_pm,
+      "20a AST : api_consultation_message APPELLE _open_time_consultation_flow_tx")
+check("open_or_get_consultation" not in _calls_pm,
+      "20b AST : api_consultation_message N'APPELLE PLUS open_or_get_consultation")
+
+# --- §28 : JSON RÉELS capturés en exécution --------------------------------
+print("-" * 64)
+print("§28 JSON RÉELS CAPTURÉS :")
+import json as _json
+for _lbl, _obj in (("A succès first_free", _JSON_FIRST_FREE),
+                   ("B succès Premium", _JSON_PREMIUM),
+                   ("C succès purchased", _JSON_PURCHASED),
+                   ("D 402 time_exhausted", _JSON_402)):
+    print(f"  [{_lbl}] {_json.dumps(_obj, default=str, sort_keys=True)}")
+check(all(x is not None for x in (_JSON_FIRST_FREE, _JSON_PREMIUM, _JSON_PURCHASED, _JSON_402)),
+      "§28 les 4 JSON réels ont été capturés")
 
 # === GET /api/consultation/messages — historique de la consultation ACTIVE ===
 # (l'app "Reprendre ma consultation" doit réafficher la conversation en cours)
@@ -922,11 +1263,15 @@ check([m["content"] for m in jd["messages"]] == ["question-1", "reponse-1",
 check(len(jd["messages"]) == 4, "M-D2 exactement les 4 messages de la session")
 
 # --- M-E / M-F. seule la consultation ACTIVE compte ; l'ancienne est exclue
+# Modèle TEMPS : nouvelle consultation logique = fenêtre expirée + conseiller
+# préféré différent (get_or_open_time_consultation_tx). GET /messages reste
+# legacy (§25) et prend la plus récente par started_at.
 tok = fresh()
 with patch.object(A, "call_llm", return_value="vieille-reponse"):
     r_old = _post(tok, "vieux-message")
 old_cid = r_old.get_json()["consultation"]["id"]
-_expire_active_consultations()
+_expire_window()
+A.update_app_profile(UID1, guide="maia")
 with patch.object(A, "call_llm", return_value="nouvelle-reponse"):
     r_new = _post(tok, "nouveau-message")
 new_cid = r_new.get_json()["consultation"]["id"]

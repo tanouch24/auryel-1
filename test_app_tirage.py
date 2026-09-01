@@ -211,6 +211,12 @@ class _Cur:
                 self.rowcount = 1
             else:
                 self.rowcount = 0
+        elif k == ("SELECT started_at, expires_at, credit_source FROM consultations "
+                   "WHERE id=%s"):
+            # TIMER-A.3c-2c : lecture compat du JSON consultation (le flux temps
+            # lui-même est monkeypatché dans la section 7).
+            _n = A._utcnow()
+            self._r = (_n, _n + timedelta(hours=2), "time")
         else:
             raise AssertionError("SQL non géré par le fake tirages : " + k)
 
@@ -351,22 +357,40 @@ check(client.get("/api/tirages?before=pas-une-date", headers=_hdr()).status_code
       "6z before invalide -> 400")
 
 # ===========================================================================
-# 7. POST /api/consultation/message  — ordre & injection (moteur monkeypatché)
+# 7. POST /api/consultation/message  — ordre & injection (flux TEMPS monkeypatché)
 # ===========================================================================
+# TIMER-A.3c-2c : le POST est passé sur `_open_time_consultation_flow_tx`
+# (settle / crédit temps / consultation logique / conseiller / touch / attach
+# tirage / commit en UNE tx). `open_or_get_consultation` et
+# `attach_tirage_to_consultation` ne sont PLUS appelés ici. On monkeypatche le
+# flux temps ; le rattachement du tirage est fait DANS le flux (curseur-in),
+# donc on vérifie que le flux REÇOIT bien le tirage_id (3e argument).
 _now = A._utcnow()
-_CONSULT = {"id": "c-1", "advisor_id": "selena", "started_at": _now,
-            "expires_at": _now + timedelta(hours=2), "credit_source": "monthly"}
-_QUOTA = {"is_premium": True, "monthly_limit": 4, "monthly_used": 1, "monthly_remaining": 3,
-          "earned_available": 0, "first_free_available": False, "period_start": _now, "period_end": _now}
+
+
+def _flow_ok():
+    return {
+        "status": "ok",
+        "consultation": {"id": "c-1", "advisor_id": "selena", "created": True,
+                         "phase": "opened_first"},
+        "time": {"first_free_remaining_seconds": 3600,
+                 "premium_remaining_seconds": 28800,
+                 "purchased_remaining_seconds": 0,
+                 "total_remaining_seconds": 32400,
+                 "window_active": True,
+                 "window_expires_at": _now + timedelta(seconds=300)},
+        "earned_available": 0,
+        "quota_legacy": {"is_premium": True, "period_start": _now,
+                         "period_end": _now + timedelta(days=29)},
+        "tirage_attached": True,
+    }
 
 
 def _mk_engine_mocks():
     return {
-        "open": MagicMock(return_value={"status": "opened", "opened_now": True, "consultation": _CONSULT}),
-        "state": MagicMock(return_value={"consultation": None, "quota": _QUOTA}),
+        "flow": MagicMock(return_value=_flow_ok()),
         "emo": MagicMock(return_value=None),
         "reply": MagicMock(return_value="LECTURE"),
-        "attach": MagicMock(return_value=True),
     }
 
 
@@ -377,47 +401,41 @@ _TIRAGE_ROW = {"id": VALID_TID, "user_id": UID1,
 
 _as(UID1)
 
-# 7a. tirage_id malformé -> 404 AVANT toute ouverture / consommation
+# 7a. tirage_id malformé -> 404 AVANT tout flux / consommation
 m = _mk_engine_mocks()
-with patch.object(A, "open_or_get_consultation", m["open"]), \
-     patch.object(A, "get_consultation_state", m["state"]), \
+with patch.object(A, "_open_time_consultation_flow_tx", m["flow"]), \
      patch.object(A, "_app_persist_emotional_context", m["emo"]), \
      patch.object(A, "get_reply_for_user_id", m["reply"]), \
-     patch.object(A, "attach_tirage_to_consultation", m["attach"]), \
      patch.object(A, "get_tirage", MagicMock(return_value=None)):
     r = client.post("/api/consultation/message",
                     json={"message": "bonjour", "tirage_id": "pas-un-uuid"}, headers=_hdr())
 check(r.status_code == 404 and r.get_json()["error"] == "tirage_not_found", "7a tirage_id malformé -> 404")
-check(m["open"].call_count == 0, "7b open_or_get_consultation JAMAIS appelé (aucun crédit consommé)")
+check(m["flow"].call_count == 0, "7b _open_time_consultation_flow_tx JAMAIS appelé (aucun débit temps)")
 check(m["reply"].call_count == 0, "7c aucun appel moteur IA")
 
-# 7b. tirage_id valide en forme mais inexistant / d'un autre user -> 404 AVANT ouverture
+# 7b. tirage_id valide en forme mais inexistant / d'un autre user -> 404 AVANT flux
 m = _mk_engine_mocks()
-with patch.object(A, "open_or_get_consultation", m["open"]), \
-     patch.object(A, "get_consultation_state", m["state"]), \
+with patch.object(A, "_open_time_consultation_flow_tx", m["flow"]), \
      patch.object(A, "_app_persist_emotional_context", m["emo"]), \
      patch.object(A, "get_reply_for_user_id", m["reply"]), \
-     patch.object(A, "attach_tirage_to_consultation", m["attach"]), \
      patch.object(A, "get_tirage", MagicMock(return_value=None)) as gt:
     r = client.post("/api/consultation/message",
                     json={"message": "bonjour", "tirage_id": VALID_TID}, headers=_hdr())
 check(r.status_code == 404 and r.get_json()["error"] == "tirage_not_found", "7d tirage_id inexistant/cross-user -> 404")
-check(m["open"].call_count == 0, "7e cross-user : open_or_get_consultation JAMAIS appelé (aucun débit)")
+check(m["flow"].call_count == 0, "7e cross-user : flux temps JAMAIS appelé (aucun débit)")
 check(gt.call_args[0] == (UID1, VALID_TID), "7f get_tirage filtré sur (user du Bearer, tirage_id)")
 
-# 7c. tirage_id valide -> contexte canonique injecté + rattachement + ouverture UNE fois
+# 7c. tirage_id valide -> contexte canonique injecté + flux temps reçoit le tirage_id
 m = _mk_engine_mocks()
-with patch.object(A, "open_or_get_consultation", m["open"]), \
-     patch.object(A, "get_consultation_state", m["state"]), \
+with patch.object(A, "_open_time_consultation_flow_tx", m["flow"]), \
      patch.object(A, "_app_persist_emotional_context", m["emo"]), \
      patch.object(A, "get_reply_for_user_id", m["reply"]), \
-     patch.object(A, "attach_tirage_to_consultation", m["attach"]), \
      patch.object(A, "get_tirage", MagicMock(return_value=dict(_TIRAGE_ROW))):
     r = client.post("/api/consultation/message",
                     json={"message": "j'ai besoin d'y voir clair", "tirage_id": VALID_TID}, headers=_hdr())
 j = r.get_json()
 check(r.status_code == 200 and j["reply"] == "LECTURE", "7g tirage_id valide -> 200")
-check(m["open"].call_count == 1, "7h open_or_get_consultation appelé exactement 1 fois")
+check(m["flow"].call_count == 1, "7h _open_time_consultation_flow_tx appelé exactement 1 fois")
 _ctx = m["reply"].call_args.kwargs.get("tirage_context")
 check(isinstance(_ctx, str) and _ctx, "7i get_reply_for_user_id reçoit un tirage_context non vide")
 check(
@@ -427,23 +445,21 @@ check(
 )
 check(_ctx.index(A.TAROT_ARCANA["le_soleil"]["name"]) < _ctx.index(A.TAROT_ARCANA["la_lune"]["name"]),
       "7k ordre des cartes préservé dans le contexte")
-check(m["attach"].call_count == 1 and m["attach"].call_args[0][1:] == (VALID_TID, "c-1"),
-      "7l tirage rattaché à la consultation (consultation_id)")
+check(m["flow"].call_args[0][0] == UID1 and m["flow"].call_args[0][2] == VALID_TID,
+      "7l le flux temps reçoit (user du Bearer, ..., tirage_id) -> rattachement in-tx")
 
-# 7d. sans tirage_id -> comportement inchangé (tirage_context=None, pas de rattachement)
+# 7d. sans tirage_id -> comportement inchangé (tirage_context=None, flux temps sans tirage)
 m = _mk_engine_mocks()
-with patch.object(A, "open_or_get_consultation", m["open"]), \
-     patch.object(A, "get_consultation_state", m["state"]), \
+with patch.object(A, "_open_time_consultation_flow_tx", m["flow"]), \
      patch.object(A, "_app_persist_emotional_context", m["emo"]), \
      patch.object(A, "get_reply_for_user_id", m["reply"]), \
-     patch.object(A, "attach_tirage_to_consultation", m["attach"]), \
      patch.object(A, "get_tirage", MagicMock(return_value=None)) as gt:
     r = client.post("/api/consultation/message",
                     json={"message": "bonjour"}, headers=_hdr())
 check(r.status_code == 200, "7m sans tirage_id -> 200 (non-régression)")
 check(gt.call_count == 0, "7n sans tirage_id -> get_tirage jamais appelé")
 check(m["reply"].call_args.kwargs.get("tirage_context") is None, "7o get_reply_for_user_id reçoit tirage_context=None")
-check(m["attach"].call_count == 0, "7p aucun rattachement sans tirage_id")
+check(m["flow"].call_args[0][2] is None, "7p flux temps appelé avec tirage_id=None")
 
 # ===========================================================================
 # 8. NON-RÉGRESSION LEGACY (référentiels séparés, intacts)

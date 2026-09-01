@@ -63,10 +63,14 @@ def reset_db():
 
 
 def seed_account(user_id, deleted_at=None, email="u@example.com",
-                 first_consultation_used_at=None):
+                 first_consultation_used_at=None,
+                 first_free_seconds_remaining=3600,
+                 purchased_seconds_remaining=0):
     FAKE["accounts"].append({"user_id": user_id, "email": email,
                              "deleted_at": deleted_at,
-                             "first_consultation_used_at": first_consultation_used_at})
+                             "first_consultation_used_at": first_consultation_used_at,
+                             "first_free_seconds_remaining": first_free_seconds_remaining,
+                             "purchased_seconds_remaining": purchased_seconds_remaining})
 
 
 _APP_SELECT = "SELECT " + ", ".join(A._APP_PROFILE_FIELDS) + " FROM app_profiles WHERE user_id=%s"
@@ -251,6 +255,7 @@ class FakeCursor:
                 "id": str(cid), "user_id": str(uid), "advisor_id": advisor,
                 "started_at": started, "expires_at": expires,
                 "credit_source": src, "created_at": created,
+                "last_activity_at": None, "billed_until": None,
             })
             self.rowcount = 1
 
@@ -295,6 +300,7 @@ class FakeCursor:
                     "user_id": str(uid), "period_start": ps, "period_end": pe,
                     "monthly_limit": lim, "monthly_used": 0, "created_at": created,
                     "source_subscription_id": src_sub, "source_period_start": src_ps,
+                    "monthly_allowance_seconds": 28800, "monthly_used_seconds": 0,
                 })
                 self.rowcount = 1
 
@@ -306,6 +312,149 @@ class FakeCursor:
                 "consumed_at": None, "consultation_id": None, "metadata": meta,
             })
             self.rowcount = 1
+
+        # ---- MOTEUR TEMPS (TIMER-A.3c-2c) : flux _open_time_consultation_flow_tx ----
+        elif k == ("INSERT INTO consultations (id, user_id, advisor_id, started_at, expires_at, "
+                   "credit_source, created_at) VALUES (%s, %s, %s, %s, %s, 'time', %s)"):
+            cid, uid, advisor, started, expires, created = p
+            FAKE["consultations"].append({
+                "id": str(cid), "user_id": str(uid), "advisor_id": advisor,
+                "started_at": started, "expires_at": expires,
+                "credit_source": "time", "created_at": created,
+                "last_activity_at": None, "billed_until": None,
+            })
+            self.rowcount = 1
+
+        elif k == ("SELECT user_id FROM accounts "
+                   "WHERE user_id=%s AND deleted_at IS NULL FOR UPDATE"):
+            (uid,) = p
+            r = next((a for a in FAKE["accounts"]
+                      if a["user_id"] == uid and a["deleted_at"] is None), None)
+            self._result = (uid,) if r else None
+
+        elif k == ("SELECT id, last_activity_at FROM consultations "
+                   "WHERE user_id=%s ORDER BY started_at DESC LIMIT 1"):
+            (uid,) = p
+            rows = sorted([c for c in FAKE["consultations"] if c["user_id"] == uid],
+                          key=lambda c: c["started_at"], reverse=True)
+            if rows:
+                self._result = (rows[0]["id"], rows[0]["last_activity_at"])
+
+        elif k == ("SELECT id, advisor_id, last_activity_at, billed_until FROM consultations "
+                   "WHERE user_id=%s ORDER BY started_at DESC LIMIT 1"):
+            (uid,) = p
+            rows = sorted([c for c in FAKE["consultations"] if c["user_id"] == uid],
+                          key=lambda c: c["started_at"], reverse=True)
+            if rows:
+                c0 = rows[0]
+                self._result = (c0["id"], c0["advisor_id"],
+                                c0["last_activity_at"], c0["billed_until"])
+
+        elif k == ("SELECT user_id, last_activity_at, billed_until FROM consultations "
+                   "WHERE id=%s"):
+            (cid,) = p
+            r = next((c for c in FAKE["consultations"] if c["id"] == str(cid)), None)
+            if r is not None:
+                self._result = (r["user_id"], r["last_activity_at"], r["billed_until"])
+
+        elif k == ("SELECT started_at, expires_at, credit_source FROM consultations "
+                   "WHERE id=%s"):
+            (cid,) = p
+            r = next((c for c in FAKE["consultations"] if c["id"] == str(cid)), None)
+            if r is not None:
+                self._result = (r["started_at"], r["expires_at"], r["credit_source"])
+
+        elif k == ("UPDATE consultations SET last_activity_at=%s, billed_until=%s "
+                   "WHERE id=%s"):
+            la, bu, cid = p
+            for c in FAKE["consultations"]:
+                if c["id"] == str(cid):
+                    c["last_activity_at"] = la
+                    c["billed_until"] = bu
+                    self.rowcount = 1
+
+        elif k == "UPDATE consultations SET last_activity_at=%s WHERE id=%s":
+            la, cid = p
+            for c in FAKE["consultations"]:
+                if c["id"] == str(cid):
+                    c["last_activity_at"] = la
+                    self.rowcount = 1
+
+        elif k == "UPDATE consultations SET billed_until=%s WHERE id=%s":
+            bu, cid = p
+            for c in FAKE["consultations"]:
+                if c["id"] == str(cid):
+                    c["billed_until"] = bu
+                    self.rowcount = 1
+
+        elif k == ("SELECT first_free_seconds_remaining, purchased_seconds_remaining "
+                   "FROM accounts WHERE user_id=%s FOR UPDATE"):
+            (uid,) = p
+            r = next((a for a in FAKE["accounts"] if a["user_id"] == str(uid)), None)
+            if r is not None:
+                self._result = (r.get("first_free_seconds_remaining", 0),
+                                r.get("purchased_seconds_remaining", 0))
+
+        elif k == ("SELECT first_free_seconds_remaining, purchased_seconds_remaining "
+                   "FROM accounts WHERE user_id=%s"):
+            (uid,) = p
+            r = next((a for a in FAKE["accounts"] if a["user_id"] == str(uid)), None)
+            if r is not None:
+                self._result = (r.get("first_free_seconds_remaining", 0),
+                                r.get("purchased_seconds_remaining", 0))
+
+        elif k == ("UPDATE accounts SET first_free_seconds_remaining=%s, "
+                   "purchased_seconds_remaining=%s WHERE user_id=%s"):
+            ff, pu, uid = p
+            r = next((a for a in FAKE["accounts"] if a["user_id"] == str(uid)), None)
+            if r is not None:
+                r["first_free_seconds_remaining"] = ff
+                r["purchased_seconds_remaining"] = pu
+                self.rowcount = 1
+
+        elif k == ("SELECT period_start, monthly_allowance_seconds, monthly_used_seconds "
+                   "FROM consultation_allowance WHERE user_id=%s AND period_start <= %s "
+                   "AND period_end > %s ORDER BY period_start DESC LIMIT 1 FOR UPDATE"):
+            uid, now, _n2 = p
+            rows = [a for a in FAKE["consultation_allowance"]
+                    if a["user_id"] == uid and a["period_start"] <= now and a["period_end"] > now]
+            rows.sort(key=lambda a: a["period_start"], reverse=True)
+            if rows:
+                a0 = rows[0]
+                self._result = (a0["period_start"],
+                                a0.get("monthly_allowance_seconds", 28800),
+                                a0.get("monthly_used_seconds", 0))
+
+        elif k == ("SELECT monthly_allowance_seconds, monthly_used_seconds "
+                   "FROM consultation_allowance WHERE user_id=%s AND period_start <= %s "
+                   "AND period_end > %s ORDER BY period_start DESC LIMIT 1"):
+            uid, now, _n2 = p
+            rows = [a for a in FAKE["consultation_allowance"]
+                    if a["user_id"] == uid and a["period_start"] <= now and a["period_end"] > now]
+            rows.sort(key=lambda a: a["period_start"], reverse=True)
+            if rows:
+                a0 = rows[0]
+                self._result = (a0.get("monthly_allowance_seconds", 28800),
+                                a0.get("monthly_used_seconds", 0))
+
+        elif k == ("UPDATE consultation_allowance SET monthly_used_seconds=%s "
+                   "WHERE user_id=%s AND period_start=%s"):
+            mus, uid, ps = p
+            r = next((a for a in FAKE["consultation_allowance"]
+                      if a["user_id"] == uid and a["period_start"] == ps), None)
+            if r is not None:
+                r["monthly_used_seconds"] = mus
+                self.rowcount = 1
+
+        elif k == ("SELECT period_start, period_end FROM consultation_allowance "
+                   "WHERE user_id=%s AND period_start <= %s AND period_end > %s "
+                   "ORDER BY period_start DESC LIMIT 1"):
+            uid, now, _n2 = p
+            rows = [a for a in FAKE["consultation_allowance"]
+                    if a["user_id"] == uid and a["period_start"] <= now and a["period_end"] > now]
+            rows.sort(key=lambda a: a["period_start"], reverse=True)
+            if rows:
+                self._result = (rows[0]["period_start"], rows[0]["period_end"])
 
         else:
             raise AssertionError("SQL non géré par le fake B4.3 : " + k)

@@ -664,19 +664,28 @@ for _name in ("_settle_consultation_time_tx", "_get_time_snapshot_tx",
     check(not _rogue,
           f"iso {_name} : hors section MOTEUR TEMPS, appelé SEULEMENT par le "
           f"câblage A.3 (appels intrus : {_rogue})")
-for _fn in ("open_or_get_consultation", "api_consultation_message",
-            "api_consultation_messages", "resync_premium_entitlement",
-            "_resync_premium_entitlement_tx", "get_consultation_state"):
+_RAW_ENGINE = ("_settle_consultation_time_tx", "_get_time_snapshot_tx",
+               "_debit_consultation_seconds_tx", "_touch_consultation_activity_tx",
+               "_process_consultation_activity_tx",
+               "get_or_open_time_consultation_tx", "_open_time_consultation_tx")
+# ces fonctions ne touchent JAMAIS le moteur ni le flux temps.
+for _fn in ("open_or_get_consultation", "api_consultation_messages",
+            "resync_premium_entitlement", "_resync_premium_entitlement_tx",
+            "get_consultation_state"):
     _src = inspect.getsource(getattr(A, _fn))
-    _bad = [n for n in ("_settle_consultation_time_tx", "_get_time_snapshot_tx",
-                        "_debit_consultation_seconds_tx",
-                        "_touch_consultation_activity_tx",
-                        "_process_consultation_activity_tx",
-                        "_open_time_consultation_flow_tx",
-                        "get_or_open_time_consultation_tx")
+    _bad = [n for n in _RAW_ENGINE + ("_open_time_consultation_flow_tx",)
             if n + "(" in _src]
     check(not _bad, f"iso {_fn} : n'appelle NI le moteur temps NI le flux A.3c "
           + (f"(trouvé : {_bad})" if _bad else ""))
+# api_consultation_message (A.3c-2c) : passe UNIQUEMENT par le helper de flux
+# `_open_time_consultation_flow_tx`, jamais par les primitives brutes du moteur.
+_pm_src = inspect.getsource(A.api_consultation_message)
+check("_open_time_consultation_flow_tx(" in _pm_src,
+      "iso api_consultation_message : bascule via _open_time_consultation_flow_tx")
+_pm_bad = [n for n in _RAW_ENGINE if n + "(" in _pm_src]
+check(not _pm_bad,
+      f"iso api_consultation_message : n'appelle AUCUNE primitive brute du moteur "
+      f"(trouvé : {_pm_bad})")
 
 print("-" * 64)
 print(f"RESULTAT : {_STATE['pass']} ok / {_STATE['fail']} ko")

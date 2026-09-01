@@ -64,7 +64,8 @@ OTHER = "99999999-9999-9999-9999-999999999999"
 PS = T(0, 0)
 PE = datetime(2026, 10, 1, tzinfo=timezone.utc)
 
-DB = {"accounts": {}, "allowance": [], "consultations": {}, "tirages": {}}
+DB = {"accounts": {}, "allowance": [], "consultations": {}, "tirages": {},
+      "earned": []}
 _COMMITS = {"n": 0}
 _ROLLBACKS = {"n": 0}
 
@@ -74,8 +75,15 @@ def reset_db():
     DB["allowance"].clear()
     DB["consultations"].clear()
     DB["tirages"].clear()
+    DB["earned"].clear()
     _COMMITS["n"] = 0
     _ROLLBACKS["n"] = 0
+
+
+def seed_earned(n=1, uid=UID):
+    for i in range(n):
+        DB["earned"].append({"id": f"e-{i}", "user_id": str(uid),
+                             "consumed_at": None})
 
 
 def seed_account(uid=UID, deleted_at=None, first_free=3600, purchased=0,
@@ -277,6 +285,24 @@ class FakeCursor:
                 self.rowcount = 1
             else:
                 self.rowcount = 0
+
+        elif k == ("SELECT COUNT(*) FROM earned_credits "
+                   "WHERE user_id=%s AND consumed_at IS NULL"):
+            (uid,) = p
+            n = sum(1 for e in DB["earned"]
+                    if e["user_id"] == str(uid) and e["consumed_at"] is None)
+            self._result = (n,)
+
+        elif k == ("SELECT period_start, period_end FROM consultation_allowance "
+                   "WHERE user_id=%s AND period_start <= %s AND period_end > %s "
+                   "ORDER BY period_start DESC LIMIT 1"):
+            uid, now, _n2 = p
+            rows = [a for a in DB["allowance"]
+                    if a["user_id"] == str(uid)
+                    and a["period_start"] <= now and a["period_end"] > now]
+            rows.sort(key=lambda a: a["period_start"], reverse=True)
+            if rows:
+                self._result = (rows[0]["period_start"], rows[0]["period_end"])
 
         else:
             raise AssertionError("SQL non géré par le fake A.3c-2b : " + k)
@@ -505,8 +531,10 @@ if (_f.body and isinstance(_f.body[0], ast.Expr)
     _f.body = _f.body[1:]
 _flow_only_code = ast.unparse(_f)
 check("monthly_used = monthly_used + 1" not in _flow_only_code
-      and "earned_credits" not in _flow_only_code,
-      "P/Q le CODE du helper ne référence NI 'monthly_used += 1' NI earned_credits")
+      and "UPDATE earned_credits" not in _flow_only_code
+      and "consumed_at=" not in _flow_only_code,
+      "P/Q le helper n'INCRÉMENTE pas monthly_used legacy et ne CONSOMME pas "
+      "earned_credits (SELECT COUNT lecture seule pour le shim autorisé)")
 
 print("-" * 64)
 print("R/S/T/U — curseur-in du helper, verrous, pas de FOR UPDATE consultations, pas de LLM")
@@ -523,18 +551,17 @@ for _bad in ("call_llm", "get_reply_for_user_id", "get_reply("):
     check(_bad not in _flow_only_code, f"U le helper n'appelle JAMAIS le LLM ({_bad})")
 
 print("-" * 64)
-print("V/W — isolation : POST encore legacy")
+print("V/W — POST basculé sur le moteur temps (A.3c-2c)")
 _pm = ast.parse(textwrap.dedent(inspect.getsource(A.api_consultation_message)))
 _pmf = _pm.body[0]
 if (_pmf.body and isinstance(_pmf.body[0], ast.Expr)
         and isinstance(getattr(_pmf.body[0], "value", None), ast.Constant)):
     _pmf.body = _pmf.body[1:]
 _pm_code = ast.unparse(_pmf)
-check("_open_time_consultation_flow_tx(" not in _pm_code
-      and "get_or_open_time_consultation_tx(" not in _pm_code,
-      "V api_consultation_message n'appelle NI le helper de flux NI la logique consultation temps")
-check("open_or_get_consultation(" in _pm_code,
-      "W api_consultation_message appelle ENCORE open_or_get_consultation (modèle 2 h)")
+check("_open_time_consultation_flow_tx(" in _pm_code,
+      "V api_consultation_message APPELLE _open_time_consultation_flow_tx")
+check("open_or_get_consultation(" not in _pm_code,
+      "W api_consultation_message N'APPELLE PLUS open_or_get_consultation (CODE only)")
 
 print("-" * 64)
 print("X — pas de rétrofacturation après recharge (traîne d'une fenêtre coupée)")

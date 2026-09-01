@@ -291,15 +291,23 @@ check("accounts" in _doc and "FOR UPDATE" in _doc
       "P docstring : 'l'appelant détient déjà accounts FOR UPDATE'")
 
 print("-" * 64)
-print("ISOLATION — POST message / open_or_get_consultation inchangés")
-for _fn in ("api_consultation_message", "open_or_get_consultation"):
-    _s = inspect.getsource(getattr(A, _fn))
-    check("get_or_open_time_consultation_tx" not in _s
-          and "_open_time_consultation_tx" not in _s
-          and "_open_time_consultation_flow_tx" not in _s,
-          f"iso {_fn} n'appelle PAS la logique consultation temps (modèle 2 h conservé)")
-# get_or_open_time_consultation_tx : appelée UNIQUEMENT par le helper de flux
-# A.3c-2b (_open_time_consultation_flow_tx). Vérif par fonction (CODE only).
+print("ISOLATION — POST basculé (A.3c-2c) : passe par le helper de flux, pas les primitives")
+# open_or_get_consultation : n'a jamais rien à voir avec la logique temps.
+_oog = _code_only(A.open_or_get_consultation)
+check("get_or_open_time_consultation_tx(" not in _oog
+      and "_open_time_consultation_tx(" not in _oog
+      and "_open_time_consultation_flow_tx(" not in _oog,
+      "iso open_or_get_consultation : aucune logique consultation temps")
+# api_consultation_message : appelle le HELPER DE FLUX, JAMAIS get_or_open_* /
+# _open_time_consultation_tx directement.
+_pm = _code_only(A.api_consultation_message)
+check("_open_time_consultation_flow_tx(" in _pm,
+      "iso api_consultation_message : bascule via _open_time_consultation_flow_tx")
+check("get_or_open_time_consultation_tx(" not in _pm
+      and "_open_time_consultation_tx(" not in _pm,
+      "iso api_consultation_message : ne touche PAS get_or_open_time_consultation_tx / "
+      "_open_time_consultation_tx en direct")
+# get_or_open_time_consultation_tx : appelée UNIQUEMENT par le helper de flux.
 import types as _types
 _callers_gooc = []
 _callers_flow = []
@@ -318,9 +326,9 @@ for _nm in dir(A):
 check(_callers_gooc == ["_open_time_consultation_flow_tx"],
       f"iso get_or_open_time_consultation_tx : appelée SEULEMENT par "
       f"_open_time_consultation_flow_tx (trouvé : {_callers_gooc})")
-check(_callers_flow == [],
-      f"iso _open_time_consultation_flow_tx : appelé par AUCUN endpoint dans ce lot "
-      f"(POST encore legacy) (trouvé : {_callers_flow})")
+check(_callers_flow == ["api_consultation_message"],
+      f"iso _open_time_consultation_flow_tx : appelé UNIQUEMENT par "
+      f"api_consultation_message (trouvé : {_callers_flow})")
 
 print("-" * 64)
 print(f"RESULTAT : {_STATE['pass']} ok / {_STATE['fail']} ko")
