@@ -5937,6 +5937,121 @@ def get_consultation_state(user_id, now=None):
 
 
 # ============================================================
+# CONSULTATION LOGIQUE (TIMER-A.3c-1) — la consultation n'est plus une session
+# fixe de 2 h : c'est une CONVERSATION PERSISTANTE (id / user_id / advisor_id /
+# historique / rattachement tirage). La règle conseiller dépend de la fenêtre
+# d'activité (moteur A.2).
+#
+# NON CÂBLÉE dans ce lot : `api_consultation_message` / `open_or_get_consultation`
+# gardent le modèle par-compte 2 h. `get_or_open_time_consultation_tx` n'est
+# appelée par AUCUN endpoint à la fin de A.3c-1.
+#
+# NE DÉBITE RIEN : ni `monthly_used` (+1), ni `first_consultation_used_at`, ni
+# `earned_credits`, ni `first_free_seconds_remaining`, ni `monthly_used_seconds`,
+# ni `purchased_seconds_remaining`. Le débit reste au moteur temps.
+#
+# VERROUS : l'appelant DÉTIENT DÉJÀ `accounts` FOR UPDATE (mutex par
+# utilisateur). Cette fonction ne pose AUCUN verrou — elle lit/écrit
+# `consultations` SANS FOR UPDATE (aucun `consultations ... FOR UPDATE` nulle
+# part dans le fichier ; la sérialisation par utilisateur passe par le mutex
+# `accounts`). Ordre canonique inchangé.
+# ============================================================
+
+
+def _open_time_consultation_tx(cursor, uid, advisor_id, now, phase):
+    """INSERT d'une conversation logique NEUVE.
+
+    `expires_at` et `credit_source` sont des colonnes NOT NULL du schéma actuel
+    (migration hors périmètre A.3c-1) -> on écrit des VALEURS DE COMPATIBILITÉ,
+    JAMAIS lues comme cutoff par la logique temps :
+      expires_at    = now + _CONSULTATION_DUREE  (même forme que le legacy 2 h)
+      credit_source = 'time'                     (marqueur : conversation ouverte
+                                                  par le moteur temps, PAS un
+                                                  débit d'unité legacy)
+    Ne touche NI accounts NI consultation_allowance NI earned_credits NI
+    first_consultation_used_at NI tirages NI messages."""
+    cid = str(uuid.uuid4())
+    cursor.execute(
+        """INSERT INTO consultations
+               (id, user_id, advisor_id, started_at, expires_at, credit_source,
+                created_at)
+           VALUES (%s, %s, %s, %s, %s, 'time', %s)""",
+        (cid, str(uid), advisor_id, now, now + _CONSULTATION_DUREE, now),
+    )
+    return {"consultation_id": cid, "advisor_id": advisor_id,
+            "phase": phase, "created": True}
+
+
+def get_or_open_time_consultation_tx(cursor, user_id, preferred_advisor_id, now,
+                                    time_available_seconds):
+    """Choisit / reprend / crée la CONSULTATION LOGIQUE selon la règle conseiller.
+
+    PRÉCONDITION : l'appelant détient déjà `accounts` FOR UPDATE. Aucun verrou
+    posé ici ; `consultations` lue/écrite SANS FOR UPDATE.
+
+    `time_available_seconds` : total de secondes restantes (fourni par
+    l'appelant via _get_time_snapshot_tx APRÈS settle) — cette fonction ne
+    touche PAS le moteur temps elle-même.
+
+    « Consultation logique courante » = la PLUS RÉCENTE de l'utilisateur, SANS
+    filtre `expires_at > now`.
+
+    Règle conseiller (produit validé) :
+      A. aucune consultation
+         -> nouvelle, advisor = preferred_advisor_id.  (phase 'opened_first')
+      B/C. dernière consultation + FENÊTRE ACTIVE
+         (last_activity_at != NULL ET now < last_activity_at + 300 s
+          ET time_available_seconds > 0)
+         -> REPRISE ; l'advisor_id EXISTANT prime et n'est JAMAIS remplacé,
+            même si preferred_advisor_id diffère.  (phase 'resumed_active')
+      Fenêtre INACTIVE / EXPIRÉE :
+        advisor identique   -> reprise de la même consultation.
+                               (phase 'resumed_same_advisor')
+        advisor différent   -> NOUVELLE consultation, advisor = preferred.
+                               L'ancienne n'est JAMAIS modifiée (advisor_id
+                               rétro-figé, historique préservé).
+                               (phase 'opened_new_advisor')
+
+    Retour : { consultation_id, advisor_id, phase, created:bool }
+    """
+    uid = str(user_id)
+    cursor.execute(
+        """SELECT id, advisor_id, last_activity_at, billed_until
+           FROM consultations
+           WHERE user_id=%s
+           ORDER BY started_at DESC
+           LIMIT 1""",
+        (uid,),
+    )
+    row = cursor.fetchone()
+
+    if row is None:
+        return _open_time_consultation_tx(cursor, uid, preferred_advisor_id, now,
+                                          "opened_first")
+
+    cid, advisor_id, last_activity_at, _billed_until = row
+    cid = str(cid)
+
+    window_active = (
+        last_activity_at is not None
+        and now < _window_end(last_activity_at)
+        and time_available_seconds > 0
+    )
+    if window_active:
+        # B/C — advisor existant prime, jamais remplacé.
+        return {"consultation_id": cid, "advisor_id": advisor_id,
+                "phase": "resumed_active", "created": False}
+
+    # Fenêtre inactive / expirée.
+    if advisor_id == preferred_advisor_id:
+        return {"consultation_id": cid, "advisor_id": advisor_id,
+                "phase": "resumed_same_advisor", "created": False}
+
+    return _open_time_consultation_tx(cursor, uid, preferred_advisor_id, now,
+                                      "opened_new_advisor")
+
+
+# ============================================================
 # MOTEUR TEMPS (TIMER-A.2) — compteur de secondes consommées.
 #
 # ISOLÉ ET NON CÂBLÉ dans ce lot : aucun endpoint (api_consultation_message /
