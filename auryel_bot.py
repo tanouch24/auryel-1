@@ -1038,6 +1038,96 @@ def init_db():
         $$;
     """)
     conn.commit()
+    # Migration v34 — SCHÉMA du futur compteur de TEMPS (secondes consommées),
+    # lot TIMER-A.1. PUREMENT ADDITIF : 6 colonnes nullables réparties sur 3
+    # tables existantes + UN backfill idempotent guardé. À ce stade AUCUN moteur,
+    # AUCUN endpoint, AUCUNE fonction de consultation ne LIT ni n'ÉCRIT ces
+    # colonnes : le modèle par-compte (consultation_allowance.monthly_limit /
+    # monthly_used + consultations.expires_at = started_at + 2 h) reste la SEULE
+    # logique active. Ce lot prépare uniquement la structure ; le câblage du
+    # moteur est un lot ultérieur (TIMER-A.2 / A.3).
+    #
+    #   accounts.first_free_seconds_remaining  : « 1 h offerte », en secondes.
+    #       Backfill EXPLICITE par CASE (jamais une réinterprétation d'une
+    #       ancienne colonne) : 3600 si la gratuite n'a jamais été consommée
+    #       (first_consultation_used_at IS NULL), 0 sinon. La colonne est d'abord
+    #       ajoutée SANS DEFAULT pour que le CASE puisse distinguer NULL (à
+    #       remplir) des valeurs déjà posées ; le DEFAULT 3600 est posé JUSTE
+    #       APRÈS le backfill (ALTER COLUMN ... SET DEFAULT) — un nouveau compte
+    #       hérite donc de 3600 dès l'INSERT, SANS transformer en 3600 les
+    #       comptes existants ayant déjà consommé la gratuité (traités à 0 par le
+    #       CASE, avant que le DEFAULT n'existe). first_consultation_used_at est
+    #       CONSERVÉE (analytics + rétro-compat de quota["first_free_available"]).
+    #   accounts.purchased_seconds_remaining   : temps acheté cumulé (heures
+    #       supplémentaires), DEFAULT 0. Le paiement consommable Store n'est PAS
+    #       dans ce lot — la colonne existe mais reste à 0 partout. Jamais remise
+    #       à zéro par un futur reset mensuel.
+    #   consultation_allowance.monthly_allowance_seconds : « 8 h » Premium par
+    #       période, DEFAULT 28800. Sur ADD COLUMN ... DEFAULT, les lignes
+    #       existantes lisent 28800 sans UPDATE. Distincte de monthly_limit
+    #       (nombre de consultations) qui reste INCHANGÉE et active.
+    #   consultation_allowance.monthly_used_seconds : secondes Premium consommées
+    #       sur la période, DEFAULT 0. NOUVEAU compteur, distinct de monthly_used
+    #       (nombre de consultations) qui reste INCHANGÉ et actif tant que le
+    #       moteur n'est pas câblé.
+    #   consultations.last_activity_at / billed_until : TIMESTAMPTZ NULL, futurs
+    #       curseurs de la fenêtre d'activité de 5 min. NULL partout : aucune
+    #       consultation n'a de temps facturé.
+    #
+    # Idempotence : chaque `ADD COLUMN IF NOT EXISTS` est un no-op au rejeu ; le
+    # backfill first_free porte `WHERE first_free_seconds_remaining IS NULL` ->
+    # au 2e passage 0 ligne touchée, et une valeur déjà posée (par un futur
+    # moteur, ou par le backfill du boot précédent) n'est JAMAIS réécrite.
+    # L'`ALTER COLUMN ... SET DEFAULT 3600` est lui aussi idempotent (repose le
+    # même défaut au rejeu, jamais d'erreur) et NE réécrit PAS les lignes
+    # existantes (SET DEFAULT ne touche que les futurs INSERT). Grâce à ce
+    # DEFAULT, un compte créé après cette migration a directement 3600 ; le
+    # `WHERE ... IS NULL` du backfill ne sert plus que de filet pour une ligne
+    # éventuellement insérée pendant la fenêtre où le DEFAULT n'était pas encore
+    # posé (régularisée au prochain init_db()).
+    # Aucun DROP / TRUNCATE / DELETE ; le seul `ALTER COLUMN` porte sur la
+    # colonne que CE bloc vient d'ajouter (SET DEFAULT) — monthly_limit /
+    # monthly_used / expires_at NON touchés. Aucun try/except Python : une vraie
+    # erreur SQL doit remonter, pas être transformée en print silencieux (même
+    # règle que v28..v33).
+    c.execute(
+        "ALTER TABLE accounts "
+        "ADD COLUMN IF NOT EXISTS first_free_seconds_remaining INTEGER"
+    )
+    c.execute(
+        "ALTER TABLE accounts "
+        "ADD COLUMN IF NOT EXISTS purchased_seconds_remaining INTEGER DEFAULT 0"
+    )
+    c.execute(
+        "UPDATE accounts "
+        "SET first_free_seconds_remaining = "
+        "CASE WHEN first_consultation_used_at IS NULL THEN 3600 ELSE 0 END "
+        "WHERE first_free_seconds_remaining IS NULL"
+    )
+    # DEFAULT posé APRÈS le backfill : les nouveaux comptes héritent de 3600 dès
+    # l'INSERT, sans que les comptes existants (déjà mis à 0 par le CASE) soient
+    # réécrits (SET DEFAULT ne touche pas les lignes existantes).
+    c.execute(
+        "ALTER TABLE accounts "
+        "ALTER COLUMN first_free_seconds_remaining SET DEFAULT 3600"
+    )
+    c.execute(
+        "ALTER TABLE consultation_allowance "
+        "ADD COLUMN IF NOT EXISTS monthly_allowance_seconds INTEGER DEFAULT 28800"
+    )
+    c.execute(
+        "ALTER TABLE consultation_allowance "
+        "ADD COLUMN IF NOT EXISTS monthly_used_seconds INTEGER DEFAULT 0"
+    )
+    c.execute(
+        "ALTER TABLE consultations "
+        "ADD COLUMN IF NOT EXISTS last_activity_at TIMESTAMPTZ"
+    )
+    c.execute(
+        "ALTER TABLE consultations "
+        "ADD COLUMN IF NOT EXISTS billed_until TIMESTAMPTZ"
+    )
+    conn.commit()
     conn.close()
 
 def reset_db():
