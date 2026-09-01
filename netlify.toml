@@ -104,13 +104,13 @@
 
 [[redirects]]
   from = "/voyance-par-whatsapp"
-  to = "/voyance-par-chat"
-  status = 301
+  to = "/voyance-par-whatsapp.html"
+  status = 200
   force = true
 
 [[redirects]]
   from = "/voyance-par-whatsapp.html"
-  to = "/voyance-par-chat"
+  to = "/voyance-par-whatsapp"
   status = 301
   force = true
 
