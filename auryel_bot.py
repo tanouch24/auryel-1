@@ -1128,6 +1128,68 @@ def init_db():
         "ADD COLUMN IF NOT EXISTS billed_until TIMESTAMPTZ"
     )
     conn.commit()
+    # Migration v35 — MÉMOIRE INTER-SESSION PAR CONSEILLER (B7). PUREMENT ADDITIF :
+    # une table neuve `user_advisor_memory` + une FK idempotente. Aucune colonne
+    # touchée ailleurs, aucun backfill, aucun DROP / TRUNCATE / DELETE, aucune
+    # donnée existante modifiée. Miroir lisible : migrations/009_user_advisor_memory.sql.
+    #
+    #   summary                 : résumé NARRATIF compact (~150-200 mots ; cap
+    #                             technique dur de 1500 caractères appliqué CÔTÉ
+    #                             CODE avant écriture, cf. _MEMORY_SUMMARY_CHAR_CAP).
+    #                             NOT NULL DEFAULT '' -> une ligne fraîche = pas
+    #                             encore de mémoire, rien n'est injecté au prompt.
+    #   last_source_message_id  : curseur — dernier messages.id DÉJÀ fondu dans le
+    #                             résumé. DEFAULT 0 -> la première reprise résume
+    #                             une seule fois l'historique utile de CE conseiller,
+    #                             jamais tout l'historique à chaque tour.
+    #   UNIQUE (user_id, advisor_id) : une seule mémoire par couple ; l'index de la
+    #                             contrainte sert aussi au SELECT de chargement.
+    #
+    # facts_json : VOLONTAIREMENT ABSENT en V1 — les données globales structurées
+    # (thème dominant, douleur, peur, prénoms importants, sujet sensible, intention,
+    # attachement, détresse) vivent déjà dans app_profiles et ne sont PAS dupliquées
+    # ici. La table mémoire conseiller reste volontairement minimale.
+    #
+    # FK user_id -> accounts(user_id) avec ON DELETE CASCADE (B7.1). Divergence
+    # ASSUMÉE vs le reste du schéma app (v22..v33 sont SANS cascade, modèle
+    # soft-delete via accounts.deleted_at) : la mémoire conseiller est une donnée
+    # PERSONNELLE dérivée du compte, sans aucun intérêt après suppression du
+    # compte. CASCADE garantit qu'un futur hard-DELETE d'un compte (Dashboard /
+    # RGPD, lot B10) ne soit jamais bloqué par cette FK et ne laisse aucune ligne
+    # mémoire orpheline — sans dépendre d'une suppression manuelle. `user_advisor_memory`
+    # est une table feuille (rien ne la référence) : le CASCADE ne se propage nulle
+    # part. Aucun effet aujourd'hui (le chemin app ne fait que du soft-delete).
+    #
+    # Idempotence : CREATE TABLE IF NOT EXISTS (contrainte UNIQUE inline) est un
+    # no-op au rejeu ; la FK est posée dans un DO $$ ... EXCEPTION WHEN
+    # duplicate_object (même idiome que la FK v33). Aucun try/except Python : une
+    # vraie erreur SQL doit remonter, pas être avalée en print (même règle que
+    # v28..v34).
+    c.execute("""
+        CREATE TABLE IF NOT EXISTS user_advisor_memory (
+            id                     UUID         PRIMARY KEY,
+            user_id                UUID         NOT NULL,
+            advisor_id             TEXT         NOT NULL,
+            summary                TEXT         NOT NULL DEFAULT '',
+            last_source_message_id BIGINT       NOT NULL DEFAULT 0,
+            created_at             TIMESTAMPTZ  NOT NULL,
+            updated_at             TIMESTAMPTZ  NOT NULL,
+            UNIQUE (user_id, advisor_id)
+        )
+    """)
+    c.execute("""
+        DO $$
+        BEGIN
+            ALTER TABLE user_advisor_memory
+                ADD CONSTRAINT fk_user_advisor_memory_account
+                FOREIGN KEY (user_id) REFERENCES accounts(user_id)
+                ON DELETE CASCADE;
+        EXCEPTION
+            WHEN duplicate_object THEN NULL;
+        END
+        $$;
+    """)
+    conn.commit()
     conn.close()
 
 def reset_db():
@@ -3307,6 +3369,22 @@ def api_consultation_message():
     # inchangée vs legacy).
     _app_persist_emotional_context(user_id, msg)
 
+    # B7 — RAFRAÎCHISSEMENT MÉMOIRE : seulement sur une REPRISE après fenêtre
+    # d'activité inactive. `phase == "resumed_active"` = fenêtre encore active
+    # (conversation en cours) -> on ne résume PAS une session en train de se
+    # dérouler. Les autres phases (`resumed_same_advisor`, `opened_new_advisor`,
+    # `opened_first`) = une vraie reprise -> on met la mémoire à jour AVANT de
+    # générer la réponse pour que get_reply_for_user_id charge un résumé frais.
+    # Garde-fous sécurité : jamais sur deuil/choc récent (message courant) ni sur
+    # signal aigu récent déjà au profil (la sécurité prime, cf. décision B7 §12).
+    # maybe_refresh_advisor_memory ne lève jamais et no-op s'il n'y a aucun
+    # nouveau message de ce conseiller (donc aucun appel LLM).
+    if (flow["consultation"]["phase"] != "resumed_active"
+            and not detecter_moment_grave(msg)
+            and not _signal_aigu_recent(
+                _app_profile_to_user_dict(profile), fenetre_heures=24)):
+        maybe_refresh_advisor_memory(user_id, advisor_real, now=now)
+
     # LLM avec le CONSEILLER RÉEL. La persistance user/assistant reste gérée par
     # get_reply_for_user_id (inchangée). Le tirage est DÉJÀ rattaché in-tx par le
     # helper -> pas de ré-attach ici.
@@ -5142,6 +5220,24 @@ def _reply_core(user, key, user_message, io, *, depuis_pub=False,
     system = get_system_prompt(user_fresh or user, guide_key,
                                 premier_tour_post_onboarding=(decouverte_du_tour or tirage_accueil_du_tour),
                                 proposer_rituel_concret=proposer_tirage_spontane)
+    # B7 — mémoire inter-session par conseiller (chemin APP uniquement : l'accessor
+    # est absent du _io legacy). Bloc de CONTINUITÉ compact, placé AVANT les blocs
+    # situationnels. Skippé sur signal aigu récent / moment grave : la sécurité
+    # prime et aucune référence perso ne doit détourner du protocole (get_system_prompt
+    # a déjà rendu le script 3114 seul en amont le cas échéant).
+    if (io.get("load_advisor_memory") and not moment_grave
+            and not _signal_aigu_recent(user_fresh or user, fenetre_heures=24)):
+        _mem_summary = io["load_advisor_memory"](key, guide_key)
+        if _mem_summary:
+            system += (
+                "\n\n=== CONTINUITÉ UTILE ===\n"
+                f"{_mem_summary}\n"
+                "[Éléments issus d'échanges précédents avec cette personne. "
+                "Utilise-les seulement s'ils sont pertinents là, maintenant. "
+                "N'en fais jamais une certitude, ne les récite pas, ne dis jamais "
+                "« selon ma mémoire » ni « dans ma base ». Rappelle-toi d'un "
+                "élément naturellement, seulement si c'est utile.]"
+            )
     if inspiration_citation:
         system += f"\n\n=== INSPIRATION DU MOMENT ===\nSi cela résonne naturellement avec ce que vit la personne, tu peux t'appuyer sur cette sagesse (sans jamais citer sa source) : {inspiration_citation}"
     if psaume_candidat:
@@ -5389,12 +5485,211 @@ def get_reply_for_user_id(user_id, user_message, advisor_override=None, consulta
         "stripe_links": None,                       # aucun lien Stripe côté app
         "send_channel_message": lambda *a, **k: None,
         "hash_id": _user_hash,
+        # B7 — mémoire inter-session par conseiller. Chemin APP uniquement :
+        # cet accessor est ABSENT du _io legacy (get_reply) -> WhatsApp/Telegram
+        # ne chargent jamais de mémoire narrative. `advisor` = advisor_override
+        # (conseiller figé de la consultation) résolu dans _reply_core.
+        "load_advisor_memory": lambda _key, advisor: load_advisor_memory_summary(user_id, advisor),
     }
     return _reply_core(user, str(user_id), user_message, _io,
                        depuis_pub=False, user_msg_pre_inserted=False,
                        onboarding_vient_de_finir=False, channel="app",
                        advisor_override=advisor_override,
                        tirage_context=tirage_context)
+
+
+# ============================================================
+# MÉMOIRE INTER-SESSION PAR CONSEILLER (B7)
+# ============================================================
+# Mémoire NARRATIVE compacte par couple (user_id, advisor_id), DISTINCTE du
+# profil global app_profiles (jamais dupliqué ici — cf. Migration v35).
+#
+# CHARGEMENT : injectée dans le system prompt de consultation, chemin APP
+#   uniquement (accessor io["load_advisor_memory"], absent du _io legacy), dans
+#   un bloc « CONTINUITÉ UTILE » placé AVANT les blocs situationnels. Jamais si
+#   signal aigu récent / moment grave (la sécurité prime).
+# RAFRAÎCHISSEMENT : UNIQUEMENT à une reprise après fenêtre d'activité inactive
+#   — signal TIMER-A `flow["consultation"]["phase"] != "resumed_active"` dans
+#   api_consultation_message. JAMAIS en cours de conversation active, jamais tous
+#   les N messages. 1 appel LLM court par reprise (mocké en test).
+# SOURCE À RÉSUMER : messages.id > last_source_message_id, pour CE user, et
+#   seulement les messages dont la consultation a advisor_id == ce conseiller
+#   (jointure messages⨝consultations). Jamais tout l'historique. Jamais un
+#   message d'une consultation d'un autre conseiller.
+
+_MEMORY_SUMMARY_CHAR_CAP = 1500      # cap technique dur, appliqué avant écriture
+_MEMORY_NEW_MESSAGES_CAP = 200      # messages nouveaux max repris en une passe
+
+_MEMORY_UPDATE_SYSTEM_PROMPT = (
+    "Tu tiens à jour une MÉMOIRE INTERNE compacte sur une personne, pour un "
+    "conseiller donné. Cette mémoire sert la continuité d'une conversation "
+    "FUTURE ; elle n'est jamais montrée telle quelle à la personne.\n\n"
+    "On te fournit la MÉMOIRE ACTUELLE (peut être vide) et de NOUVEAUX MESSAGES "
+    "(un échange récent entre la personne et le conseiller). Renvoie UNE mémoire "
+    "à jour, autonome, en français, 150 à 200 mots MAXIMUM, en un seul bloc de "
+    "texte suivi (pas de titres, pas de puces, pas de liste).\n\n"
+    "CONSERVE, si c'est utile à une conversation future : personnes importantes, "
+    "situation ou relation clé, faits personnels explicitement donnés par la "
+    "personne, événements importants, décisions et intentions, sujets récurrents, "
+    "question restée ouverte, ce que la personne veut suivre, préférence de "
+    "conversation utile.\n"
+    "ÉCARTE : bonjour / merci, banalités, répétitions, le verbatim, les anciennes "
+    "divinations sans utilité, les longues réponses du conseiller, toute donnée "
+    "technique, tout secret, moyen de paiement, mot de passe, jeton.\n\n"
+    "FUSIONNE la mémoire actuelle avec le nouveau contenu : déduplique, retire ce "
+    "qui est devenu obsolète, ne gonfle pas. N'AJOUTE AUCUN fait absent des "
+    "messages. Garde l'incertitude là où elle existe. Ne transforme JAMAIS une "
+    "hypothèse, une interprétation ou une prédiction du conseiller en fait sur la "
+    "personne : distingue clairement ce que la personne dit d'elle-même de ce que "
+    "le conseiller a supposé (par ex. « elle dit que… » vs « le conseiller a "
+    "évoqué… »). Si rien d'utile n'est à retenir, renvoie la mémoire actuelle "
+    "inchangée."
+)
+
+
+def load_advisor_memory_summary(user_id, advisor_id):
+    """Résumé mémoire du couple (user_id, advisor_id), ou '' si aucune ligne,
+    résumé vide, ou erreur. LECTURE SEULE : ne crée jamais de ligne ici."""
+    conn = None
+    try:
+        conn = get_conn()
+        c = conn.cursor()
+        c.execute(
+            "SELECT summary FROM user_advisor_memory "
+            "WHERE user_id=%s AND advisor_id=%s",
+            (str(user_id), advisor_id),
+        )
+        row = c.fetchone()
+        return (row[0] or "").strip() if row else ""
+    except Exception as e:
+        print(f"[memory] load erreur {_user_hash(user_id)}/{advisor_id}: {e}")
+        return ""
+    finally:
+        if conn:
+            try: conn.close()
+            except Exception: pass
+
+
+def _fetch_new_advisor_messages(user_id, advisor_id, after_id,
+                                limit=_MEMORY_NEW_MESSAGES_CAP):
+    """Messages user/assistant de CE conseiller pour CET utilisateur, d'id
+    STRICTEMENT supérieur à `after_id`, en ordre chronologique. L'advisor est
+    résolu via consultations.advisor_id (jointure) : jamais un message d'une
+    consultation rattachée à un AUTRE conseiller, jamais un message sans
+    consultation. Renvoie [(id, role, content), ...]."""
+    conn = None
+    try:
+        conn = get_conn()
+        c = conn.cursor()
+        c.execute(
+            "SELECT m.id, m.role, m.content "
+            "FROM messages m "
+            "JOIN consultations c ON c.id = m.consultation_id "
+            "WHERE m.user_id=%s AND c.advisor_id=%s AND m.id > %s "
+            "AND m.role IN ('user','assistant') "
+            "ORDER BY m.id ASC "
+            "LIMIT %s",
+            (str(user_id), advisor_id, int(after_id or 0), int(limit)),
+        )
+        return [(r[0], r[1], r[2]) for r in c.fetchall()]
+    except Exception as e:
+        print(f"[memory] fetch erreur {_user_hash(user_id)}/{advisor_id}: {e}")
+        return []
+    finally:
+        if conn:
+            try: conn.close()
+            except Exception: pass
+
+
+def maybe_refresh_advisor_memory(user_id, advisor_id, *, now=None):
+    """Rafraîchit la mémoire (user_id, advisor_id) SI de nouveaux messages de ce
+    conseiller existent depuis last_source_message_id. À appeler UNIQUEMENT à une
+    reprise après fenêtre inactive (cf. api_consultation_message), JAMAIS en
+    conversation active. Un seul appel LLM court, séparé du prompt conseiller
+    (_MEMORY_UPDATE_SYSTEM_PROMPT). Silencieuse et sans effet en cas d'erreur /
+    LLM vide : la mémoire précédente ET le curseur sont conservés (on retentera à
+    la prochaine reprise). Ne lève JAMAIS : ne doit pas casser la génération de
+    la réponse conseiller."""
+    now = now or _utcnow()
+    try:
+        conn = get_conn()
+        try:
+            c = conn.cursor()
+            c.execute(
+                "SELECT id, summary, last_source_message_id "
+                "FROM user_advisor_memory WHERE user_id=%s AND advisor_id=%s",
+                (str(user_id), advisor_id),
+            )
+            row = c.fetchone()
+        finally:
+            try: conn.close()
+            except Exception: pass
+
+        mem_id = row[0] if row else None
+        prev_summary = (row[1] or "") if row else ""
+        cursor_id = (row[2] or 0) if row else 0
+
+        new_msgs = _fetch_new_advisor_messages(user_id, advisor_id, cursor_id)
+        if not new_msgs:
+            return                      # rien de neuf -> 0 appel LLM, 0 écriture
+
+        max_id = new_msgs[-1][0]
+        transcript = "\n".join(
+            f"{'Personne' if r == 'user' else 'Conseiller'}: {txt}"
+            for _mid, r, txt in new_msgs
+        )
+        user_payload = (
+            f"MÉMOIRE ACTUELLE :\n{prev_summary or '(vide)'}\n\n"
+            f"NOUVEAUX MESSAGES :\n{transcript}"
+        )
+        try:
+            out = call_llm(
+                [{"role": "system", "content": _MEMORY_UPDATE_SYSTEM_PROMPT},
+                 {"role": "user", "content": user_payload}],
+                temperature=0.3, max_tokens=400,
+            )
+        except Exception as e:
+            print(f"[memory] LLM erreur {_user_hash(user_id)}/{advisor_id}: {e}")
+            return                      # curseur NON avancé : on retentera
+
+        new_summary = (out or "").strip()
+        if not new_summary:
+            return
+        if len(new_summary) > _MEMORY_SUMMARY_CHAR_CAP:
+            new_summary = new_summary[:_MEMORY_SUMMARY_CHAR_CAP].rstrip()
+
+        conn = get_conn()
+        try:
+            c = conn.cursor()
+            if mem_id is None:
+                c.execute(
+                    "INSERT INTO user_advisor_memory "
+                    "(id, user_id, advisor_id, summary, last_source_message_id, "
+                    " created_at, updated_at) "
+                    "VALUES (%s, %s, %s, %s, %s, %s, %s) "
+                    "ON CONFLICT (user_id, advisor_id) DO UPDATE SET "
+                    "  summary = EXCLUDED.summary, "
+                    "  last_source_message_id = EXCLUDED.last_source_message_id, "
+                    "  updated_at = EXCLUDED.updated_at",
+                    (str(uuid.uuid4()), str(user_id), advisor_id, new_summary,
+                     int(max_id), now, now),
+                )
+            else:
+                c.execute(
+                    "UPDATE user_advisor_memory "
+                    "SET summary=%s, last_source_message_id=%s, updated_at=%s "
+                    "WHERE id=%s",
+                    (new_summary, int(max_id), now, str(mem_id)),
+                )
+            conn.commit()
+        finally:
+            try: conn.close()
+            except Exception: pass
+        log_event("advisor_memory_refreshed",
+                  phone_hash=_user_hash(user_id), guide=advisor_id)
+    except Exception as e:
+        print(f"[memory] refresh erreur {_user_hash(user_id)}/{advisor_id}: {e}")
+
 
 # ============================================================
 # MOTEUR DE CONSULTATIONS 2 h / CRÉDITS (B4.1)
@@ -6144,9 +6439,10 @@ def get_or_open_time_consultation_tx(cursor, user_id, preferred_advisor_id, now,
 
 
 def _open_time_consultation_flow_tx(user_id, preferred_advisor_id, tirage_id, now):
-    """TIMER-A.3c-2b — PLOMBERIE transactionnelle complète du futur POST temps.
-    UNE transaction, AUCUN LLM, NON câblée dans api_consultation_message
-    (le POST garde le flux legacy `open_or_get_consultation` jusqu'à A.3c-2c).
+    """TIMER-A.3c-2b/2c — PLOMBERIE transactionnelle complète du POST temps.
+    UNE transaction, AUCUN LLM. Depuis A.3c-2c, c'est le SEUL chemin d'ouverture
+    utilisé par api_consultation_message (`open_or_get_consultation` n'y est plus
+    appelé ; conservée pour compat legacy / tests).
 
     Ordre (le helper POSSÈDE le mutex utilisateur, aucun verrou tenu après
     commit) :

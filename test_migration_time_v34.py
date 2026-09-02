@@ -56,8 +56,9 @@ def check(cond, label):
 
 SRC = inspect.getsource(A.init_db)
 
-# --- Isolation de la tranche v34 : du marqueur "# Migration v34" au conn.close()
-# final de init_db(). v34 est la dernière migration -> elle va jusqu'à la fin.
+# --- Isolation de la tranche v34 : du marqueur "# Migration v34" au marqueur de
+# la migration suivante (# Migration v35, ajoutée en B7) si elle existe, sinon
+# au conn.close() final de init_db(). v34 n'est plus la dernière migration.
 _m34 = re.search(r"#\s*Migration v34\b", SRC)
 assert _m34, "bloc 'Migration v34' introuvable dans init_db()"
 _m33 = re.search(r"#\s*Migration v33\b", SRC)
@@ -65,9 +66,13 @@ assert _m33, "bloc 'Migration v33' introuvable dans init_db()"
 assert _m34.start() > _m33.start(), "v34 doit venir APRES v33"
 
 _tail = SRC[_m34.start():]
-_close = _tail.find("conn.close()")
-assert _close != -1, "conn.close() final introuvable apres le bloc v34"
-V34 = _tail[:_close + len("conn.close()")]
+_m_next = re.search(r"#\s*Migration v3[5-9]\b", _tail)
+if _m_next:
+    V34 = _tail[:_m_next.start()]
+else:
+    _close = _tail.find("conn.close()")
+    assert _close != -1, "conn.close() final introuvable apres le bloc v34"
+    V34 = _tail[:_close + len("conn.close()")]
 
 
 def _nocomment(block):
