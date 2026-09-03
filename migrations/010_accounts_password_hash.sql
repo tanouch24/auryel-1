@@ -1,0 +1,30 @@
+-- 010_accounts_password_hash.sql — Migration v36 (AUTH V2) : mot de passe
+-- applicatif (email + password).
+--
+-- Miroir LISIBLE du bloc « Migration v36 » exécuté réellement par init_db()
+-- dans auryel_bot.py. PUREMENT ADDITIF : une seule colonne nullable sur
+-- `accounts`. Aucune table touchée, aucun backfill, aucun DROP / TRUNCATE /
+-- DELETE, aucune donnée existante modifiée.
+--
+-- password_hash : hash du mot de passe applicatif, produit par
+--   werkzeug.security.generate_password_hash(..., method="pbkdf2:sha256").
+--   Le mot de passe EN CLAIR n'est JAMAIS stocké ni loggé. NULLABLE
+--   volontairement :
+--     * les comptes créés via l'OTP legacy (Migration v23) n'ont pas de mot de
+--       passe et restent parfaitement valides (session app inchangée) ;
+--     * le chemin « login mot de passe » sur un compte sans password_hash
+--       renvoie une erreur API stable `password_not_set` (HTTP 409) — aucun
+--       mot de passe n'est inventé, l'OTP n'est jamais réutilisé comme mot de
+--       passe, aucun compte n'est supprimé.
+--
+-- Les endpoints OTP legacy (/api/auth/request-code, /api/auth/verify-code)
+-- restent en place pour la compatibilité des anciennes versions de l'app ;
+-- ils ne sont plus la voie officielle. Voie V2 :
+--   POST /api/app/auth/register  { email, password }
+--   POST /api/app/auth/login     { email, password }
+-- Elles débouchent sur EXACTEMENT la même session app (create_app_session /
+-- app_sessions / require_app_auth) que verify-code.
+--
+-- Idempotence : ADD COLUMN IF NOT EXISTS -> no-op au rejeu de init_db().
+
+ALTER TABLE accounts ADD COLUMN IF NOT EXISTS password_hash TEXT;

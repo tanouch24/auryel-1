@@ -54,9 +54,17 @@ assert _m35, "bloc 'Migration v35' introuvable dans init_db()"
 assert _m34, "bloc 'Migration v34' introuvable dans init_db()"
 
 _tail = SRC[_m35.start():]
-_close = _tail.find("conn.close()")
-assert _close != -1, "conn.close() final introuvable apres le bloc v35"
-V35 = _tail[:_close + len("conn.close()")]
+# Fin de la tranche v35 : le début d'une migration ULTÉRIEURE si elle existe
+# (ex. « Migration v36 », additive elle aussi), sinon le conn.close() final de
+# init_db(). Sans cette borne, une migration ajoutée après v35 polluerait le
+# slice et ferait échouer les contrôles de non-régression ci-dessous.
+_next_mig = re.search(r"#\s*Migration v(3[6-9]|[4-9]\d)\b", _tail)
+if _next_mig:
+    V35 = _tail[:_next_mig.start()]
+else:
+    _close = _tail.find("conn.close()")
+    assert _close != -1, "conn.close() final introuvable apres le bloc v35"
+    V35 = _tail[:_close + len("conn.close()")]
 
 
 def _nocomment(block):

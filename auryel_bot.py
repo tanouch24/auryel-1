@@ -5,6 +5,7 @@ from flask_cors import CORS
 from flask_limiter import Limiter
 from flask_limiter.util import get_remote_address
 from werkzeug.middleware.proxy_fix import ProxyFix
+from werkzeug.security import generate_password_hash, check_password_hash
 from groq import Groq
 from apscheduler.schedulers.background import BackgroundScheduler
 import json as _json
@@ -1189,6 +1190,20 @@ def init_db():
         END
         $$;
     """)
+    conn.commit()
+    # Migration v36 — AUTH V2 : mot de passe applicatif (email + password).
+    # PUREMENT ADDITIF : une seule colonne `accounts.password_hash` NULLABLE.
+    # Aucune table touchée, aucun backfill, aucun DROP / DELETE, aucune donnée
+    # existante modifiée. NULLABLE volontairement : les comptes créés via l'OTP
+    # legacy (v23) restent parfaitement valides sans mot de passe ; le chemin
+    # « login mot de passe » renvoie alors une erreur stable `password_not_set`
+    # (aucun mot de passe inventé, aucune réutilisation de l'OTP). Seul le HASH
+    # est stocké (werkzeug pbkdf2:sha256) — jamais le mot de passe en clair.
+    # Miroir lisible : migrations/010_accounts_password_hash.sql. Idempotent
+    # (ADD COLUMN IF NOT EXISTS) — no-op au rejeu. Les endpoints OTP restent en
+    # place (compatibilité anciennes versions app) ; register/login V2 =
+    # POST /api/app/auth/register et POST /api/app/auth/login.
+    c.execute("ALTER TABLE accounts ADD COLUMN IF NOT EXISTS password_hash TEXT")
     conn.commit()
     conn.close()
 
@@ -2825,6 +2840,86 @@ def revoke_app_session(token):
         conn.close()
 
 
+# ------------------------------------------------------------
+# AUTH V2 — email + mot de passe (Migration v36). L'OTP n'est plus requis pour
+# créer un compte / se connecter depuis l'app. On NE stocke QUE le hash
+# (werkzeug pbkdf2:sha256), jamais le mot de passe en clair, jamais dans un log.
+# La session produite est EXACTEMENT celle de verify-code (create_app_session /
+# app_sessions / require_app_auth) — pas de second système de jetons.
+# ------------------------------------------------------------
+
+_PASSWORD_MIN_LEN = 8
+_PASSWORD_HASH_METHOD = "pbkdf2:sha256"   # éprouvé, sans dépendance externe
+
+# Hash « leurre » : sur un email inconnu au login on exécute quand même une
+# vérification de hash de coût comparable, pour ne pas offrir d'oracle de
+# timing révélant l'existence de l'email.
+_DUMMY_PASSWORD_HASH = generate_password_hash(
+    secrets.token_urlsafe(16), method=_PASSWORD_HASH_METHOD
+)
+
+
+def _password_acceptable(pw):
+    """V1 volontairement simple : au moins 8 caractères, passphrases acceptées.
+    Le mot de passe n'est JAMAIS normalisé/modifié."""
+    return isinstance(pw, str) and len(pw) >= _PASSWORD_MIN_LEN
+
+
+def _get_account_auth_row(email_normalized):
+    """(user_id, password_hash, deleted_at) pour cet email, ou None. Lecture
+    seule, aucun log."""
+    conn = get_conn()
+    try:
+        c = conn.cursor()
+        c.execute(
+            "SELECT user_id, password_hash, deleted_at FROM accounts WHERE email_normalized=%s",
+            (email_normalized,),
+        )
+        return c.fetchone()
+    finally:
+        conn.close()
+
+
+def create_account_with_password(email_normalized, original_email, password):
+    """Crée un compte NEUF (user_id = uuid4) avec password_hash. Retourne le
+    user_id (str) si créé, ou None si un compte (vivant OU soft-supprimé) porte
+    déjà cet email (l'appelant renvoie alors 409 — on ne réactive pas ici, on
+    n'écrase jamais un compte existant). Ne crée AUCUNE ligne users."""
+    conn = get_conn()
+    try:
+        c = conn.cursor()
+        c.execute(
+            "SELECT user_id, deleted_at FROM accounts WHERE email_normalized=%s",
+            (email_normalized,),
+        )
+        if c.fetchone() is not None:
+            return None
+        new_id = str(uuid.uuid4())
+        pw_hash = generate_password_hash(password, method=_PASSWORD_HASH_METHOD)
+        c.execute(
+            "INSERT INTO accounts (user_id, email, email_normalized, auth_provider, password_hash, created_at) "
+            "VALUES (%s, %s, %s, 'email', %s, %s)",
+            (new_id, original_email or email_normalized, email_normalized, pw_hash, datetime.utcnow()),
+        )
+        conn.commit()
+        return new_id
+    finally:
+        conn.close()
+
+
+def set_account_password(user_id, password):
+    """Seam « set / forgot password » (lot futur) : (re)pose le hash du mot de
+    passe pour un compte existant. Non exposé par un endpoint dans ce lot."""
+    pw_hash = generate_password_hash(password, method=_PASSWORD_HASH_METHOD)
+    conn = get_conn()
+    try:
+        c = conn.cursor()
+        c.execute("UPDATE accounts SET password_hash=%s WHERE user_id=%s", (pw_hash, user_id))
+        conn.commit()
+    finally:
+        conn.close()
+
+
 def send_email_code(email, code):
     """Envoie le code de connexion via Resend (même pattern que send_email_j6). Le
     code n'apparaît QUE dans le corps de l'email. Ne pas confondre avec les helpers
@@ -3012,6 +3107,115 @@ def api_auth_verify_code():
         "user_id": user_id,
         "expires_in": _APP_SESSION_TTL_DAYS * 24 * 3600,
     }, 200)
+
+
+# ------------------------------------------------------------
+# AUTH V2 — endpoints APP email + mot de passe (Migration v36).
+# OTP NON REQUIS. Même session de sortie que verify-code.
+# ------------------------------------------------------------
+
+def _session_payload(user_id, data=None):
+    data = data or {}
+    plat = data.get("platform")
+    plat = plat[:64] if isinstance(plat, str) and plat else None
+    dev = data.get("device_label")
+    dev = dev[:120] if isinstance(dev, str) and dev else None
+    return {
+        "token": create_app_session(user_id, platform=plat, device_label=dev),
+        "token_type": "Bearer",
+        "user_id": user_id,
+        "expires_in": _APP_SESSION_TTL_DAYS * 24 * 3600,
+    }
+
+
+@app.route("/api/app/auth/register", methods=["POST"])
+@limiter.limit("5 per hour")
+def api_app_auth_register():
+    """Création de compte APP : email + mot de passe -> compte + session
+    directe (aucun code OTP). 400 si email invalide ou mot de passe < 8 ;
+    409 si l'email est déjà utilisé ; 503 sur erreur serveur (message
+    générique, aucun secret). Ne logge jamais le mot de passe."""
+    data = request.get_json(silent=True) or {}
+    email = _normalize_email(data.get("email"))
+    password = data.get("password")
+    if not email:
+        return _auth_json({"error": "invalid_email",
+                           "message": "Adresse email invalide."}, 400)
+    if not _password_acceptable(password):
+        return _auth_json({"error": "weak_password",
+                           "message": "Le mot de passe doit faire au moins 8 caractères."}, 400)
+    try:
+        user_id = create_account_with_password(email, data.get("email"), password)
+    except Exception:
+        print("[auth] register : echec creation compte")
+        return _auth_json({"error": "temporarily_unavailable",
+                           "message": "Service momentanément indisponible."}, 503)
+    if user_id is None:
+        return _auth_json({"error": "email_taken",
+                           "message": "Un compte existe déjà avec cette adresse email."}, 409)
+    try:
+        payload = _session_payload(user_id, data)
+    except Exception:
+        print("[auth] register : compte cree, echec creation session")
+        return _auth_json({"error": "temporarily_unavailable",
+                           "message": "Service momentanément indisponible."}, 503)
+    try:
+        _touch_last_login(user_id)
+    except Exception:
+        pass
+    return _auth_json(payload, 200)
+
+
+@app.route("/api/app/auth/login", methods=["POST"])
+@limiter.limit("10 per 10 minutes")
+def api_app_auth_login():
+    """Connexion APP : email + mot de passe (aucun code OTP). 401 générique
+    « Email ou mot de passe incorrect » que l'email existe ou non et quel que
+    soit le motif d'échec (ne révèle jamais l'existence d'un compte, ni une
+    suppression). Cas particulier assumé : un compte legacy SANS mot de passe
+    (créé par OTP) -> 409 `password_not_set` — signal stable pour le futur
+    parcours « définir un mot de passe » ; on n'invente rien. Ne logge jamais
+    le mot de passe."""
+    data = request.get_json(silent=True) or {}
+    email = _normalize_email(data.get("email"))
+    password = data.get("password")
+    _invalid = _auth_json({"error": "invalid_credentials",
+                           "message": "Email ou mot de passe incorrect."}, 401)
+    if not email or not isinstance(password, str) or not password:
+        return _invalid
+
+    try:
+        row = _get_account_auth_row(email)
+    except Exception:
+        print("[auth] login : echec lecture compte")
+        return _auth_json({"error": "temporarily_unavailable",
+                           "message": "Service momentanément indisponible."}, 503)
+
+    if row is None:
+        check_password_hash(_DUMMY_PASSWORD_HASH, password)  # anti-timing
+        return _invalid
+
+    user_id, password_hash, deleted_at = row
+    if deleted_at is not None:
+        check_password_hash(_DUMMY_PASSWORD_HASH, password)
+        return _invalid                     # aucune fuite : même 401 générique
+    if not password_hash:
+        return _auth_json({"error": "password_not_set",
+                           "message": "Ce compte doit d’abord définir un mot de passe."}, 409)
+    if not check_password_hash(password_hash, password):
+        return _invalid
+
+    try:
+        payload = _session_payload(str(user_id), data)
+    except Exception:
+        print("[auth] login : echec creation session")
+        return _auth_json({"error": "temporarily_unavailable",
+                           "message": "Service momentanément indisponible."}, 503)
+    try:
+        _touch_last_login(str(user_id))
+    except Exception:
+        pass
+    return _auth_json(payload, 200)
 
 
 @app.route("/api/auth/logout", methods=["POST"])
