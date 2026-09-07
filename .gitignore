@@ -20,3 +20,6 @@ backup_*.sql
 CLAUDE.md
 CLAUDE copie.md
 CHANGELOG_LANCEMENT.md
+
+# Bundle public généré pour Netlify (voir netlify-build.sh)
+_site/
