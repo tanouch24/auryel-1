@@ -265,25 +265,6 @@
   status = 301
   force = true
 
-# ── Une seule URL par page principale ──────────────────────────────────────
-[[redirects]]
-  from = "/tarifs/"
-  to = "/tarifs"
-  status = 301
-  force = true
-
-[[redirects]]
-  from = "/comment-ca-marche/"
-  to = "/comment-ca-marche"
-  status = 301
-  force = true
-
-[[redirects]]
-  from = "/conseillers/"
-  to = "/conseillers"
-  status = 301
-  force = true
-
 # ── Clean URLs : pages principales (200 rewrite) ────────────────────────────
 [[redirects]]
   from = "/success"
