@@ -45,6 +45,7 @@ _CHILD = (
     "messages", "tirages", "earned_credits", "user_advisor_memory",
     "consultations", "consultation_allowance", "app_profiles",
     "share_reward_days", "wellbeing_mission_days", "wellbeing_cycle_rewards",
+    "memory_games", "memory_rewards",
     "app_sessions",
 )
 
@@ -235,6 +236,8 @@ check(_count("user_advisor_memory", UID1) == 0, "7 mémoire conseiller supprimé
 check(_count("app_profiles", UID1) == 0, "3b profil (app_profiles) supprimé")
 check(_count("earned_credits", UID1) == 0, "3c earned_credits supprimés")
 check(_count("share_reward_days", UID1) == 0, "3d share_reward_days supprimés")
+check(_count("memory_games", UID1) == 0 and _count("memory_rewards", UID1) == 0,
+      "3e memory_games + memory_rewards supprimés")
 check(_sessions_before == 2 and _count("app_sessions", UID1) == 0,
       "8 sessions supprimées/révoquées (les 2 appareils, pas seulement le jeton courant)")
 check(next(u["user_id"] for u in _USERS if u["phone"] == "+33600000001") is None,

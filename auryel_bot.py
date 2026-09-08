@@ -1335,6 +1335,94 @@ def init_db():
         $$;
     """)
     conn.commit()
+    # Migration v39 — JEU MEMORY + RÉCOMPENSES DE TEMPS (« Jeu Auryel »). Le
+    # SERVEUR est l'unique autorité : une partie est OUVERTE puis FERMÉE côté
+    # serveur, le chrono est calculé serveur (completed_at - started_at), jamais
+    # lu du client. PUREMENT ADDITIF : 2 tables neuves + 2 FK idempotentes.
+    # Aucune colonne ALTER-ée, aucun backfill, aucun DROP / TRUNCATE / DELETE,
+    # aucune donnée existante modifiée.
+    #
+    #   memory_games
+    #     UNE partie. `game_id` UUID imprévisible (uuid4) = PRIMARY KEY.
+    #     `status` ∈ ('active','completed','expired'). La finalisation
+    #     EXACTLY-ONCE est garantie EN BASE par `UPDATE ... WHERE game_id=%s AND
+    #     user_id=%s AND status='active'` + garde `rowcount == 1` : deux POST
+    #     /complete concurrents / un rejeu / une retransmission réseau ne
+    #     peuvent pas fermer deux fois la même partie.
+    #
+    #   memory_rewards
+    #     UN crédit de récompense accordé. `game_id` = PRIMARY KEY -> une partie
+    #     ne crédite qu'UNE fois, à vie (`INSERT ... ON CONFLICT (game_id) DO
+    #     NOTHING` + garde `rowcount == 1` sous `accounts ... FOR UPDATE`).
+    #     L'anti-abus « 1 récompense par difficulté sur une fenêtre GLISSANTE de
+    #     7 jours » est une simple lecture `MAX(credited_at)` par (user_id,
+    #     difficulty) : une difficulté redevient éligible 7 jours (horloge
+    #     serveur) après SON dernier crédit. Le crédit atterrit dans
+    #     accounts.purchased_seconds_remaining (même bucket que les récompenses
+    #     partage v37 / bien-être v38, jamais remis à zéro par un reset mensuel,
+    #     consommé en dernier) et apparaît dans GET /api/consultation/state.
+    #
+    # FK ... -> accounts(user_id) SANS ON DELETE CASCADE : DELETE
+    # /api/app/account purge explicitement les 2 tables (cf.
+    # _ACCOUNT_DELETE_CHILD_TABLES). Blocs DO $$ idempotents (duplicate_object
+    # seulement) — idiome v27/v37/v38. Miroir lisible :
+    # migrations/013_memory_rewards.sql.
+    c.execute("""
+        CREATE TABLE IF NOT EXISTS memory_games (
+            game_id          UUID         PRIMARY KEY,
+            user_id          UUID         NOT NULL,
+            difficulty       TEXT         NOT NULL,
+            started_at       TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
+            completed_at     TIMESTAMPTZ,
+            status           TEXT         NOT NULL DEFAULT 'active',
+            elapsed_seconds  INTEGER,
+            reward_seconds   INTEGER      NOT NULL DEFAULT 0,
+            reward_credited  BOOLEAN      NOT NULL DEFAULT FALSE,
+            outcome          TEXT,
+            created_at       TIMESTAMPTZ  NOT NULL DEFAULT NOW()
+        )
+    """)
+    c.execute("""
+        CREATE INDEX IF NOT EXISTS idx_memory_games_user_status
+        ON memory_games (user_id, status)
+    """)
+    c.execute("""
+        CREATE TABLE IF NOT EXISTS memory_rewards (
+            game_id           UUID         PRIMARY KEY,
+            user_id           UUID         NOT NULL,
+            difficulty        TEXT         NOT NULL,
+            credited_at       TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
+            credited_seconds  INTEGER      NOT NULL
+        )
+    """)
+    c.execute("""
+        CREATE INDEX IF NOT EXISTS idx_memory_rewards_user_difficulty
+        ON memory_rewards (user_id, difficulty, credited_at DESC)
+    """)
+    conn.commit()
+    c.execute("""
+        DO $$
+        BEGIN
+            ALTER TABLE memory_games
+                ADD CONSTRAINT fk_memory_games_account
+                FOREIGN KEY (user_id) REFERENCES accounts(user_id);
+        EXCEPTION
+            WHEN duplicate_object THEN NULL;
+        END
+        $$;
+    """)
+    c.execute("""
+        DO $$
+        BEGIN
+            ALTER TABLE memory_rewards
+                ADD CONSTRAINT fk_memory_rewards_account
+                FOREIGN KEY (user_id) REFERENCES accounts(user_id);
+        EXCEPTION
+            WHEN duplicate_object THEN NULL;
+        END
+        $$;
+    """)
+    conn.commit()
     conn.close()
 
 def reset_db():
@@ -5051,6 +5139,365 @@ def api_wellbeing_mission():
 
 
 # ============================================================
+# JEU MEMORY — RÉCOMPENSES DE TEMPS (« Jeu Auryel »)
+#   POST /api/app/memory/start     { difficulty }   -> ouvre une partie serveur
+#   POST /api/app/memory/complete  { game_id }      -> ferme la partie + crédite
+#   GET  /api/app/memory/progress                    -> éligibilité 7 j (lecture)
+# ============================================================
+# Règle produit FIGÉE — 3 difficultés :
+#   easy   : réussite en MOINS DE 20 s -> +300 s (5 min)
+#   medium : réussite en MOINS DE 40 s -> +600 s (10 min)
+#   hard   : réussite en MOINS DE 80 s -> +900 s (15 min)
+#   « moins de » = STRICT : `elapsed_seconds >= seuil` ne crédite pas.
+#
+# ANTI-ABUS V1 — 1 récompense par difficulté sur une FENÊTRE GLISSANTE de 7 j :
+#   une difficulté redevient éligible 7 jours (à la seconde près, horloge
+#   serveur) après SON dernier crédit. Maximum sur 7 j = 300 + 600 + 900 =
+#   1800 s = 30 min. Jouer une difficulté déjà récompensée reste possible : la
+#   partie se termine normalement, elle ne crédite rien (outcome
+#   'cooldown_active') et NE consomme PAS d'éligibilité.
+#
+# LE SERVEUR EST L'UNIQUE AUTORITÉ :
+#   * un `elapsed_seconds` fourni par le client est IGNORÉ — le body de
+#     /complete ne contient QUE `game_id`. Chrono = completed_at_serveur -
+#     started_at_serveur.
+#   * `reward_seconds` n'est JAMAIS lu du body : il découle de la difficulté
+#     enregistrée à l'ouverture.
+#   * `game_id` = uuid4 (cryptographiquement imprévisible).
+#
+# GARANTIES DE CONCURRENCE (mêmes idiomes que J5 partage / J7 bien-être) :
+#   * finalisation EXACTLY-ONCE : `UPDATE memory_games SET status='completed'
+#     ... WHERE game_id=%s AND user_id=%s AND status='active'` + `rowcount==1`.
+#   * crédit EXACTLY-ONCE : `INSERT INTO memory_rewards ... ON CONFLICT
+#     (game_id) DO NOTHING` + `rowcount==1`, le tout sous `accounts ... FOR
+#     UPDATE` (mutex par utilisateur, MÊME verrou que le moteur temps) qui
+#     sérialise deux /complete concurrents, un changement d'appareil, un rejeu.
+#
+# DURÉE MINIMALE PLAUSIBLE (bloque start->complete immédiat / horloge trafiquée
+#   / rejeu) : le plateau réel fait 4 / 6 / 8 paires (8 / 12 / 16 cartes) ; il
+#   faut au minimum `pair_count` coups gagnants, chacun = 2 taps + animation. On
+#   retient des planchers TRÈS en-dessous de tout temps humain réel mais qui
+#   rendent le « complete instantané » impossible : easy 4 s · medium 6 s ·
+#   hard 9 s (les seuils de récompense étant 20 / 40 / 80 s, il reste une large
+#   bande où un vrai joueur rapide est récompensé). Une partie plus rapide que
+#   son plancher est fermée normalement (status='completed') avec
+#   outcome='implausible_time', reward_credited=false, et ne consomme aucune
+#   éligibilité.
+#
+# EXPIRATION game_id : easy/medium 10 min, hard 15 min. Au-delà, /complete
+#   renvoie status='expired', aucun crédit ; l'utilisateur recommence. `start`
+#   balaie en plus les parties actives de plus de 24 h de l'utilisateur (borne
+#   la croissance de la table, la vraie expiration reste vérifiée à /complete).
+
+_MEMORY_DIFFICULTIES = {
+    "easy":   {"threshold_seconds": 20, "reward_seconds": 300,
+               "min_plausible_seconds": 4, "expiry_seconds": 600,  "pair_count": 4},
+    "medium": {"threshold_seconds": 40, "reward_seconds": 600,
+               "min_plausible_seconds": 6, "expiry_seconds": 600,  "pair_count": 6},
+    "hard":   {"threshold_seconds": 80, "reward_seconds": 900,
+               "min_plausible_seconds": 9, "expiry_seconds": 900,  "pair_count": 8},
+}
+_MEMORY_ORDER = ("easy", "medium", "hard")
+_MEMORY_REWARD_WINDOW = timedelta(days=7)
+_MEMORY_MAX_WINDOW_SECONDS = sum(
+    d["reward_seconds"] for d in _MEMORY_DIFFICULTIES.values()
+)  # 1800 s = 30 min
+
+
+def _memory_finalized_payload(status, difficulty, elapsed, reward_seconds, outcome):
+    """Réponse d'une partie DÉJÀ finalisée (rejeu de /complete) : aucun crédit
+    pour cet appel."""
+    return {
+        "status": status,
+        "difficulty": difficulty,
+        "elapsed_seconds": int(elapsed or 0),
+        "reward_credited": False,
+        "credited_seconds": 0,
+        "reward_seconds": int(reward_seconds or 0),
+        "outcome": outcome,
+        "already_finalized": True,
+    }
+
+
+@app.route("/api/app/memory/start", methods=["POST"])
+@limiter.limit("60 per hour")
+@require_app_auth
+def api_memory_start():
+    """Ouvre une partie serveur. Identité = jeton Bearer, jamais le body.
+      body : { "difficulty": "easy" | "medium" | "hard" }
+    Renvoie le `game_id` imprévisible + les paramètres d'affichage (seuil,
+    récompense, nombre de paires, expiration). Ne débite rien, n'ouvre aucune
+    consultation, n'appelle aucun LLM."""
+    user_id = g.app_account["user_id"]
+    data = request.get_json(silent=True) or {}
+    difficulty = data.get("difficulty")
+    if difficulty not in _MEMORY_DIFFICULTIES:
+        return _auth_json({"error": "invalid_difficulty"}, 400)
+    cfg = _MEMORY_DIFFICULTIES[difficulty]
+    now = _utcnow()
+    game_id = str(uuid.uuid4())
+    conn = get_conn()
+    try:
+        c = conn.cursor()
+        c.execute(
+            "SELECT user_id FROM accounts "
+            "WHERE user_id=%s AND deleted_at IS NULL FOR UPDATE",
+            (user_id,),
+        )
+        if c.fetchone() is None:
+            conn.rollback()
+            return _auth_json({"error": "unauthorized"}, 401)
+        # housekeeping : périmer les parties actives de plus de 24 h de CE user.
+        c.execute(
+            "UPDATE memory_games SET status='expired', outcome='expired' "
+            "WHERE user_id=%s AND status='active' AND started_at < %s",
+            (user_id, now - timedelta(hours=24)),
+        )
+        c.execute(
+            "INSERT INTO memory_games "
+            "(game_id, user_id, difficulty, started_at, status, created_at) "
+            "VALUES (%s, %s, %s, %s, 'active', %s)",
+            (game_id, user_id, difficulty, now, now),
+        )
+        conn.commit()
+    except Exception as e:
+        conn.rollback()
+        print(f"[memory] start erreur {_user_hash(user_id)}: {type(e).__name__}")
+        return _auth_json({"error": "temporarily_unavailable"}, 503)
+    finally:
+        conn.close()
+    return _auth_json({
+        "game_id": game_id,
+        "difficulty": difficulty,
+        "started_at": now.isoformat(),
+        "expires_at": (now + timedelta(seconds=cfg["expiry_seconds"])).isoformat(),
+        "threshold_seconds": cfg["threshold_seconds"],
+        "reward_seconds": cfg["reward_seconds"],
+        "pair_count": cfg["pair_count"],
+    }, 200)
+
+
+@app.route("/api/app/memory/complete", methods=["POST"])
+@limiter.limit("60 per hour")
+@require_app_auth
+def api_memory_complete():
+    """Ferme une partie serveur et attribue (ou non) la récompense. Identité =
+    jeton Bearer. Body : { "game_id": "<uuid>" } — RIEN d'autre n'est lu, en
+    particulier aucun chrono ni aucune récompense fournis par le client.
+
+    Le serveur calcule lui-même `elapsed_seconds = now - started_at` (les deux
+    horodatés côté serveur), applique le seuil de la difficulté ENREGISTRÉE à
+    l'ouverture, vérifie l'éligibilité 7 j, crédite
+    accounts.purchased_seconds_remaining EXACTLY-ONCE et marque la partie
+    terminée.
+
+    `outcome` ∈ 'rewarded' | 'time_limit_exceeded' | 'cooldown_active' |
+    'implausible_time' | 'expired'. `reward_credited` = true UNIQUEMENT si CET
+    appel vient d'accorder le crédit."""
+    user_id = g.app_account["user_id"]
+    data = request.get_json(silent=True) or {}
+    game_id = data.get("game_id")
+    # game_id inconnu / malformé -> 404 (jamais 403 : ne révèle pas l'existence).
+    if not _is_uuid(game_id):
+        return _auth_json({"error": "game_not_found"}, 404)
+    now = _utcnow()
+    conn = get_conn()
+    try:
+        c = conn.cursor()
+        # mutex par utilisateur (même verrou que le moteur temps / J5 / J7).
+        c.execute(
+            "SELECT user_id FROM accounts "
+            "WHERE user_id=%s AND deleted_at IS NULL FOR UPDATE",
+            (user_id,),
+        )
+        if c.fetchone() is None:
+            conn.rollback()
+            return _auth_json({"error": "unauthorized"}, 401)
+
+        c.execute(
+            "SELECT user_id, difficulty, started_at, status, elapsed_seconds, "
+            "       reward_seconds, outcome "
+            "FROM memory_games WHERE game_id=%s",
+            (game_id,),
+        )
+        row = c.fetchone()
+        if row is None or row[0] != user_id:
+            conn.rollback()
+            return _auth_json({"error": "game_not_found"}, 404)
+        _, difficulty, started_at, status, prev_elapsed, prev_reward, prev_outcome = row
+        cfg = _MEMORY_DIFFICULTIES.get(difficulty)
+        if cfg is None:
+            conn.rollback()
+            return _auth_json({"error": "game_not_found"}, 404)
+
+        # déjà finalisée -> renvoie l'état stocké SANS re-créditer.
+        if status != "active":
+            conn.rollback()
+            return _auth_json(_memory_finalized_payload(
+                status, difficulty, prev_elapsed, prev_reward, prev_outcome), 200)
+
+        elapsed = int((now - started_at).total_seconds())
+        if elapsed < 0:
+            elapsed = 0
+
+        # 1) EXPIRATION : au-delà de expiry_seconds, aucune récompense.
+        if elapsed > cfg["expiry_seconds"]:
+            c.execute(
+                "UPDATE memory_games SET status='expired', completed_at=%s, "
+                "elapsed_seconds=%s, outcome='expired' "
+                "WHERE game_id=%s AND user_id=%s AND status='active'",
+                (now, elapsed, game_id, user_id),
+            )
+            conn.commit()
+            return _auth_json({
+                "status": "expired",
+                "difficulty": difficulty,
+                "elapsed_seconds": elapsed,
+                "reward_credited": False,
+                "credited_seconds": 0,
+                "reward_seconds": cfg["reward_seconds"],
+                "outcome": "expired",
+            }, 200)
+
+        # 2) DÉCISION DE RÉCOMPENSE.
+        credited = False
+        credited_seconds = 0
+        next_eligible_at = None
+        if elapsed < cfg["min_plausible_seconds"]:
+            outcome = "implausible_time"
+        elif elapsed >= cfg["threshold_seconds"]:
+            outcome = "time_limit_exceeded"
+        else:
+            # sous le seuil ET plausible : reste l'éligibilité 7 j glissante.
+            c.execute(
+                "SELECT MAX(credited_at) FROM memory_rewards "
+                "WHERE user_id=%s AND difficulty=%s",
+                (user_id, difficulty),
+            )
+            mrow = c.fetchone()
+            last_credited_at = mrow[0] if mrow else None
+            if (last_credited_at is not None
+                    and (now - last_credited_at) < _MEMORY_REWARD_WINDOW):
+                outcome = "cooldown_active"
+                next_eligible_at = last_credited_at + _MEMORY_REWARD_WINDOW
+            else:
+                c.execute(
+                    "INSERT INTO memory_rewards "
+                    "(game_id, user_id, difficulty, credited_at, credited_seconds) "
+                    "VALUES (%s, %s, %s, %s, %s) "
+                    "ON CONFLICT (game_id) DO NOTHING",
+                    (game_id, user_id, difficulty, now, cfg["reward_seconds"]),
+                )
+                if c.rowcount == 1:
+                    c.execute(
+                        "UPDATE accounts SET purchased_seconds_remaining = "
+                        "COALESCE(purchased_seconds_remaining, 0) + %s "
+                        "WHERE user_id=%s",
+                        (cfg["reward_seconds"], user_id),
+                    )
+                    credited = True
+                    credited_seconds = cfg["reward_seconds"]
+                    outcome = "rewarded"
+                    next_eligible_at = now + _MEMORY_REWARD_WINDOW
+                else:
+                    # course perdue sur le MÊME game_id (déjà crédité ailleurs) :
+                    # on ne double jamais.
+                    outcome = "cooldown_active"
+
+        # 3) FINALISATION EXACTLY-ONCE.
+        c.execute(
+            "UPDATE memory_games SET status='completed', completed_at=%s, "
+            "elapsed_seconds=%s, reward_seconds=%s, reward_credited=%s, "
+            "outcome=%s "
+            "WHERE game_id=%s AND user_id=%s AND status='active'",
+            (now, elapsed, cfg["reward_seconds"], credited, outcome,
+             game_id, user_id),
+        )
+        if c.rowcount != 1:
+            # un autre /complete a fermé la partie entre le SELECT et cet
+            # UPDATE (ne peut arriver que si le mutex accounts a été contourné) :
+            # tout annuler, y compris un éventuel crédit, ne rien re-créditer.
+            conn.rollback()
+            return _auth_json(_memory_finalized_payload(
+                "completed", difficulty, elapsed, cfg["reward_seconds"],
+                "cooldown_active"), 200)
+
+        conn.commit()
+        if credited:
+            log_event("memory_reward_credited", user_hash=_user_hash(user_id))
+        payload = {
+            "status": "completed",
+            "difficulty": difficulty,
+            "elapsed_seconds": elapsed,
+            "reward_credited": credited,
+            "credited_seconds": credited_seconds,
+            "reward_seconds": cfg["reward_seconds"],
+            "outcome": outcome,
+        }
+        if next_eligible_at is not None:
+            payload["next_eligible_at"] = next_eligible_at.isoformat()
+        return _auth_json(payload, 200)
+    except Exception as e:
+        conn.rollback()
+        print(f"[memory] complete erreur {_user_hash(user_id)}: {type(e).__name__}")
+        return _auth_json({"error": "temporarily_unavailable"}, 503)
+    finally:
+        conn.close()
+
+
+@app.route("/api/app/memory/progress", methods=["GET"])
+@require_app_auth
+def api_memory_progress():
+    """État d'éligibilité 7 j de l'utilisateur authentifié, par difficulté.
+    LECTURE SEULE : n'ouvre aucune partie, N'ACCORDE JAMAIS de crédit."""
+    user_id = g.app_account["user_id"]
+    now = _utcnow()
+    conn = get_conn()
+    try:
+        c = conn.cursor()
+        c.execute(
+            "SELECT user_id FROM accounts "
+            "WHERE user_id=%s AND deleted_at IS NULL",
+            (user_id,),
+        )
+        if c.fetchone() is None:
+            return _auth_json({"error": "unauthorized"}, 401)
+        difficulties = []
+        for name in _MEMORY_ORDER:
+            cfg = _MEMORY_DIFFICULTIES[name]
+            c.execute(
+                "SELECT MAX(credited_at) FROM memory_rewards "
+                "WHERE user_id=%s AND difficulty=%s",
+                (user_id, name),
+            )
+            mrow = c.fetchone()
+            last = mrow[0] if mrow else None
+            eligible = last is None or (now - last) >= _MEMORY_REWARD_WINDOW
+            next_at = None if last is None else last + _MEMORY_REWARD_WINDOW
+            remaining = 0
+            if not eligible and next_at is not None:
+                remaining = max(0, int((next_at - now).total_seconds()))
+            difficulties.append({
+                "difficulty": name,
+                "threshold_seconds": cfg["threshold_seconds"],
+                "reward_seconds": cfg["reward_seconds"],
+                "eligible_now": eligible,
+                "last_reward_at": last.isoformat() if last is not None else None,
+                "next_eligible_at": (next_at.isoformat()
+                                     if (next_at is not None and not eligible)
+                                     else None),
+                "remaining_seconds": remaining,
+            })
+        return _auth_json({
+            "window_days": 7,
+            "max_window_seconds": _MEMORY_MAX_WINDOW_SECONDS,
+            "difficulties": difficulties,
+        }, 200)
+    finally:
+        conn.close()
+
+
+# ============================================================
 # SUPPRESSION DE COMPTE (J5) — DELETE /api/app/account
 # ============================================================
 # Identité = jeton Bearer (`g.app_account["user_id"]`), jamais le body. Le
@@ -5090,6 +5537,8 @@ _ACCOUNT_DELETE_CHILD_TABLES = (
     "share_reward_days",
     "wellbeing_mission_days",
     "wellbeing_cycle_rewards",
+    "memory_games",
+    "memory_rewards",
     "app_sessions",
 )
 
