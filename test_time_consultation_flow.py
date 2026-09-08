@@ -130,10 +130,14 @@ def _norm(sql):
 class FakeCursor:
     def __init__(self):
         self._result = None
+        self._rows = None
         self.rowcount = -1
 
     def fetchone(self):
         return self._result
+
+    def fetchall(self):
+        return self._rows or []
 
     def close(self):
         pass
@@ -142,9 +146,24 @@ class FakeCursor:
         k = _norm(sql)
         p = tuple(params or ())
         self._result = None
+        self._rows = None
         self.rowcount = -1
 
-        if k == "SELECT id FROM tirages WHERE id=%s AND user_id=%s":
+        if k == ("SELECT id FROM consultations "
+                 "WHERE user_id=%s AND last_activity_at IS NOT NULL"):
+            (uid,) = p
+            self._rows = [(c["id"],) for c in DB["consultations"].values()
+                          if c["user_id"] == str(uid)
+                          and c["last_activity_at"] is not None]
+
+        elif k == ("SELECT id, advisor_id FROM consultations "
+                   "WHERE id=%s AND user_id=%s"):
+            cid, uid = p
+            c0 = DB["consultations"].get(str(cid))
+            self._result = ((c0["id"], c0["advisor_id"])
+                            if c0 and c0["user_id"] == str(uid) else None)
+
+        elif k == "SELECT id FROM tirages WHERE id=%s AND user_id=%s":
             tid, uid = p
             t = DB["tirages"].get(str(tid))
             self._result = (t["id"],) if t and t["user_id"] == str(uid) else None
