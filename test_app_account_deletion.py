@@ -44,7 +44,8 @@ UID2 = "22222222-2222-4222-8222-222222222222"
 _CHILD = (
     "messages", "tirages", "earned_credits", "user_advisor_memory",
     "consultations", "consultation_allowance", "app_profiles",
-    "share_reward_days", "app_sessions",
+    "share_reward_days", "wellbeing_mission_days", "wellbeing_cycle_rewards",
+    "app_sessions",
 )
 
 # ---------------------------------------------------------------------------
