@@ -186,6 +186,15 @@ class FakeCursor:
             FAKE["messages"].append({"id": FAKE["seq"][0], "user_id": uid, "phone": None,
                                      "role": role, "content": content, "timestamp": ts,
                                      "consultation_id": cid})
+        elif k == ("SELECT role,content FROM messages WHERE user_id=%s "
+                   "AND consultation_id=%s ORDER BY id DESC LIMIT %s"):
+            uid, cid, limit = p
+            rows = sorted(
+                [m for m in FAKE["messages"]
+                 if m["user_id"] == uid
+                 and str(m.get("consultation_id")) == str(cid)],
+                key=lambda m: m["id"], reverse=True)
+            self._rows = [(m["role"], m["content"]) for m in rows[:limit]]
         elif k == "SELECT role,content FROM messages WHERE user_id=%s ORDER BY id DESC LIMIT %s":
             uid, limit = p
             rows = sorted([m for m in FAKE["messages"] if m["user_id"] == uid],

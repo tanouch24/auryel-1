@@ -1736,11 +1736,28 @@ def add_message_for_user_id(user_id, role, content, consultation_id=None):
             except Exception: pass
 
 
-def get_history_for_user_id(user_id, limit=20):
-    """Même forme que get_history(phone,...) mais filtrée sur messages.user_id."""
+def get_history_for_user_id(user_id, limit=20, consultation_id=None):
+    """Même forme que get_history(phone,...) mais filtrée sur messages.user_id.
+
+    J6 — CLOISONNEMENT PAR FIL : si `consultation_id` est fourni, l'historique
+    est STRICTEMENT limité à ce fil (WHERE user_id=%s AND consultation_id=%s).
+    Aucun message d'une autre consultation — donc d'un autre conseiller — ne
+    peut alors entrer dans le prompt LLM (confidentialité conversationnelle).
+    `consultation_id=None` conserve le comportement legacy (tout l'historique
+    du compte) pour le chemin WhatsApp/Telegram et les anciens appels."""
     conn = get_conn()
     c = conn.cursor()
-    c.execute("SELECT role,content FROM messages WHERE user_id=%s ORDER BY id DESC LIMIT %s", (str(user_id), limit))
+    if consultation_id is not None:
+        c.execute(
+            "SELECT role,content FROM messages "
+            "WHERE user_id=%s AND consultation_id=%s ORDER BY id DESC LIMIT %s",
+            (str(user_id), str(consultation_id), limit),
+        )
+    else:
+        c.execute(
+            "SELECT role,content FROM messages WHERE user_id=%s ORDER BY id DESC LIMIT %s",
+            (str(user_id), limit),
+        )
     rows = c.fetchall()
     conn.close()
     return [{"role": r[0], "content": r[1]} for r in reversed(rows)]
@@ -3380,15 +3397,19 @@ def _state_with_time_settle(user_id, now=None):
                 "earned_available": 0, "quota_legacy": None,
             }
 
-        # D. consultation « courante » — logique 2 h ACTUELLE (inchangée ici).
+        # D. consultation « courante » = la PLUS RÉCENTE de l'utilisateur.
+        #    J6 — plus AUCUN cutoff `expires_at > now` : un fil ne « disparaît »
+        #    plus au bout de 2 h. La liste des fils vit dans GET
+        #    /api/consultation/list ; /state ne renvoie qu'une consultation de
+        #    compatibilité + le portefeuille temps (source de vérité).
         c.execute(
             """SELECT id, advisor_id, started_at, expires_at, credit_source,
                       last_activity_at, billed_until
                FROM consultations
-               WHERE user_id=%s AND expires_at > %s
+               WHERE user_id=%s
                ORDER BY started_at DESC
                LIMIT 1""",
-            (uid, now),
+            (uid,),
         )
         crow = c.fetchone()
         consultation = None
@@ -3547,6 +3568,32 @@ def api_consultation_message():
 
     user_id = g.app_account["user_id"]   # jamais lu dans le body
 
+    # J6 — fil CIBLÉ (optionnel). Fourni : on VÉRIFIE l'appartenance au compte
+    # authentifié et on utilise l'advisor_id RÉEL de CETTE ligne ; app_profiles.guide
+    # n'écrase JAMAIS ce conseiller. Absent : comportement legacy (fil courant /
+    # conseiller préféré). Malformé ou d'un autre compte -> 404, aucune mutation.
+    target_cid = data.get("consultation_id")
+    target_advisor = None
+    if target_cid is not None:
+        if not _is_uuid(target_cid):
+            return _auth_json({"error": "consultation_not_found"}, 404)
+        _tc = get_conn()
+        try:
+            _tcur = _tc.cursor()
+            _tcur.execute(
+                "SELECT advisor_id FROM consultations WHERE id=%s AND user_id=%s",
+                (str(target_cid), user_id),
+            )
+            _trow = _tcur.fetchone()
+        finally:
+            try:
+                _tc.close()
+            except Exception:
+                pass
+        if _trow is None:
+            return _auth_json({"error": "consultation_not_found"}, 404)
+        target_advisor = _trow[0]
+
     # tirage_id OPTIONNEL — validé LECTURE SEULE AVANT toute mutation : absent,
     # malformé, inexistant ou d'un AUTRE compte -> 404, aucun débit / touch /
     # ouverture. Le contexte LLM est construit UNIQUEMENT depuis le référentiel.
@@ -3568,16 +3615,20 @@ def api_consultation_message():
     profile = get_or_create_app_profile(user_id)
     if profile is None:
         return _auth_json({"error": "unauthorized"}, 401)
-    preferred_advisor = profile.get("guide") or "selena"
+    # Fil ciblé -> l'advisor de CE fil prime ; sinon conseiller préféré du profil.
+    preferred_advisor = target_advisor or (profile.get("guide") or "selena")
 
     now = _utcnow()
     flow = _open_time_consultation_flow_tx(
         user_id, preferred_advisor,
         tirage_id if tirage_context is not None else None, now,
+        target_consultation_id=str(target_cid) if target_cid is not None else None,
     )
 
     if flow["status"] == "unknown_account":
         return _auth_json({"error": "unauthorized"}, 401)
+    if flow["status"] == "consultation_not_found":
+        return _auth_json({"error": "consultation_not_found"}, 404)
     if flow["status"] == "tirage_not_found":
         return _auth_json({"error": "tirage_not_found"}, 404)
     if flow["status"] == "time_exhausted":
@@ -3756,11 +3807,210 @@ def api_consultation_messages():
     utilisateur. Aucune consultation -> { "consultation_id": null,
     "messages": [] }."""
     user_id = g.app_account["user_id"]   # identité = Bearer, jamais la query/le body
+
+    # J6 — fil CIBLÉ (?consultation_id=<uuid>) : on renvoie UNIQUEMENT ses
+    # messages, après vérification d'appartenance. Un id explicitement fourni
+    # mais invalide / d'un autre compte -> 404, JAMAIS de repli sur le dernier
+    # fil. Sans paramètre : comportement legacy (fil le plus récent).
+    q_cid = request.args.get("consultation_id")
+    if q_cid is not None:
+        if not _is_uuid(q_cid):
+            return _auth_json({"error": "consultation_not_found"}, 404)
+        _oc = get_conn()
+        try:
+            _ocur = _oc.cursor()
+            _ocur.execute(
+                "SELECT user_id FROM consultations WHERE id=%s", (str(q_cid),))
+            _orow = _ocur.fetchone()
+        finally:
+            try:
+                _oc.close()
+            except Exception:
+                pass
+        if _orow is None or str(_orow[0]) != str(user_id):
+            return _auth_json({"error": "consultation_not_found"}, 404)
+        messages = get_consultation_messages_for_user_id(user_id, str(q_cid))
+        return _auth_json({"consultation_id": str(q_cid), "messages": messages}, 200)
+
     cid = _latest_consultation_id_for_user_id(user_id)
     if cid is None:
         return _auth_json({"consultation_id": None, "messages": []}, 200)
     messages = get_consultation_messages_for_user_id(user_id, cid)
     return _auth_json({"consultation_id": cid, "messages": messages}, 200)
+
+
+# ------------------------------------------------------------
+# J6 — MULTI-CONSULTATIONS : liste des fils + ouverture/reprise par conseiller.
+# Modèle V1 : UNE discussion persistante par conseiller (max 10). Identité =
+# jeton Bearer uniquement. Ces deux routes ne touchent JAMAIS app_profiles.guide.
+# ------------------------------------------------------------
+
+_CONSULTATION_PREVIEW_MAX = 140
+
+
+def _consultation_preview(cursor, user_id, consultation_id):
+    """Dernier message conversationnel (user/assistant) de CE fil, tronqué.
+    Jamais le contenu d'un autre fil. '' si aucun message."""
+    cursor.execute(
+        "SELECT content FROM messages "
+        "WHERE user_id=%s AND consultation_id=%s AND role IN ('user','assistant') "
+        "ORDER BY id DESC LIMIT 1",
+        (str(user_id), str(consultation_id)),
+    )
+    row = cursor.fetchone()
+    if not row or not row[0]:
+        return ""
+    text = " ".join(str(row[0]).split())
+    if len(text) > _CONSULTATION_PREVIEW_MAX:
+        text = text[:_CONSULTATION_PREVIEW_MAX - 1].rstrip() + "…"
+    return text
+
+
+@app.route("/api/consultation/list", methods=["GET"])
+@require_app_auth
+def api_consultation_list():
+    """J6 — TOUTES les discussions de l'utilisateur authentifié, UNE par
+    conseiller (la plus récemment active si plusieurs lignes historiques
+    existent pour le même advisor_id). Tri : la plus récemment active d'abord.
+    Aucun cutoff `expires_at`. GET PUR : ne crée rien, ne débite rien, aucun
+    FOR UPDATE, aucun settle, aucun LLM.
+
+    Réponse : { "consultations": [ { id, advisor_id, started_at,
+    last_activity_at, window_active, preview } ] }."""
+    user_id = g.app_account["user_id"]
+    now = _utcnow()
+    grace = timedelta(seconds=300)
+    conn = get_conn()
+    try:
+        c = conn.cursor()
+        # DISTINCT ON (advisor_id) : la ligne la plus récemment active de chaque
+        # conseiller. Les anciennes lignes en double ne sont PAS supprimées, juste
+        # non exposées.
+        c.execute(
+            """SELECT DISTINCT ON (advisor_id)
+                      id, advisor_id, started_at, last_activity_at
+               FROM consultations
+               WHERE user_id=%s
+               ORDER BY advisor_id,
+                        COALESCE(last_activity_at, started_at) DESC,
+                        started_at DESC""",
+            (str(user_id),),
+        )
+        rows = c.fetchall()
+        items = []
+        for cid, advisor_id, started_at, last_activity_at in rows:
+            window_active = (
+                last_activity_at is not None and now < last_activity_at + grace
+            )
+            items.append({
+                "id": str(cid),
+                "advisor_id": advisor_id,
+                "started_at": _ts_iso(started_at),
+                "last_activity_at": _ts_iso(last_activity_at),
+                "window_active": window_active,
+                "preview": _consultation_preview(c, user_id, cid),
+                "_sort": last_activity_at or started_at,
+            })
+    finally:
+        try:
+            conn.close()
+        except Exception:
+            pass
+
+    items.sort(key=lambda it: it["_sort"], reverse=True)
+    # J6 §6 — une seule fenêtre « active » à la fois : seul le fil le plus
+    # récemment actif garde window_active=True dans la réponse.
+    seen_active = False
+    for it in items:
+        if it["window_active"] and not seen_active:
+            seen_active = True
+        else:
+            it["window_active"] = False
+        it.pop("_sort", None)
+    return _auth_json({"consultations": items}, 200)
+
+
+@app.route("/api/consultation/open", methods=["POST"])
+@limiter.limit("30 per 10 minutes")
+@require_app_auth
+def api_consultation_open():
+    """J6 — ouvre (ou REPREND) la discussion de l'utilisateur avec un conseiller.
+
+    - `advisor_id` validé contre les 10 conseillers Auryel (GUIDES).
+    - une consultation existe déjà pour (user_id, advisor_id) -> renvoie la plus
+      récente (JAMAIS de doublon).
+    - sinon -> crée une ligne `consultations` NEUVE (fenêtre non ouverte :
+      `last_activity_at` / `billed_until` restent NULL).
+    - ne modifie PAS app_profiles.guide, ne débite AUCUN temps, ne démarre
+      AUCUNE fenêtre facturable. `accounts` FOR UPDATE = mutex utilisateur.
+
+    Réponse : { "consultation": { id, advisor_id, started_at, expires_at,
+    credit_source, opened_now } }."""
+    data = request.get_json(silent=True) or {}
+    advisor_id = data.get("advisor_id")
+    if not isinstance(advisor_id, str) or advisor_id not in GUIDES:
+        return _auth_json({"error": "invalid_advisor"}, 400)
+
+    user_id = g.app_account["user_id"]
+    now = _utcnow()
+    conn = get_conn()
+    try:
+        c = conn.cursor()
+        c.execute(
+            "SELECT user_id FROM accounts "
+            "WHERE user_id=%s AND deleted_at IS NULL FOR UPDATE",
+            (str(user_id),),
+        )
+        if c.fetchone() is None:
+            conn.rollback()
+            return _auth_json({"error": "unauthorized"}, 401)
+
+        c.execute(
+            """SELECT id, advisor_id, started_at, expires_at, credit_source
+               FROM consultations
+               WHERE user_id=%s AND advisor_id=%s
+               ORDER BY started_at DESC
+               LIMIT 1""",
+            (str(user_id), advisor_id),
+        )
+        row = c.fetchone()
+        opened_now = False
+        if row is None:
+            new_id = str(uuid.uuid4())
+            started_at = now
+            expires_at = now + _CONSULTATION_DUREE   # colonne NOT NULL, compat
+            credit_source = "time"
+            c.execute(
+                """INSERT INTO consultations
+                       (id, user_id, advisor_id, started_at, expires_at,
+                        credit_source, created_at)
+                   VALUES (%s, %s, %s, %s, %s, 'time', %s)""",
+                (new_id, str(user_id), advisor_id, started_at, expires_at, now),
+            )
+            opened_now = True
+            cid, r_advisor = new_id, advisor_id
+        else:
+            cid, r_advisor, started_at, expires_at, credit_source = row
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        try:
+            conn.close()
+        except Exception:
+            pass
+
+    return _auth_json({
+        "consultation": {
+            "id": str(cid),
+            "advisor_id": r_advisor,
+            "started_at": _ts_iso(started_at),
+            "expires_at": _ts_iso(expires_at),
+            "credit_source": credit_source or "time",
+            "opened_now": opened_now,
+        },
+    }, 200)
 
 
 # ------------------------------------------------------------
@@ -5982,7 +6232,11 @@ def get_reply_for_user_id(user_id, user_message, advisor_override=None, consulta
         "reload": _app_reload,
         "add_message": lambda _, role, content: add_message_for_user_id(
             user_id, role, content, consultation_id=consultation_id),
-        "get_history": lambda _, limit=20: get_history_for_user_id(user_id, limit),
+        # J6 — l'historique injecté au LLM est CLOISONNÉ sur le fil courant :
+        # `consultation_id` (session ciblée) borne le SELECT. Aucun message d'un
+        # autre conseiller ne peut contaminer le prompt.
+        "get_history": lambda _, limit=20: get_history_for_user_id(
+            user_id, limit, consultation_id=consultation_id),
         "do_tirage": lambda _: (None, []),          # pas de tirage image en app (lot ultérieur)
         "stripe_links": None,                       # aucun lien Stripe côté app
         "send_channel_message": lambda *a, **k: None,
@@ -6940,7 +7194,8 @@ def get_or_open_time_consultation_tx(cursor, user_id, preferred_advisor_id, now,
                                       "opened_new_advisor")
 
 
-def _open_time_consultation_flow_tx(user_id, preferred_advisor_id, tirage_id, now):
+def _open_time_consultation_flow_tx(user_id, preferred_advisor_id, tirage_id, now,
+                                   target_consultation_id=None):
     """TIMER-A.3c-2b/2c — PLOMBERIE transactionnelle complète du POST temps.
     UNE transaction, AUCUN LLM. Depuis A.3c-2c, c'est le SEUL chemin d'ouverture
     utilisé par api_consultation_message (`open_or_get_consultation` n'y est plus
@@ -7011,20 +7266,34 @@ def _open_time_consultation_flow_tx(user_id, preferred_advisor_id, tirage_id, no
             return {"status": "unknown_account", "consultation": None,
                     "time": None, "tirage_attached": False}
 
-        # 4. dernière consultation logique.
+        # 3b. J6 — fil CIBLÉ : vérifie l'appartenance AVANT toute mutation.
+        #     Fourni mais inconnu / d'un autre compte -> rollback, aucun débit.
+        target_row = None
+        if target_consultation_id is not None:
+            c.execute(
+                "SELECT id, advisor_id FROM consultations "
+                "WHERE id=%s AND user_id=%s",
+                (str(target_consultation_id), uid),
+            )
+            target_row = c.fetchone()
+            if target_row is None:
+                conn.rollback()
+                return {"status": "consultation_not_found", "consultation": None,
+                        "time": None, "tirage_attached": False}
+
+        # 4-5. J6 multi-fil — settle de TOUTES les fenêtres d'activité
+        #      potentiellement ouvertes de l'utilisateur (pas seulement la plus
+        #      récente). `_settle_consultation_time_tx` est idempotent (rejeu au
+        #      même `now` -> 0 s), borne le débit à min(now, last_activity_at +
+        #      300) et ne facture JAMAIS l'inactivité. Ordre de verrous inchangé :
+        #      `accounts` déjà FOR UPDATE, `consultations` lue SANS FOR UPDATE.
         c.execute(
-            """SELECT id, last_activity_at
-               FROM consultations
-               WHERE user_id=%s
-               ORDER BY started_at DESC
-               LIMIT 1""",
+            "SELECT id FROM consultations "
+            "WHERE user_id=%s AND last_activity_at IS NOT NULL",
             (uid,),
         )
-        crow = c.fetchone()
-
-        # 5. settle de son ancienne fenêtre (no-op si last_activity_at NULL).
-        if crow is not None and crow[1] is not None:
-            _settle_consultation_time_tx(c, uid, str(crow[0]), now)
+        for (_open_cid,) in c.fetchall():
+            _settle_consultation_time_tx(c, uid, str(_open_cid), now)
 
         # 6. snapshot APRÈS settle.
         snap = _get_time_snapshot_tx(c, uid, now)
@@ -7067,8 +7336,16 @@ def _open_time_consultation_flow_tx(user_id, preferred_advisor_id, tirage_id, no
             }
 
         # 8. sélection / création de la conversation logique.
-        sel = get_or_open_time_consultation_tx(
-            c, uid, preferred_advisor_id, now, snap["total_remaining_seconds"])
+        if target_row is not None:
+            # J6 — fil ciblé : on reprend EXACTEMENT cette ligne ; son advisor_id
+            # RÉEL prime (jamais remplacé par le conseiller préféré du profil).
+            sel = {"consultation_id": str(target_row[0]),
+                   "advisor_id": target_row[1],
+                   "phase": "resumed_targeted", "created": False}
+        else:
+            sel = get_or_open_time_consultation_tx(
+                c, uid, preferred_advisor_id, now,
+                snap["total_remaining_seconds"])
         cid = sel["consultation_id"]
 
         # 9. touch.

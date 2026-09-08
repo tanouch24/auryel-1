@@ -181,6 +181,15 @@ class FakeCursor:
             FAKE["messages"].append({"id": FAKE["seq"][0], "user_id": uid, "phone": None,
                                      "role": role, "content": content, "timestamp": ts,
                                      "consultation_id": consultation_id})
+        elif k == ("SELECT role,content FROM messages WHERE user_id=%s "
+                   "AND consultation_id=%s ORDER BY id DESC LIMIT %s"):
+            uid, cid, limit = p
+            rows = sorted(
+                [m for m in FAKE["messages"]
+                 if m["user_id"] == uid
+                 and str(m.get("consultation_id")) == str(cid)],
+                key=lambda m: m["id"], reverse=True)
+            self._rows = [(m["role"], m["content"]) for m in rows[:limit]]
         elif k == "SELECT role,content FROM messages WHERE user_id=%s ORDER BY id DESC LIMIT %s":
             uid, limit = p
             rows = sorted([m for m in FAKE["messages"] if m["user_id"] == uid],
@@ -212,6 +221,18 @@ class FakeCursor:
                       if a["user_id"] == uid and a["deleted_at"] is None), None)
             self._result = (uid,) if r else None
 
+        elif k == ("SELECT id FROM consultations "
+                   "WHERE user_id=%s AND last_activity_at IS NOT NULL"):
+            (uid,) = p
+            self._rows = [(c["id"],) for c in FAKE["consultations"]
+                          if c["user_id"] == uid
+                          and c.get("last_activity_at") is not None]
+        elif k == ("SELECT id, advisor_id FROM consultations "
+                   "WHERE id=%s AND user_id=%s"):
+            cid, uid = p
+            r = next((c for c in FAKE["consultations"]
+                      if c["id"] == str(cid) and c["user_id"] == uid), None)
+            self._result = (r["id"], r["advisor_id"]) if r else None
         elif k == ("SELECT id, last_activity_at FROM consultations "
                    "WHERE user_id=%s ORDER BY started_at DESC LIMIT 1"):
             (uid,) = p
@@ -395,10 +416,9 @@ class FakeCursor:
         # ---- moteur TEMPS (TIMER-A.2) + câblage GET /state (TIMER-A.3a) ----
         elif k == ("SELECT id, advisor_id, started_at, expires_at, credit_source, "
                    "last_activity_at, billed_until FROM consultations "
-                   "WHERE user_id=%s AND expires_at > %s ORDER BY started_at DESC LIMIT 1"):
-            uid, now = p
-            rows = [c for c in FAKE["consultations"]
-                    if c["user_id"] == uid and c["expires_at"] > now]
+                   "WHERE user_id=%s ORDER BY started_at DESC LIMIT 1"):
+            (uid,) = p
+            rows = [c for c in FAKE["consultations"] if c["user_id"] == uid]
             rows.sort(key=lambda c: c["started_at"], reverse=True)
             if rows:
                 c0 = rows[0]
