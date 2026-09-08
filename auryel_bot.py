@@ -1255,6 +1255,84 @@ def init_db():
         $$;
     """)
     conn.commit()
+    # Migration v38 — PARCOURS BIEN-ÊTRE (J7) : missions quotidiennes + récompense
+    # par CYCLE de 30 journées COMPLÉTÉES (+15 min = 900 s de consultation),
+    # décidée et créditée UNIQUEMENT par le serveur. PUREMENT ADDITIF : 2 tables
+    # neuves + 2 FK idempotentes. Aucune colonne ALTER-ée, aucun backfill, aucun
+    # DROP / TRUNCATE / DELETE, aucune donnée existante modifiée.
+    #
+    #   wellbeing_mission_days
+    #     UNE mission SANS trace serveur (aujourd'hui : `moment` = séance
+    #     « Ton Moment » aboutie) enregistrée pour un jour calendaire
+    #     Europe/Paris. PRIMARY KEY (user_id, day_date, mission_id) -> « 1 fois
+    #     par jour et par mission » garanti EN BASE (INSERT ... ON CONFLICT DO
+    #     NOTHING : rejeux / POST concurrents = 1 seule ligne). Les missions
+    #     `pensee` / `tirage` / `consultation` NE sont PAS stockées ici : elles
+    #     sont DÉRIVÉES de leurs traces serveur existantes
+    #     (share_reward_days.share_date, tirages.created_at,
+    #     consultations.last_activity_at) — le client ne peut pas les falsifier.
+    #
+    #   wellbeing_cycle_rewards
+    #     UN cycle de 30 journées complétées récompensé. PRIMARY KEY
+    #     (user_id, cycle_number) + `INSERT ... ON CONFLICT DO NOTHING` sous
+    #     `accounts ... FOR UPDATE` -> EXACTEMENT 1 crédit de 900 s par cycle,
+    #     insensible aux rejeux de requête / réinstallations / changements
+    #     d'appareil / déconnexions / manipulations d'horloge (les journées
+    #     dérivent de traces serveur horodatées côté serveur). Le crédit
+    #     atterrit dans accounts.purchased_seconds_remaining (même bucket que la
+    #     récompense partage v37, jamais remis à zéro par un reset mensuel,
+    #     consommé en dernier) et apparaît dans GET /api/consultation/state.
+    #
+    # FK ... -> accounts(user_id) SANS ON DELETE CASCADE : DELETE /api/app/account
+    # purge explicitement les 2 tables (cf. _ACCOUNT_DELETE_CHILD_TABLES). Blocs
+    # DO $$ idempotents (duplicate_object seulement) — idiome v27/v37.
+    # Miroir lisible : migrations/012_wellbeing_journey.sql.
+    c.execute("""
+        CREATE TABLE IF NOT EXISTS wellbeing_mission_days (
+            user_id     UUID         NOT NULL,
+            day_date    DATE         NOT NULL,
+            mission_id  TEXT         NOT NULL,
+            created_at  TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
+            PRIMARY KEY (user_id, day_date, mission_id)
+        )
+    """)
+    c.execute("""
+        CREATE INDEX IF NOT EXISTS idx_wellbeing_mission_days_user
+        ON wellbeing_mission_days (user_id, day_date)
+    """)
+    c.execute("""
+        CREATE TABLE IF NOT EXISTS wellbeing_cycle_rewards (
+            user_id          UUID         NOT NULL,
+            cycle_number     INTEGER      NOT NULL,
+            credited_at      TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
+            credited_seconds INTEGER      NOT NULL DEFAULT 900,
+            PRIMARY KEY (user_id, cycle_number)
+        )
+    """)
+    conn.commit()
+    c.execute("""
+        DO $$
+        BEGIN
+            ALTER TABLE wellbeing_mission_days
+                ADD CONSTRAINT fk_wellbeing_mission_days_account
+                FOREIGN KEY (user_id) REFERENCES accounts(user_id);
+        EXCEPTION
+            WHEN duplicate_object THEN NULL;
+        END
+        $$;
+    """)
+    c.execute("""
+        DO $$
+        BEGIN
+            ALTER TABLE wellbeing_cycle_rewards
+                ADD CONSTRAINT fk_wellbeing_cycle_rewards_account
+                FOREIGN KEY (user_id) REFERENCES accounts(user_id);
+        EXCEPTION
+            WHEN duplicate_object THEN NULL;
+        END
+        $$;
+    """)
+    conn.commit()
     conn.close()
 
 def reset_db():
@@ -4578,6 +4656,296 @@ def api_rewards_share_progress():
 
 
 # ============================================================
+# PARCOURS BIEN-ÊTRE (J7) — GET  /api/app/wellbeing/progress
+#                           POST /api/app/wellbeing/mission
+# ============================================================
+# « Mon parcours bien-être » : 4 missions quotidiennes RÉELLES d'Auryel
+#   - pensee       : partage de la Pensée du jour   (trace : share_reward_days)
+#   - tirage       : Carte / tirage du jour          (trace : tirages.created_at)
+#   - consultation : échange avec un conseiller      (trace : consultations.last_activity_at)
+#   - moment       : séance « Ton Moment » aboutie   (AUCUNE trace serveur -> enregistrée)
+#
+# Une JOURNÉE COMPLÉTÉE = les 4 missions accomplies le même jour calendaire
+# Europe/Paris. 3 des 4 missions sont DÉRIVÉES de traces serveur existantes
+# (le client ne peut pas les falsifier) ; seule `moment` est enregistrée
+# explicitement (1 fois / jour, PK EN BASE).
+#
+# Le parcours fonctionne par CYCLES de 30 journées COMPLÉTÉES (pas 30 jours
+# calendaires consécutifs — un jour manqué ne remet rien à zéro). À la 30e
+# journée d'un cycle : niveau « Rayonnement » + récompense +900 s (15 min) de
+# consultation, créditée dans accounts.purchased_seconds_remaining, UNE fois
+# par cycle (idempotence garantie EN BASE par wellbeing_cycle_rewards).
+#
+# Le SERVEUR est l'unique autorité : aucun compteur client n'est lu, la
+# progression et la récompense survivent à la fermeture de l'app, à la
+# déconnexion/reconnexion et au changement d'appareil.
+#
+# Wording : bien-être / expérience quotidienne UNIQUEMENT — jamais médical,
+# thérapeutique ou « dispositif de santé ».
+
+_WELLBEING_MISSIONS        = ("pensee", "tirage", "consultation", "moment")
+_WELLBEING_LOCAL_MISSIONS  = ("moment",)   # missions sans trace serveur
+_WELLBEING_CYCLE_DAYS      = 30
+_WELLBEING_REWARD_SECONDS  = 900
+_WELLBEING_LEVELS = (
+    (5,  "Élan"),
+    (10, "Ancrage"),
+    (15, "Harmonie"),
+    (20, "Sérénité"),
+    (25, "Équilibre"),
+    (30, "Rayonnement"),
+)
+
+
+def _wellbeing_day(now=None):
+    """Jour calendaire Europe/Paris de `now` (datetime tz-aware UTC ; naïf =>
+    traité comme UTC). MÊME règle que `_reward_share_date` : la journée bascule
+    à minuit heure de Paris, aligné sur le planificateur et le public FR.
+    Séparé pour être figeable en test."""
+    from zoneinfo import ZoneInfo
+    dt = now or _utcnow()
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    return dt.astimezone(ZoneInfo("Europe/Paris")).date()
+
+
+def _wellbeing_level_for(cycle_completed_days):
+    """(current_level | None, next_level | None, days_to_next_level) pour un
+    nombre de journées complétées DANS LE CYCLE courant (0..30). Wording non
+    médical figé par `_WELLBEING_LEVELS`."""
+    current = None
+    nxt = None
+    to_next = 0
+    for threshold, name in _WELLBEING_LEVELS:
+        if cycle_completed_days >= threshold:
+            current = name
+        elif nxt is None:
+            nxt = name
+            to_next = threshold - cycle_completed_days
+    return current, nxt, to_next
+
+
+def _wellbeing_mission_dates(cur, user_id):
+    """dict mission_id -> set(date Europe/Paris accomplie). `pensee` / `tirage`
+    / `consultation` sont DÉRIVÉES de leurs traces serveur ; `moment` vient de
+    wellbeing_mission_days. Chaque requête est un simple
+    `SELECT ... WHERE user_id=%s` : l'intersection se fait en Python."""
+    cur.execute(
+        "SELECT share_date FROM share_reward_days WHERE user_id=%s",
+        (user_id,),
+    )
+    pensee = {r[0] for r in cur.fetchall()}
+    cur.execute(
+        "SELECT (created_at AT TIME ZONE 'Europe/Paris')::date "
+        "FROM tirages WHERE user_id=%s",
+        (user_id,),
+    )
+    tirage = {r[0] for r in cur.fetchall()}
+    cur.execute(
+        "SELECT (last_activity_at AT TIME ZONE 'Europe/Paris')::date "
+        "FROM consultations WHERE user_id=%s AND last_activity_at IS NOT NULL",
+        (user_id,),
+    )
+    consultation = {r[0] for r in cur.fetchall()}
+    cur.execute(
+        "SELECT day_date FROM wellbeing_mission_days "
+        "WHERE user_id=%s AND mission_id=%s",
+        (user_id, "moment"),
+    )
+    moment = {r[0] for r in cur.fetchall()}
+    return {
+        "pensee": pensee,
+        "tirage": tirage,
+        "consultation": consultation,
+        "moment": moment,
+    }
+
+
+def _wellbeing_progress_payload(cur, user_id, today):
+    """Payload de progression (contrat GET /api/app/wellbeing/progress).
+    LECTURE SEULE : ne crédite rien, ne modifie aucun solde."""
+    per_mission = _wellbeing_mission_dates(cur, user_id)
+    completed_dates = (
+        per_mission["pensee"]
+        & per_mission["tirage"]
+        & per_mission["consultation"]
+        & per_mission["moment"]
+    )
+    total = len(completed_dates)
+
+    if total >= 1:
+        cycle_number = (total - 1) // _WELLBEING_CYCLE_DAYS + 1
+        cycle_days = (total - 1) % _WELLBEING_CYCLE_DAYS + 1
+    else:
+        cycle_number = 1
+        cycle_days = 0
+
+    current_level, next_level, to_next = _wellbeing_level_for(cycle_days)
+
+    cur.execute(
+        "SELECT cycle_number FROM wellbeing_cycle_rewards WHERE user_id=%s",
+        (user_id,),
+    )
+    credited_cycles = {int(r[0]) for r in cur.fetchall()}
+
+    today_missions = [
+        {"id": m, "completed": today in per_mission[m]}
+        for m in _WELLBEING_MISSIONS
+    ]
+
+    return {
+        "completed_days_total": total,
+        "cycle_completed_days": cycle_days,
+        "current_level": current_level,
+        "next_level": next_level,
+        "days_to_next_level": to_next,
+        "today": {
+            "date": today.isoformat(),
+            "missions": today_missions,
+            "completed": all(mm["completed"] for mm in today_missions),
+        },
+        "cycle_number": cycle_number,
+        "reward_earned_for_current_cycle": cycle_number in credited_cycles,
+    }
+
+
+@app.route("/api/app/wellbeing/progress", methods=["GET"])
+@require_app_auth
+def api_wellbeing_progress():
+    """Progression du parcours bien-être de l'utilisateur authentifié.
+    LECTURE SEULE : n'enregistre aucune mission, N'ACCORDE JAMAIS de crédit."""
+    user_id = g.app_account["user_id"]
+    today = _wellbeing_day()
+    conn = get_conn()
+    try:
+        c = conn.cursor()
+        c.execute(
+            "SELECT user_id FROM accounts "
+            "WHERE user_id=%s AND deleted_at IS NULL",
+            (user_id,),
+        )
+        if c.fetchone() is None:
+            return _auth_json({"error": "unauthorized"}, 401)
+        return _auth_json(_wellbeing_progress_payload(c, user_id, today), 200)
+    finally:
+        conn.close()
+
+
+@app.route("/api/app/wellbeing/mission", methods=["POST"])
+@limiter.limit("60 per hour")
+@require_app_auth
+def api_wellbeing_mission():
+    """Enregistre l'accomplissement d'UNE mission du parcours pour AUJOURD'HUI
+    (jour Europe/Paris). Identité = jeton Bearer, jamais le body.
+      body : { "mission_id": "pensee" | "tirage" | "consultation" | "moment" }
+
+    - `moment` (aucune trace serveur) : enregistré dans wellbeing_mission_days,
+      1 fois par jour maximum (PRIMARY KEY EN BASE).
+    - `pensee` / `tirage` / `consultation` : le serveur VÉRIFIE la trace réelle
+      du jour (share_reward_days / tirages / consultations.last_activity_at).
+      409 `mission_action_missing` si l'action n'a pas eu lieu aujourd'hui —
+      un booléen client arbitraire n'est jamais accepté.
+
+    Si l'appel complète la 4e mission du jour ET atteint une nouvelle borne de
+    30 journées complétées : +900 s créditées dans purchased_seconds_remaining,
+    UNE SEULE fois par cycle (garanti EN BASE par wellbeing_cycle_rewards).
+
+    Réponse : payload de progression + { "reward": { "credited", "credited_seconds" } }.
+    `credited` = true UNIQUEMENT si CETTE requête vient d'accorder le crédit."""
+    user_id = g.app_account["user_id"]
+    data = request.get_json(silent=True) or {}
+    mission_id = data.get("mission_id")
+    if mission_id not in _WELLBEING_MISSIONS:
+        return _auth_json({"error": "invalid_mission"}, 400)
+
+    now = _utcnow()
+    today = _wellbeing_day(now)
+    conn = get_conn()
+    try:
+        c = conn.cursor()
+        # mutex par utilisateur + compte vivant (même verrou que le moteur temps
+        # et la récompense partage).
+        c.execute(
+            "SELECT user_id FROM accounts "
+            "WHERE user_id=%s AND deleted_at IS NULL FOR UPDATE",
+            (user_id,),
+        )
+        if c.fetchone() is None:
+            conn.rollback()
+            return _auth_json({"error": "unauthorized"}, 401)
+
+        if mission_id in _WELLBEING_LOCAL_MISSIONS:
+            c.execute(
+                "INSERT INTO wellbeing_mission_days "
+                "(user_id, day_date, mission_id, created_at) "
+                "VALUES (%s, %s, %s, %s) "
+                "ON CONFLICT (user_id, day_date, mission_id) DO NOTHING",
+                (user_id, today, mission_id, now),
+            )
+
+        per_mission = _wellbeing_mission_dates(c, user_id)
+        if (mission_id not in _WELLBEING_LOCAL_MISSIONS
+                and today not in per_mission[mission_id]):
+            conn.rollback()
+            return _auth_json({"error": "mission_action_missing"}, 409)
+
+        completed_dates = (
+            per_mission["pensee"]
+            & per_mission["tirage"]
+            & per_mission["consultation"]
+            & per_mission["moment"]
+        )
+        total = len(completed_dates)
+        earnable_cycles = total // _WELLBEING_CYCLE_DAYS
+
+        c.execute(
+            "SELECT cycle_number FROM wellbeing_cycle_rewards WHERE user_id=%s",
+            (user_id,),
+        )
+        credited_cycles = {int(r[0]) for r in c.fetchall()}
+
+        credited = False
+        credited_seconds = 0
+        for cyc in range(1, earnable_cycles + 1):
+            if cyc in credited_cycles:
+                continue
+            c.execute(
+                "INSERT INTO wellbeing_cycle_rewards "
+                "(user_id, cycle_number, credited_at, credited_seconds) "
+                "VALUES (%s, %s, %s, %s) "
+                "ON CONFLICT (user_id, cycle_number) DO NOTHING",
+                (user_id, cyc, now, _WELLBEING_REWARD_SECONDS),
+            )
+            if c.rowcount == 1:
+                c.execute(
+                    "UPDATE accounts SET purchased_seconds_remaining = "
+                    "COALESCE(purchased_seconds_remaining, 0) + %s "
+                    "WHERE user_id=%s",
+                    (_WELLBEING_REWARD_SECONDS, user_id),
+                )
+                credited = True
+                credited_seconds += _WELLBEING_REWARD_SECONDS
+
+        conn.commit()
+        if credited:
+            log_event("wellbeing_cycle_reward_credited",
+                      user_hash=_user_hash(user_id))
+
+        payload = _wellbeing_progress_payload(c, user_id, today)
+        payload["reward"] = {
+            "credited": credited,
+            "credited_seconds": credited_seconds,
+        }
+        return _auth_json(payload, 200)
+    except Exception as e:
+        conn.rollback()
+        print(f"[wellbeing] mission erreur {_user_hash(user_id)}: {type(e).__name__}")
+        return _auth_json({"error": "temporarily_unavailable"}, 503)
+    finally:
+        conn.close()
+
+
+# ============================================================
 # SUPPRESSION DE COMPTE (J5) — DELETE /api/app/account
 # ============================================================
 # Identité = jeton Bearer (`g.app_account["user_id"]`), jamais le body. Le
@@ -4615,6 +4983,8 @@ _ACCOUNT_DELETE_CHILD_TABLES = (
     "consultation_allowance",
     "app_profiles",
     "share_reward_days",
+    "wellbeing_mission_days",
+    "wellbeing_cycle_rewards",
     "app_sessions",
 )
 
