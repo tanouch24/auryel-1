@@ -10,9 +10,11 @@
 --
 -- Règle produit figée :
 --   * 4 missions quotidiennes RÉELLES d'Auryel :
---       pensee       -> partage de la Pensée du jour  (trace : share_reward_days)
---       tirage       -> Carte / tirage du jour         (trace : tirages.created_at)
---       consultation -> échange avec un conseiller     (trace : consultations.last_activity_at)
+--       pensee       -> CONSULTER la Pensée du jour   (AUCUNE trace serveur -> enregistrée
+--                       dans wellbeing_mission_days ; AUCUN lien avec share_reward_days /
+--                       la récompense de partage J5)
+--       tirage       -> Carte / tirage du jour         (DÉRIVÉE : tirages.created_at)
+--       consultation -> échange avec un conseiller     (DÉRIVÉE : consultations.last_activity_at)
 --       moment       -> séance « Ton Moment » aboutie  (AUCUNE trace serveur -> enregistrée)
 --   * 1 JOURNÉE COMPLÉTÉE = les 4 missions accomplies le MÊME jour calendaire
 --     Europe/Paris. 3/4 ou moins = aucune journée ajoutée.
@@ -26,16 +28,18 @@
 -- déconnexion / reconnexion et au changement d'appareil.
 --
 --   wellbeing_mission_days
---     Une mission SANS trace serveur (aujourd'hui : `moment`) enregistrée pour
---     un jour calendaire Europe/Paris. PRIMARY KEY (user_id, day_date,
---     mission_id) : l'unicité « 1 fois par jour et par mission » est garantie
---     EN BASE. Les routes utilisent
+--     Les missions SANS trace serveur propre — `pensee` (l'utilisateur a
+--     CONSULTÉ la Pensée du jour) et `moment` (séance « Ton Moment » aboutie) —
+--     enregistrées pour un jour calendaire Europe/Paris. PRIMARY KEY
+--     (user_id, day_date, mission_id) : l'unicité « 1 fois par jour et par
+--     mission » est garantie EN BASE. Les routes utilisent
 --     `INSERT ... ON CONFLICT (user_id, day_date, mission_id) DO NOTHING`
 --     -> rejeux / POST concurrents d'un même jour = 1 seule ligne.
---     Les missions `pensee` / `tirage` / `consultation` NE sont PAS stockées
---     ici : elles sont DÉRIVÉES de leurs traces serveur existantes
---     (share_reward_days.share_date, tirages.created_at,
---     consultations.last_activity_at) — un booléen client n'est jamais accepté.
+--     `pensee` N'A AUCUN LIEN avec `share_reward_days` (récompense de partage
+--     J5). Les missions `tirage` / `consultation` NE sont PAS stockées ici :
+--     elles sont DÉRIVÉES de leurs traces serveur existantes
+--     (tirages.created_at, consultations.last_activity_at) — un booléen client
+--     n'est jamais accepté.
 --
 --   wellbeing_cycle_rewards
 --     Un cycle de 30 journées complétées récompensé. PRIMARY KEY
