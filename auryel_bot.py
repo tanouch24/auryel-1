@@ -1205,6 +1205,56 @@ def init_db():
     # POST /api/app/auth/register et POST /api/app/auth/login.
     c.execute("ALTER TABLE accounts ADD COLUMN IF NOT EXISTS password_hash TEXT")
     conn.commit()
+    # Migration v37 — RÉCOMPENSE PARTAGE (J5) : « 30 jours de partage = 1 h
+    # offerte », décidée et créditée UNIQUEMENT par le serveur. PUREMENT
+    # ADDITIF :
+    #   - table `share_reward_days` : un jour calendaire (Europe/Paris) de
+    #     partage déclaré par l'utilisateur. PRIMARY KEY (user_id, share_date)
+    #     -> l'unicité « 1 jour comptabilisé max / jour » est garantie EN BASE
+    #     (les POST concurrents / rejeux d'un même jour ne peuvent pas créer un
+    #     2e jour) ;
+    #   - colonne `accounts.share_reward_credited_at` NULLABLE : marqueur du
+    #     crédit UNIQUE par compte. La garde `WHERE share_reward_credited_at
+    #     IS NULL` combinée au verrou `accounts ... FOR UPDATE` garantit que
+    #     les 3600 s ne sont ajoutées qu'UNE fois, même sur retry du 30e jour.
+    # Le client ne prouve PAS qu'une publication a eu lieu : il déclare une
+    # action de partage volontaire. Aucune vérification de réseau social.
+    # Le crédit atterrit dans `accounts.purchased_seconds_remaining` (bucket
+    # « temps acheté / crédité », jamais remis à zéro par un reset mensuel,
+    # consommé en dernier — cf. migration v34) et apparaît immédiatement dans
+    # `GET /api/consultation/state` (bloc `time`).
+    # Aucune table touchée, aucun backfill, aucun DROP / DELETE, aucune donnée
+    # existante modifiée. Miroir lisible : migrations/011_share_reward.sql.
+    # Idempotent : CREATE TABLE IF NOT EXISTS + ADD COLUMN IF NOT EXISTS.
+    c.execute("""
+        CREATE TABLE IF NOT EXISTS share_reward_days (
+            user_id     UUID         NOT NULL,
+            share_date  DATE         NOT NULL,
+            created_at  TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
+            PRIMARY KEY (user_id, share_date)
+        )
+    """)
+    c.execute(
+        "ALTER TABLE accounts ADD COLUMN IF NOT EXISTS share_reward_credited_at TIMESTAMPTZ"
+    )
+    conn.commit()
+    # Migration v37 (suite) — FK share_reward_days.user_id -> accounts(user_id),
+    # SANS ON DELETE CASCADE (cohérent avec le reste du schéma app : la
+    # suppression de compte purge explicitement cette table, cf.
+    # DELETE /api/app/account). Bloc DO $$ idempotent (n'attrape que
+    # duplicate_object) — même idiome que fk_mobile_subscriptions_account (v27).
+    c.execute("""
+        DO $$
+        BEGIN
+            ALTER TABLE share_reward_days
+                ADD CONSTRAINT fk_share_reward_days_account
+                FOREIGN KEY (user_id) REFERENCES accounts(user_id);
+        EXCEPTION
+            WHEN duplicate_object THEN NULL;
+        END
+        $$;
+    """)
+    conn.commit()
     conn.close()
 
 def reset_db():
@@ -4133,6 +4183,254 @@ def api_tirages_get(tirage_id):
     if row is None:
         return _auth_json({"error": "tirage_not_found"}, 404)
     return _auth_json(_tirage_public(row), 200)
+
+
+# ============================================================
+# RÉCOMPENSE PARTAGE (J5) — POST /api/app/rewards/daily-share
+#                          GET  /api/app/rewards/share-progress
+# ============================================================
+# Règle produit FIGÉE :
+#   * 1 jour calendaire (Europe/Paris) comptabilisé AU MAXIMUM par jour ;
+#   * 30 jours DISTINCTS comptabilisés = 1 h (3600 s) de consultation offerte ;
+#   * UNE SEULE récompense par compte, à vie : après le crédit, `count` reste
+#     plafonné à 30, `target` reste 30, aucun nouveau cycle, aucun 2e crédit.
+# Le SERVEUR est l'unique autorité (le `count` client n'est jamais lu). Le
+# client déclare seulement une action de partage volontaire : il ne prouve
+# JAMAIS qu'une publication a eu lieu sur un réseau social — le juridique/UI
+# ne doit donc jamais parler de vérification de publication.
+#
+# ANTI-DOUBLE CRÉDIT — garanti EN BASE, pas seulement en Python :
+#   * `share_reward_days` PRIMARY KEY (user_id, share_date) + `ON CONFLICT
+#     (user_id, share_date) DO NOTHING` -> même jour appelé N fois / POST
+#     concurrents = 1 seul jour comptabilisé ;
+#   * le crédit passe par `UPDATE accounts SET ... share_reward_credited_at=now
+#     WHERE user_id=%s AND share_reward_credited_at IS NULL` sous
+#     `accounts ... FOR UPDATE` -> exactement 1 crédit, le retry du 30e jour
+#     renvoie `credited=false` / `credited_seconds=0`.
+
+_SHARE_REWARD_TARGET_DAYS     = 30
+_SHARE_REWARD_CREDIT_SECONDS  = 3600
+
+
+def _reward_share_date(now=None):
+    """Jour calendaire (Europe/Paris) d'une action de partage. `now` = datetime
+    tz-aware UTC (naïf -> traité comme UTC). Séparé pour être figeable en test.
+    Aligné sur le fuseau du planificateur (`BackgroundScheduler("Europe/Paris")`)
+    et sur le public FR : la journée bascule à minuit heure de Paris."""
+    from zoneinfo import ZoneInfo
+    dt = now or _utcnow()
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    return dt.astimezone(ZoneInfo("Europe/Paris")).date()
+
+
+@app.route("/api/app/rewards/daily-share", methods=["POST"])
+@limiter.limit("20 per hour")
+@require_app_auth
+def api_rewards_daily_share():
+    """Déclare une action de partage volontaire pour AUJOURD'HUI. Identité =
+    jeton Bearer (`g.app_account["user_id"]`), jamais le body. Réponse
+    ShareProgress : { count (<= 30), target (30), credited, credited_seconds }.
+      credited          : true UNIQUEMENT si CETTE requête vient d'accorder le
+                          crédit (30e jour atteint ET pas encore crédité).
+      credited_seconds  : 3600 si credited, sinon 0.
+    Ne débite rien, n'ouvre aucune consultation, n'appelle aucun LLM."""
+    user_id = g.app_account["user_id"]
+    now = _utcnow()
+    share_date = _reward_share_date(now)
+    conn = get_conn()
+    try:
+        c = conn.cursor()
+        # mutex par utilisateur + compte vivant (même verrou que le moteur temps).
+        c.execute(
+            "SELECT user_id FROM accounts "
+            "WHERE user_id=%s AND deleted_at IS NULL FOR UPDATE",
+            (user_id,),
+        )
+        if c.fetchone() is None:
+            conn.rollback()
+            return _auth_json({"error": "unauthorized"}, 401)
+
+        # 1 jour calendaire max : unicité (user_id, share_date) EN BASE.
+        c.execute(
+            "INSERT INTO share_reward_days (user_id, share_date, created_at) "
+            "VALUES (%s, %s, %s) "
+            "ON CONFLICT (user_id, share_date) DO NOTHING",
+            (user_id, share_date, now),
+        )
+
+        c.execute(
+            "SELECT COUNT(*) FROM share_reward_days WHERE user_id=%s",
+            (user_id,),
+        )
+        raw_count = int(c.fetchone()[0])
+        count = min(raw_count, _SHARE_REWARD_TARGET_DAYS)
+
+        credited = False
+        if raw_count >= _SHARE_REWARD_TARGET_DAYS:
+            c.execute(
+                "UPDATE accounts SET "
+                "  purchased_seconds_remaining = "
+                "      COALESCE(purchased_seconds_remaining, 0) + %s, "
+                "  share_reward_credited_at = %s "
+                "WHERE user_id=%s AND share_reward_credited_at IS NULL",
+                (_SHARE_REWARD_CREDIT_SECONDS, now, user_id),
+            )
+            credited = (c.rowcount == 1)
+
+        conn.commit()
+        if credited:
+            log_event("share_reward_credited", user_hash=_user_hash(user_id))
+        return _auth_json({
+            "count": count,
+            "target": _SHARE_REWARD_TARGET_DAYS,
+            "credited": credited,
+            "credited_seconds": _SHARE_REWARD_CREDIT_SECONDS if credited else 0,
+        }, 200)
+    except Exception as e:
+        conn.rollback()
+        print(f"[rewards] daily-share erreur {_user_hash(user_id)}: {type(e).__name__}")
+        return _auth_json({"error": "temporarily_unavailable"}, 503)
+    finally:
+        conn.close()
+
+
+@app.route("/api/app/rewards/share-progress", methods=["GET"])
+@require_app_auth
+def api_rewards_share_progress():
+    """Progression « X / 30 » de l'utilisateur authentifié. LECTURE SEULE :
+    n'insère aucun jour, N'ACCORDE JAMAIS de crédit -> `credited` toujours
+    false, `credited_seconds` toujours 0 (seul un POST peut créditer)."""
+    user_id = g.app_account["user_id"]
+    conn = get_conn()
+    try:
+        c = conn.cursor()
+        c.execute(
+            "SELECT user_id FROM accounts "
+            "WHERE user_id=%s AND deleted_at IS NULL",
+            (user_id,),
+        )
+        if c.fetchone() is None:
+            return _auth_json({"error": "unauthorized"}, 401)
+        c.execute(
+            "SELECT COUNT(*) FROM share_reward_days WHERE user_id=%s",
+            (user_id,),
+        )
+        raw_count = int(c.fetchone()[0])
+        return _auth_json({
+            "count": min(raw_count, _SHARE_REWARD_TARGET_DAYS),
+            "target": _SHARE_REWARD_TARGET_DAYS,
+            "credited": False,
+            "credited_seconds": 0,
+        }, 200)
+    finally:
+        conn.close()
+
+
+# ============================================================
+# SUPPRESSION DE COMPTE (J5) — DELETE /api/app/account
+# ============================================================
+# Identité = jeton Bearer (`g.app_account["user_id"]`), jamais le body. Le
+# serveur est autoritaire. TRANSACTIONNEL (une seule transaction) et
+# idempotent autant que raisonnablement possible.
+#
+# STRATÉGIE `accounts` (choisie APRÈS inspection du schéma et de TOUTES les FK
+# `user_id` -> aucune ON DELETE CASCADE sauf user_advisor_memory) :
+#   * si le compte n'a AUCUNE ligne `mobile_subscriptions` -> HARD DELETE réel
+#     du compte (toutes les données enfant sont supprimées avant) ;
+#   * s'il en a -> `mobile_subscriptions.user_id` est NOT NULL et ne peut pas
+#     être détaché sans migration : on ANONYMISE le compte (email /
+#     email_normalized / password_hash / provider_sub / last_login_at -> NULL,
+#     `deleted_at` posé) et on CONSERVE les lignes `mobile_subscriptions`
+#     rattachées à ce compte anonymisé — preuve transactionnelle nécessaire aux
+#     obligations comptables / fiscales / prévention de la fraude / gestion des
+#     remboursements et litiges. Aucune donnée personnelle n'y subsiste
+#     (purchase_token = artefact store, raw_payload = sous-ensemble non
+#     sensible).
+#
+# Dans les deux cas : le jeton Bearer devient inutilisable (session supprimée +
+# `resolve_app_session` rejette `deleted_at IS NOT NULL`), le login échoue en
+# 401 générique, et une réinscription avec le même email crée un compte NEUF
+# (user_id neuf) sans aucune donnée de l'ancien (email_normalized remis à NULL
+# n'entre pas en collision avec l'index unique partiel).
+
+_ACCOUNT_DELETE_CHILD_TABLES = (
+    # ordre : tables qui référencent consultations(id) ou accounts d'abord,
+    # puis consultations, puis profil, table récompense et sessions.
+    "messages",
+    "tirages",
+    "earned_credits",
+    "user_advisor_memory",
+    "consultations",
+    "consultation_allowance",
+    "app_profiles",
+    "share_reward_days",
+    "app_sessions",
+)
+
+
+@app.route("/api/app/account", methods=["DELETE"])
+@limiter.limit("10 per hour")
+@require_app_auth
+def api_app_account_delete():
+    """Suppression du compte de l'utilisateur authentifié. 200
+    {"status":"deleted"} en cas de succès (contrat AccountApi Flutter : tout
+    2xx = succès). Idempotent : un compte déjà supprimé -> 200 également. Le
+    jeton utilisé n'est plus valide après succès."""
+    user_id = g.app_account["user_id"]
+    now = _utcnow()
+    conn = get_conn()
+    try:
+        c = conn.cursor()
+        # mutex + idempotence : si déjà supprimé/anonymisé -> succès sans effet.
+        c.execute(
+            "SELECT user_id FROM accounts "
+            "WHERE user_id=%s AND deleted_at IS NULL FOR UPDATE",
+            (user_id,),
+        )
+        if c.fetchone() is None:
+            conn.rollback()
+            return _auth_json({"status": "deleted"}, 200)
+
+        # 1) données personnelles / fonctionnelles -> suppression RÉELLE.
+        for table in _ACCOUNT_DELETE_CHILD_TABLES:
+            c.execute(f"DELETE FROM {table} WHERE user_id=%s", (user_id,))
+
+        # 2) lien legacy éventuel (dossier WhatsApp keyé par phone) : on
+        #    DÉTACHE le pointeur sans toucher au dossier téléphone — canal
+        #    distinct, consentement distinct, purgé par son propre cron RGPD.
+        c.execute("UPDATE users SET user_id=NULL WHERE user_id=%s", (user_id,))
+
+        # 3) preuves d'achat : conservation vs suppression selon les obligations.
+        c.execute(
+            "SELECT COUNT(*) FROM mobile_subscriptions WHERE user_id=%s",
+            (user_id,),
+        )
+        has_subscription_proof = int(c.fetchone()[0]) > 0
+
+        if has_subscription_proof:
+            c.execute(
+                "UPDATE accounts SET "
+                "  email=NULL, email_normalized=NULL, password_hash=NULL, "
+                "  provider_sub=NULL, last_login_at=NULL, deleted_at=%s "
+                "WHERE user_id=%s",
+                (now, user_id),
+            )
+            outcome = "anonymized_kept_subscription_proof"
+        else:
+            c.execute("DELETE FROM accounts WHERE user_id=%s", (user_id,))
+            outcome = "hard_deleted"
+
+        conn.commit()
+        log_event("app_account_deleted",
+                  user_hash=_user_hash(user_id), outcome=outcome)
+        return _auth_json({"status": "deleted"}, 200)
+    except Exception as e:
+        conn.rollback()
+        print(f"[account] delete erreur {_user_hash(user_id)}: {type(e).__name__}")
+        return _auth_json({"error": "temporarily_unavailable"}, 503)
+    finally:
+        conn.close()
 
 
 # ============================================================
