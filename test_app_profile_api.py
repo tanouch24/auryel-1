@@ -614,6 +614,27 @@ r = _patch(tok, {"date_naissance": "2999-01-01"})
 check(r.status_code == 400 and r.get_json()["error"] == "invalid_date_naissance",
       "9 date future -> 400")
 
+# --- 9bis. verrou 18+ : date de naissance mineure -> 400 under_18 -----
+from datetime import date as _date
+_minor_iso = _date(_date.today().year - 15, 1, 1).isoformat()
+r = _patch(tok, {"date_naissance": _minor_iso})
+check(r.status_code == 400 and r.get_json()["error"] == "under_18",
+      "9bis DOB de 15 ans -> 400 under_18")
+# exactement 18 ans aujourd'hui -> accepté
+_exactly18_iso = _date(_date.today().year - 18, _date.today().month, _date.today().day).isoformat()
+r = _patch(tok, {"date_naissance": _exactly18_iso})
+check(r.status_code == 200 and r.get_json()["date_naissance"] == _exactly18_iso,
+      "9ter DOB = 18 ans pile aujourd'hui -> 200 accepté")
+# 18 ans moins un jour -> refusé
+_almost18 = _date.today().replace(year=_date.today().year - 18)
+try:
+    _almost18 = _almost18.replace(day=_almost18.day + 1)
+except ValueError:
+    _almost18 = _date(_almost18.year, _almost18.month + 1, 1)
+r = _patch(tok, {"date_naissance": _almost18.isoformat()})
+check(r.status_code == 400 and r.get_json()["error"] == "under_18",
+      "9quater DOB = 18 ans moins 1 jour -> 400 under_18")
+
 # --- 10. user_id du body IGNORÉ (identité = Bearer) ---------------
 tok1 = fresh(UID1); _get(tok1)
 seed_account(UID2)

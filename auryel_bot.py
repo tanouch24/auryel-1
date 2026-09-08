@@ -3184,6 +3184,75 @@ def send_email_code(email, code):
         return {"ok": False, "error": "send_failed"}
 
 
+def _support_escape(s):
+    """Neutralise le HTML d'un texte utilisateur avant insertion dans le mail
+    HTML support (pas de balise active, pas d'injection)."""
+    return (
+        str(s)
+        .replace("&", "&amp;")
+        .replace("<", "&lt;")
+        .replace(">", "&gt;")
+        .replace('"', "&quot;")
+    )
+
+
+def send_support_email(*, user_id, account_email, category, subject, message,
+                       app_version=None, platform=None, os_version=None,
+                       received_at=None):
+    """Envoie une demande de support à FROM_EMAIL (contact@auryelvoyance.com)
+    via Resend. Même contrat que send_email_code : l'erreur N'EST PAS avalée,
+    retour {"ok": bool, "error": str|None}. Ne logge NI le message, NI l'email
+    du compte, NI aucun secret. `reply_to` = email du compte (récupéré en DB
+    par l'appelant, jamais un email fourni par le client)."""
+    if not RESEND_API_KEY:
+        return {"ok": False, "error": "resend_not_configured"}
+    received_at = received_at or _utcnow()
+    cat = _support_escape(category or "autre")
+    subj = _support_escape(subject or "")
+    body = _support_escape(message or "").replace("\n", "<br>")
+    meta = [
+        ("user_id", user_id),
+        ("email compte", account_email or "—"),
+        ("catégorie", category or "autre"),
+        ("version app", app_version or "—"),
+        ("plateforme", platform or "—"),
+        ("version OS", os_version or "—"),
+        ("reçu le (serveur)", received_at.isoformat()),
+    ]
+    meta_html = "".join(
+        f'<p style="color:#BDB5A6;margin:4px 0;font-size:13px">'
+        f'<b style="color:#F0EBE0">{_support_escape(k)} :</b> '
+        f'{_support_escape(v)}</p>'
+        for k, v in meta
+    )
+    try:
+        import resend
+        resend.api_key = RESEND_API_KEY
+        params = {
+            "from": f"Auryel Support <{FROM_EMAIL}>",
+            "to": [FROM_EMAIL],
+            "subject": f"[Auryel Support] {cat} — {subj}"[:200],
+            "html": (
+                '<!DOCTYPE html><html><body style="background:#05040A;'
+                'color:#F0EBE0;font-family:Georgia,serif;margin:0;padding:0">'
+                '<div style="max-width:600px;margin:0 auto;padding:48px 36px">'
+                '<p style="font-size:11px;letter-spacing:4px;color:#C8A96E;'
+                'text-transform:uppercase">Auryel — Signalement</p>'
+                f'{meta_html}'
+                '<hr style="border:none;border-top:1px solid #2A2438;margin:20px 0">'
+                f'<p style="color:#F0EBE0;font-size:14px;line-height:1.8">{body}</p>'
+                '</div></body></html>'
+            ),
+        }
+        if account_email:
+            params["reply_to"] = account_email
+        resend.Emails.send(params)
+        return {"ok": True, "error": None}
+    except Exception as e:
+        print(f"[support] send_support_email : echec envoi ({type(e).__name__})")
+        return {"ok": False, "error": "send_failed"}
+
+
 # ------------------------------------------------------------
 # AUTH APP — endpoints (B2.2). Consommés par l'app Flutter.
 # Aucune identité ne vient jamais du body d'une route authentifiée :
@@ -4200,6 +4269,25 @@ def api_consultation_open():
 
 _APP_PROFILE_PRENOM_MAX = 40
 
+# Auryel V1 est strictement réservé aux 18 ans et plus. Le verrou principal est
+# le GATE côté app APRÈS auth/restore ; ce contrôle serveur empêche en plus
+# d'ENREGISTRER une date de naissance mineure via l'app (création onboarding ou
+# édition ultérieure passent toutes deux par PATCH /api/app/profile). Les
+# comptes adultes existants ne sont pas touchés (aucun backfill, la garde ne
+# s'exécute que quand `date_naissance` est explicitement dans le body).
+_APP_MIN_AGE_YEARS = 18
+
+
+def _age_years_from_iso(iso_str, today=None):
+    """Âge révolu (années complètes) pour une date ISO `YYYY-MM-DD`. Calcul
+    JOUR/MOIS/ANNÉE : l'anniversaire de l'année courante doit être atteint. Une
+    date future donne un âge négatif. `today` figeable pour les tests."""
+    d = date.fromisoformat(iso_str)
+    today = today or date.today()
+    return today.year - d.year - (
+        (today.month, today.day) < (d.month, d.day)
+    )
+
 
 def _app_profile_public(profile):
     """Vue publique du profil app — uniquement les champs de ce lot."""
@@ -4250,6 +4338,10 @@ def _validate_app_profile_patch(data):
             return None, "invalid_date_naissance"
         if d.year < 1900 or d > date.today():
             return None, "invalid_date_naissance"
+        # Verrou 18+ : refuse d'enregistrer une date de naissance mineure
+        # (onboarding comme édition). Ne remonte JAMAIS l'âge exact au client.
+        if _age_years_from_iso(d_val) < _APP_MIN_AGE_YEARS:
+            return None, "under_18"
         updates["date_naissance"] = d_val
         # Recalcul métier via les helpers legacy (identiques à l'onboarding WhatsApp).
         updates["chemin_de_vie"] = str(calcul_chemin_de_vie(d_val))
@@ -5495,6 +5587,113 @@ def api_memory_progress():
         }, 200)
     finally:
         conn.close()
+
+
+# ============================================================
+# SUPPORT IN-APP — POST /api/app/support
+# ============================================================
+# « Signaler un problème » depuis l'app. Le serveur est l'unique autorité sur
+# l'identité : `user_id` vient du jeton Bearer, `email` est relu en base — un
+# email fourni dans le body est IGNORÉ. Le message part vers FROM_EMAIL
+# (contact@auryelvoyance.com) via le fournisseur existant (Resend), même helper
+# que l'OTP. Aucun secret n'est renvoyé ni loggé ; le message utilisateur n'est
+# jamais loggé. Si l'envoi échoue -> réponse d'erreur honnête (jamais 200
+# mensonger).
+#
+# Métadonnées techniques NON sensibles acceptées du client (facultatives) :
+# app_version, platform, os_version — bornées et échappées. JAMAIS : mot de
+# passe, jeton, date de naissance, contenu de consultation, messages IA.
+
+_SUPPORT_CATEGORIES = (
+    "account", "consultation", "subscription", "game", "meditation",
+    "technical", "other",
+)
+_SUPPORT_SUBJECT_MAX = 140
+_SUPPORT_MESSAGE_MAX = 4000
+_SUPPORT_META_MAX = 60
+
+
+def _support_meta_field(data, key):
+    """Lit une métadonnée technique facultative : str non vide, tronquée à
+    _SUPPORT_META_MAX, sinon None. Jamais d'erreur — un client qui envoie
+    n'importe quoi ne fait pas échouer la demande."""
+    v = data.get(key)
+    if not isinstance(v, str):
+        return None
+    v = v.strip()
+    return v[:_SUPPORT_META_MAX] if v else None
+
+
+@app.route("/api/app/support", methods=["POST"])
+@limiter.limit("10 per hour")
+@require_app_auth
+def api_app_support():
+    """Envoie une demande de support. Identité = jeton Bearer.
+      body : { "subject": "...", "message": "...", "category": "..."?,
+               "app_version": "..."?, "platform": "..."?, "os_version": "..."? }
+    - subject / message non vides, bornés.
+    - category dans l'allowlist (défaut 'other' si absent/invalide -> 'other',
+      jamais 400 pour une catégorie non reconnue).
+    - un `email` dans le body est IGNORÉ (relu en base).
+    Réponses : 200 {"status":"sent"} ; 400 invalid_request ; 401 si compte
+    supprimé ; 503 support_unavailable si l'envoi échoue."""
+    user_id = g.app_account["user_id"]
+    data = request.get_json(silent=True)
+    if not isinstance(data, dict):
+        return _auth_json({"error": "invalid_request"}, 400)
+
+    subject = data.get("subject")
+    message = data.get("message")
+    if not isinstance(subject, str) or not isinstance(message, str):
+        return _auth_json({"error": "invalid_request"}, 400)
+    subject = subject.strip()
+    message = message.strip()
+    if not subject or len(subject) > _SUPPORT_SUBJECT_MAX:
+        return _auth_json({"error": "invalid_request"}, 400)
+    if not message or len(message) > _SUPPORT_MESSAGE_MAX:
+        return _auth_json({"error": "invalid_request"}, 400)
+
+    raw_cat = data.get("category")
+    category = raw_cat if raw_cat in _SUPPORT_CATEGORIES else "other"
+
+    app_version = _support_meta_field(data, "app_version")
+    platform = _support_meta_field(data, "platform")
+    os_version = _support_meta_field(data, "os_version")
+
+    # Compte vivant + email courant relus en base (jamais le body).
+    conn = get_conn()
+    try:
+        c = conn.cursor()
+        c.execute(
+            "SELECT email FROM accounts "
+            "WHERE user_id=%s AND deleted_at IS NULL",
+            (user_id,),
+        )
+        row = c.fetchone()
+    finally:
+        conn.close()
+    if row is None:
+        return _auth_json({"error": "unauthorized"}, 401)
+    account_email = row[0] or g.app_account.get("email")
+
+    result = send_support_email(
+        user_id=user_id,
+        account_email=account_email,
+        category=category,
+        subject=subject,
+        message=message,
+        app_version=app_version,
+        platform=platform,
+        os_version=os_version,
+        received_at=_utcnow(),
+    )
+    if not result.get("ok"):
+        # Jamais de 200 mensonger. Ne révèle pas la cause exacte.
+        return _auth_json({"error": "support_unavailable"}, 503)
+
+    log_event("app_support_message_sent", user_hash=_user_hash(user_id),
+              category=category)
+    return _auth_json({"status": "sent"}, 200)
 
 
 # ============================================================
