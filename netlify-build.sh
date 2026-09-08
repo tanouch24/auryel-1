@@ -44,6 +44,7 @@ ROOT_FILES=(
   confidentialite.html
   cookies.html
   resiliation.html
+  suppression-compte.html
   payer.html
   success.html
   inscription.html
