@@ -1518,6 +1518,72 @@ def init_db():
         $$;
     """)
     conn.commit()
+
+    # Migration v41 — SIGNALEMENT IA (« Signaler cette réponse »). PUREMENT
+    # ADDITIF : 1 table neuve + FK idempotente. Aucune colonne existante ALTER-ée,
+    # aucun backfill, aucun DROP. Miroir lisible : migrations/015_ai_reports.sql.
+    #
+    #   ai_reports
+    #     UN signalement = UNE ligne. `user_id` vient TOUJOURS du jeton Bearer
+    #     côté route (jamais du body). `message_id` = messages.id (BIGINT) du
+    #     message ASSISTANT visé, vérifié appartenir au compte ET être un message
+    #     assistant AVANT insertion ; NULL si le signalement porte seulement sur
+    #     une consultation. `consultation_id` = fil concerné (dérivé du message
+    #     quand un message_id est fourni). `reason` ∈ allowlist applicative
+    #     (_AI_REPORT_REASONS). `comment` : texte utilisateur FACULTATIF, borné
+    #     (_AI_REPORT_COMMENT_MAX) et échappé (_support_escape) — jamais le
+    #     contenu de la consultation, jamais recopié automatiquement. `status`
+    #     démarre à 'received' ; aucune promesse de modération humaine.
+    #     Idempotence : deux index UNIQUE partiels (message ciblé / consultation
+    #     seule) -> un re-signalement identique ne crée pas de doublon et renvoie
+    #     la même réponse.
+    #
+    # FK ... -> accounts(user_id) SANS ON DELETE CASCADE : DELETE
+    # /api/app/account purge explicitement la table (_ACCOUNT_DELETE_CHILD_TABLES).
+    # Bloc DO $$ idempotent (duplicate_object seulement) — même idiome que v40.
+    try:
+        c.execute("""
+            CREATE TABLE IF NOT EXISTS ai_reports (
+                id               UUID         PRIMARY KEY,
+                user_id          UUID         NOT NULL,
+                consultation_id  UUID,
+                message_id       BIGINT,
+                reason           TEXT         NOT NULL,
+                comment          TEXT,
+                status           TEXT         NOT NULL DEFAULT 'received',
+                created_at       TIMESTAMPTZ  NOT NULL DEFAULT NOW()
+            )
+        """)
+        c.execute("""
+            CREATE UNIQUE INDEX IF NOT EXISTS uq_ai_reports_message
+            ON ai_reports (user_id, message_id, reason)
+            WHERE message_id IS NOT NULL
+        """)
+        c.execute("""
+            CREATE UNIQUE INDEX IF NOT EXISTS uq_ai_reports_consultation
+            ON ai_reports (user_id, consultation_id, reason)
+            WHERE message_id IS NULL AND consultation_id IS NOT NULL
+        """)
+        c.execute("""
+            CREATE INDEX IF NOT EXISTS idx_ai_reports_status
+            ON ai_reports (status, created_at DESC)
+        """)
+        conn.commit()
+    except Exception as e:
+        conn.rollback()
+        print(f"Migration v41 (ai_reports): {e}")
+    c.execute("""
+        DO $$
+        BEGIN
+            ALTER TABLE ai_reports
+                ADD CONSTRAINT fk_ai_reports_account
+                FOREIGN KEY (user_id) REFERENCES accounts(user_id);
+        EXCEPTION
+            WHEN duplicate_object THEN NULL;
+        END
+        $$;
+    """)
+    conn.commit()
     conn.close()
 
 def reset_db():
@@ -2041,18 +2107,27 @@ def get_consultation_messages_for_user_id(user_id, consultation_id):
     jeton Bearer côté route). Filtre STRICT sur messages.user_id ET
     messages.consultation_id — jamais l'historique global, jamais deux sessions
     mélangées. Seuls les rôles conversationnels (user / assistant) sont exposés à
-    l'app. Ordre chronologique stable : timestamp ASC puis id ASC."""
+    l'app. Ordre chronologique stable : timestamp ASC puis id ASC.
+
+    Chaque message porte `id` (messages.id en chaîne) : identifiant STABLE
+    permettant à « Signaler cette réponse » de cibler une réponse assistant
+    précise, y compris en remontant l'historique. Ajout PUREMENT ADDITIF —
+    les consommateurs existants lisent role/content/timestamp inchangés."""
     conn = get_conn()
     try:
         c = conn.cursor()
         c.execute(
-            "SELECT role, content, timestamp FROM messages "
+            "SELECT id, role, content, timestamp FROM messages "
             "WHERE user_id=%s AND consultation_id=%s AND role IN ('user','assistant') "
             "ORDER BY timestamp ASC, id ASC",
             (str(user_id), str(consultation_id)),
         )
         rows = c.fetchall()
-        return [{"role": r[0], "content": r[1], "timestamp": _ts_iso(r[2])} for r in rows]
+        return [
+            {"id": str(r[0]), "role": r[1], "content": r[2],
+             "timestamp": _ts_iso(r[3])}
+            for r in rows
+        ]
     finally:
         conn.close()
 
@@ -3900,6 +3975,14 @@ def api_consultation_message():
 
     user_id = g.app_account["user_id"]   # jamais lu dans le body
 
+    # Contrôle 18+ AUTORITÉ SERVEUR — AVANT toute mutation (settle / crédit temps /
+    # consultation logique / LLM). Source = app_profiles.date_naissance, horloge
+    # serveur ; l'âge/la date du body sont ignorés. 403 stable -> le client route
+    # vers le parcours de date de naissance.
+    _gate = _adult_gate_check(user_id)
+    if _gate is not None:
+        return _auth_json(_gate[0], _gate[1])
+
     # J6 — fil CIBLÉ (optionnel). Fourni : on VÉRIFIE l'appartenance au compte
     # authentifié et on utilise l'advisor_id RÉEL de CETTE ligne ; app_profiles.guide
     # n'écrase JAMAIS ce conseiller. Absent : comportement legacy (fil courant /
@@ -4039,6 +4122,12 @@ def api_consultation_message():
     # JAMAIS bloquante pour la réponse chat.
     _reconcile_wellbeing_progress(user_id, now)
 
+    # Identifiant STABLE de la réponse assistant qui vient d'être persistée —
+    # cible de « Signaler cette réponse » (POST /api/app/ai/report). Champ
+    # ADDITIF : les anciens consommateurs qui lisent reply/consultation/time/
+    # quota ne sont pas affectés. None si la persistance n'a rien écrit.
+    assistant_message_id = _latest_assistant_message_id(user_id, cid)
+
     _st = {"time_snapshot": flow["time"],
            "window_active": flow["time"]["window_active"],
            "window_expires_at": flow["time"]["window_expires_at"],
@@ -4046,6 +4135,7 @@ def api_consultation_message():
            "quota_legacy": flow["quota_legacy"]}
     return _auth_json({
         "reply": reply,
+        "message_id": assistant_message_id,
         "consultation": {
             "id": cid,
             "advisor_id": advisor_real,
@@ -4127,6 +4217,30 @@ def _latest_consultation_id_for_user_id(user_id):
         return str(row[0]) if row is not None else None
     finally:
         conn.close()
+
+
+def _latest_assistant_message_id(user_id, consultation_id):
+    """LECTURE SEULE : messages.id (en chaîne) de la DERNIÈRE réponse assistant
+    du fil `consultation_id` pour CET utilisateur. Sert à renvoyer au client,
+    juste après un tour de consultation, l'identifiant STABLE de la réponse
+    qu'il vient de recevoir — cible de « Signaler cette réponse ». None si
+    aucune réponse assistant (ne casse jamais la réponse chat)."""
+    conn = get_conn()
+    try:
+        c = conn.cursor()
+        c.execute(
+            "SELECT id FROM messages "
+            "WHERE user_id=%s AND consultation_id=%s AND role='assistant' "
+            "ORDER BY id DESC LIMIT 1",
+            (str(user_id), str(consultation_id)),
+        )
+        row = c.fetchone()
+        return str(row[0]) if row is not None else None
+    finally:
+        try:
+            conn.close()
+        except Exception:
+            pass
 
 
 @app.route("/api/consultation/messages", methods=["GET"])
@@ -4291,6 +4405,13 @@ def api_consultation_open():
         return _auth_json({"error": "invalid_advisor"}, 400)
 
     user_id = g.app_account["user_id"]
+
+    # Contrôle 18+ AUTORITÉ SERVEUR — aucune consultation (même non facturée)
+    # n'est ouverte pour un compte sans date de naissance ou mineur.
+    _gate = _adult_gate_check(user_id)
+    if _gate is not None:
+        return _auth_json(_gate[0], _gate[1])
+
     now = _utcnow()
     conn = get_conn()
     try:
@@ -4382,6 +4503,38 @@ def _age_years_from_iso(iso_str, today=None):
     return today.year - d.year - (
         (today.month, today.day) < (d.month, d.day)
     )
+
+
+# Codes d'erreur STABLES du contrôle 18+ côté serveur (contrat client Flutter :
+# route vers le parcours de date de naissance).
+_ADULT_GATE_ERR_MISSING = "age_verification_required"   # date de naissance absente
+_ADULT_GATE_ERR_MINOR = "adult_required"                # âge serveur < 18
+
+
+def _adult_gate_check(user_id, today=None):
+    """Contrôle 18+ AUTORITÉ SERVEUR avant toute consultation (payante ou
+    offerte). Source = app_profiles.date_naissance UNIQUEMENT — jamais l'âge
+    ni la date envoyés par le client. Horloge = serveur (date.today()).
+
+    Retour : None si adulte (>= _APP_MIN_AGE_YEARS). Sinon un tuple
+    (payload:dict, 403) prêt pour _auth_json :
+      - date absente / illisible -> _ADULT_GATE_ERR_MISSING
+      - âge calculé < 18          -> _ADULT_GATE_ERR_MINOR
+    """
+    # get_or_create : le gate peut s'exécuter AVANT que la route n'ait matérialisé
+    # le profil. Un profil neuf a date_naissance='' -> _ADULT_GATE_ERR_MISSING,
+    # comportement identique à un profil existant sans date.
+    profile = get_or_create_app_profile(user_id)
+    dn = ((profile or {}).get("date_naissance") or "").strip()
+    if not re.match(r"^\d{4}-\d{2}-\d{2}$", dn):
+        return ({"error": _ADULT_GATE_ERR_MISSING}, 403)
+    try:
+        age = _age_years_from_iso(dn, today=today)
+    except ValueError:
+        return ({"error": _ADULT_GATE_ERR_MISSING}, 403)
+    if age < _APP_MIN_AGE_YEARS:
+        return ({"error": _ADULT_GATE_ERR_MINOR}, 403)
+    return None
 
 
 def _app_profile_public(profile):
@@ -6008,6 +6161,164 @@ def api_app_support():
 
 
 # ============================================================
+# SIGNALEMENT IA (« Signaler cette réponse ») — POST /api/app/ai/report
+# ============================================================
+# Exigence store : mécanique de signalement du contenu généré. Identité =
+# jeton Bearer UNIQUEMENT (jamais de user_id dans le body). Le serveur vérifie
+# que la consultation ET le message visés appartiennent au compte courant, et
+# que le message est bien une réponse ASSISTANT. Rien du contenu de la
+# consultation n'est recopié : on ne persiste que des références (message_id /
+# consultation_id), le motif (allowlist) et un commentaire facultatif borné.
+# Réponse idempotente ; aucune promesse de modération humaine.
+
+_AI_REPORT_REASONS = ("inappropriate", "unsafe", "misleading", "other")
+_AI_REPORT_COMMENT_MAX = 1000
+
+
+@app.route("/api/app/ai/report", methods=["POST"])
+@limiter.limit("10 per hour")
+@require_app_auth
+def api_app_ai_report():
+    """Signale une réponse IA / conseiller.
+      body : { "reason": "unsafe",
+               "message_id": "123"?,        # messages.id du message ASSISTANT
+               "consultation_id": "<uuid>"?,
+               "comment": "..."? }
+    - `reason` DOIT être dans l'allowlist (_AI_REPORT_REASONS) -> 400 sinon.
+    - `message_id` fourni : doit exister, appartenir au compte, être role
+      'assistant'. Sinon 404 (inconnu / autre compte) ou 400 (message
+      utilisateur). Le consultation_id est alors dérivé du message.
+    - sans `message_id` : `consultation_id` requis, vérifié appartenir au
+      compte -> 404 sinon.
+    - ni l'un ni l'autre -> 400 invalid_request.
+    - `comment` facultatif : borné (_AI_REPORT_COMMENT_MAX) et échappé.
+    Réponses : 200 {"status":"received"} (succès ET rejeu idempotent) ;
+    400 ; 401 (sans/mauvais Bearer) ; 404. Aucune donnée de consultation
+    n'est renvoyée."""
+    user_id = g.app_account["user_id"]
+    data = request.get_json(silent=True)
+    if not isinstance(data, dict):
+        return _auth_json({"error": "invalid_request"}, 400)
+
+    reason = data.get("reason")
+    if not isinstance(reason, str) or reason not in _AI_REPORT_REASONS:
+        return _auth_json({"error": "invalid_reason"}, 400)
+
+    comment = data.get("comment")
+    if comment is not None:
+        if not isinstance(comment, str):
+            return _auth_json({"error": "invalid_request"}, 400)
+        if len(comment.strip()) > _AI_REPORT_COMMENT_MAX:
+            return _auth_json({"error": "comment_too_long"}, 400)
+        comment = _support_escape(comment.strip()) or None
+
+    raw_mid = data.get("message_id")
+    raw_cid = data.get("consultation_id")
+
+    mid = None
+    cid = None
+
+    if raw_mid is not None:
+        try:
+            mid = int(str(raw_mid))
+        except (TypeError, ValueError):
+            return _auth_json({"error": "message_not_found"}, 404)
+        conn = get_conn()
+        try:
+            c = conn.cursor()
+            c.execute(
+                "SELECT role, consultation_id FROM messages "
+                "WHERE id=%s AND user_id=%s",
+                (mid, str(user_id)),
+            )
+            row = c.fetchone()
+        finally:
+            try:
+                conn.close()
+            except Exception:
+                pass
+        if row is None:
+            return _auth_json({"error": "message_not_found"}, 404)
+        m_role, m_cid = row
+        if m_role != "assistant":
+            # On ne signale pas un message utilisateur.
+            return _auth_json({"error": "message_not_reportable"}, 400)
+        cid = str(m_cid) if m_cid else None
+        # Un consultation_id explicite qui ne correspond pas au fil du message
+        # = incohérence -> traité comme message inconnu.
+        if (raw_cid is not None and _is_uuid(str(raw_cid))
+                and str(raw_cid) != (cid or "")):
+            return _auth_json({"error": "message_not_found"}, 404)
+    elif raw_cid is not None:
+        if not _is_uuid(str(raw_cid)):
+            return _auth_json({"error": "consultation_not_found"}, 404)
+        conn = get_conn()
+        try:
+            c = conn.cursor()
+            c.execute(
+                "SELECT 1 FROM consultations WHERE id=%s AND user_id=%s",
+                (str(raw_cid), str(user_id)),
+            )
+            row = c.fetchone()
+        finally:
+            try:
+                conn.close()
+            except Exception:
+                pass
+        if row is None:
+            return _auth_json({"error": "consultation_not_found"}, 404)
+        cid = str(raw_cid)
+    else:
+        return _auth_json({"error": "invalid_request"}, 400)
+
+    # Idempotence : SELECT préalable sur la clé métier (mêmes colonnes que les
+    # index UNIQUE partiels de la v41). Un rejeu identique renvoie la même
+    # réponse sans créer de doublon.
+    conn = get_conn()
+    try:
+        c = conn.cursor()
+        if mid is not None:
+            c.execute(
+                "SELECT 1 FROM ai_reports "
+                "WHERE user_id=%s AND message_id=%s AND reason=%s",
+                (str(user_id), mid, reason),
+            )
+        else:
+            c.execute(
+                "SELECT 1 FROM ai_reports "
+                "WHERE user_id=%s AND consultation_id=%s AND message_id IS NULL "
+                "AND reason=%s",
+                (str(user_id), cid, reason),
+            )
+        already = c.fetchone() is not None
+        if not already:
+            c.execute(
+                "INSERT INTO ai_reports "
+                "(id, user_id, consultation_id, message_id, reason, comment, "
+                " status, created_at) "
+                "VALUES (%s, %s, %s, %s, %s, %s, 'received', %s)",
+                (str(uuid.uuid4()), str(user_id), cid, mid, reason, comment,
+                 _utcnow()),
+            )
+        conn.commit()
+    except Exception as e:
+        try:
+            conn.rollback()
+        except Exception:
+            pass
+        print(f"[ai-report] insert erreur {_user_hash(user_id)}: {type(e).__name__}")
+        return _auth_json({"error": "temporarily_unavailable"}, 503)
+    finally:
+        try:
+            conn.close()
+        except Exception:
+            pass
+
+    log_event("ai_report_received", user_hash=_user_hash(user_id), reason=reason)
+    return _auth_json({"status": "received"}, 200)
+
+
+# ============================================================
 # SUPPRESSION DE COMPTE (J5) — DELETE /api/app/account
 # ============================================================
 # Identité = jeton Bearer (`g.app_account["user_id"]`), jamais le body. Le
@@ -6038,6 +6349,7 @@ _ACCOUNT_DELETE_CHILD_TABLES = (
     # ordre : tables qui référencent consultations(id) ou accounts d'abord,
     # puis consultations, puis profil, table récompense et sessions.
     "messages",
+    "ai_reports",
     "tirages",
     "earned_credits",
     "user_advisor_memory",

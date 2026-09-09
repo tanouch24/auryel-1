@@ -86,6 +86,9 @@ def _blank_profile(uid):
     row = {f: "" for f in A._APP_PROFILE_FIELDS}
     row["user_id"] = uid
     row["guide"] = "selena"
+    # Contrôle 18+ serveur (v41) : la consultation exige une date de naissance
+    # adulte au profil. Ces tests ne portent pas sur le gate -> profil majeur.
+    row["date_naissance"] = "2000-01-01"
     for c in ("nb_echanges", "nb_echanges_decouverte", "nb_echanges_dernier_tirage",
               "nb_echanges_dernier_psaume"):
         row[c] = 0
@@ -198,6 +201,17 @@ class FakeCursor:
             (uid,) = p
             rows = sorted([m for m in FAKE["messages"] if m["user_id"] == uid], key=lambda m: m["id"])
             self._rows = [(m["role"], m["content"], m["timestamp"]) for m in rows]
+        elif k == ("SELECT id FROM messages "
+                   "WHERE user_id=%s AND consultation_id=%s AND role='assistant' "
+                   "ORDER BY id DESC LIMIT 1"):
+            uid, cid = p
+            rows = sorted(
+                [m for m in FAKE["messages"]
+                 if m["user_id"] == uid
+                 and str(m.get("consultation_id")) == str(cid)
+                 and m["role"] == "assistant"],
+                key=lambda m: m["id"], reverse=True)
+            self._result = (rows[0]["id"],) if rows else None
 
         # ---- moteur consultations 2 h / crédits (B4.1) ----
         elif k == ("SELECT user_id, first_consultation_used_at FROM accounts "

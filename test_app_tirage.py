@@ -217,6 +217,12 @@ class _Cur:
             # lui-même est monkeypatché dans la section 7).
             _n = A._utcnow()
             self._r = (_n, _n + timedelta(hours=2), "time")
+        elif k == ("SELECT id FROM messages "
+                   "WHERE user_id=%s AND consultation_id=%s AND role='assistant' "
+                   "ORDER BY id DESC LIMIT 1"):
+            # v41 : identifiant stable de la réponse assistant renvoyé au client.
+            # Non asservi dans ces tests -> aucune ligne assistant simulée.
+            self._r = None
         else:
             raise AssertionError("SQL non géré par le fake tirages : " + k)
 
@@ -247,7 +253,9 @@ _ACCOUNTS = {UID1: {"session_id": "s1", "user_id": UID1, "email": "a@x.co"},
              UID2: {"session_id": "s2", "user_id": UID2, "email": "b@x.co"}}
 _CURRENT = {"uid": UID1}
 A.resolve_app_session = lambda tok: _ACCOUNTS.get(_CURRENT["uid"]) if tok else None
-A.get_or_create_app_profile = lambda uid: {"guide": "maia"}
+# date_naissance adulte : le contrôle 18+ serveur (v41) de
+# /api/consultation/message lit app_profiles.date_naissance via ce stub.
+A.get_or_create_app_profile = lambda uid: {"guide": "maia", "date_naissance": "1990-01-01"}
 
 
 def _as(uid):

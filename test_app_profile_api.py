@@ -190,6 +190,17 @@ class FakeCursor:
             rows = sorted([m for m in FAKE["messages"] if m["user_id"] == uid],
                           key=lambda m: m["id"], reverse=True)
             self._rows = [(m["role"], m["content"]) for m in rows[:limit]]
+        elif k == ("SELECT id FROM messages "
+                   "WHERE user_id=%s AND consultation_id=%s AND role='assistant' "
+                   "ORDER BY id DESC LIMIT 1"):
+            uid, cid = p
+            rows = sorted(
+                [m for m in FAKE["messages"]
+                 if m["user_id"] == uid
+                 and str(m.get("consultation_id")) == str(cid)
+                 and m["role"] == "assistant"],
+                key=lambda m: m["id"], reverse=True)
+            self._result = (rows[0]["id"],) if rows else None
 
         # ---- moteur consultations 2 h / crédits (B4.1) ----
         elif k == ("SELECT user_id, first_consultation_used_at FROM accounts "
@@ -660,6 +671,9 @@ now = A._utcnow()
 A.provision_allowance(UID1, now - timedelta(days=1), now + timedelta(days=29), monthly_limit=4)
 tok = A.create_app_session(UID1)
 _get(tok)  # profil créé, guide=selena
+# Contrôle 18+ serveur (v41) : la consultation exige une date de naissance
+# adulte au profil. Ce test porte sur le figeage du conseiller, pas sur le gate.
+_patch(tok, {"date_naissance": "1990-01-01"})
 
 with patch.object(A, "call_llm", return_value=REPLY) as m1, \
      patch("auryel_bot.random.random", return_value=1.0):
