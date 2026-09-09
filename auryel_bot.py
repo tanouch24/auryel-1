@@ -1941,6 +1941,71 @@ def init_db():
         conn.rollback()
         print(f"Migration v43 (remote content): {e}")
 
+    # Migration v44 — ACHATS CONSOMMABLES MOBILES (« +1 heure supplémentaire »).
+    # PUREMENT ADDITIF : une seule table `mobile_purchases` + une FK idempotente.
+    # Aucune colonne existante ALTER-ée, aucun backfill, aucun DROP / TRUNCATE /
+    # DELETE, aucune donnée existante modifiée. La souscription Premium
+    # (mobile_subscriptions / consultation_allowance) n'est PAS touchée.
+    # Miroir lisible : migrations/018_mobile_purchases.sql.
+    #
+    #   mobile_purchases
+    #     UN achat consommable DÉJÀ vérifié auprès du store et CRÉDITÉ. Source
+    #     de vérité de l'anti-double-crédit :
+    #       CONSTRAINT uq_mobile_purchases_store_key UNIQUE (store, purchase_key)
+    #     `purchase_key` = purchaseToken Google (ou transactionId Apple, lot
+    #     ultérieur). Chaque achat DISTINCT du même produit produit un NOUVEAU
+    #     purchaseToken -> une NOUVELLE ligne -> +3600 s. Rejouer le même token
+    #     (INSERT ... ON CONFLICT DO NOTHING) -> 0 ligne -> aucun crédit.
+    #     `credited_seconds` = mapping SERVEUR figé (auryel_extra_hour => 3600) ;
+    #     jamais une valeur venue du client. Le crédit atterrit dans
+    #     accounts.purchased_seconds_remaining (bucket 'purchased', débité en
+    #     DERNIER, jamais remis à zéro par un reset mensuel) et est tracé au
+    #     time_ledger dans la MÊME transaction.
+    #
+    # FK ... -> accounts(user_id) SANS ON DELETE CASCADE. DELETE /api/app/account
+    # NE purge PAS cette table : comme mobile_subscriptions, une preuve d'achat
+    # créditée impose l'ANONYMISATION du compte (cf. api_app_account_delete),
+    # jamais la suppression pure. Bloc DO $$ idempotent (duplicate_object
+    # seulement) — idiome v27/v37/v38.
+    try:
+        c.execute("""
+            CREATE TABLE IF NOT EXISTS mobile_purchases (
+                id               UUID         PRIMARY KEY,
+                user_id          UUID         NOT NULL,
+                store            TEXT         NOT NULL,
+                product_id       TEXT         NOT NULL,
+                purchase_key     TEXT         NOT NULL,
+                order_id         TEXT,
+                credited_seconds INTEGER      NOT NULL,
+                status           TEXT         NOT NULL DEFAULT 'credited',
+                purchased_at     TIMESTAMPTZ,
+                credited_at      TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
+                raw_payload      JSONB,
+                created_at       TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
+                CONSTRAINT uq_mobile_purchases_store_key UNIQUE (store, purchase_key)
+            )
+        """)
+        c.execute("""
+            CREATE INDEX IF NOT EXISTS idx_mobile_purchases_user
+            ON mobile_purchases (user_id, credited_at DESC)
+        """)
+        conn.commit()
+    except Exception as e:
+        conn.rollback()
+        print(f"Migration v44 (mobile purchases): {e}")
+    c.execute("""
+        DO $$
+        BEGIN
+            ALTER TABLE mobile_purchases
+                ADD CONSTRAINT fk_mobile_purchases_account
+                FOREIGN KEY (user_id) REFERENCES accounts(user_id);
+        EXCEPTION
+            WHEN duplicate_object THEN NULL;
+        END
+        $$;
+    """)
+    conn.commit()
+
     conn.close()
 
 def reset_db():
@@ -6978,13 +7043,24 @@ def api_app_account_delete():
         c.execute("UPDATE users SET user_id=NULL WHERE user_id=%s", (user_id,))
 
         # 3) preuves d'achat : conservation vs suppression selon les obligations.
+        #    mobile_subscriptions (abonnement) ET mobile_purchases (achat
+        #    consommable « +1 h ») sont des preuves transactionnelles : leur
+        #    présence impose l'ANONYMISATION (jamais la suppression pure). Aucune
+        #    des deux tables n'est dans _ACCOUNT_DELETE_CHILD_TABLES ; sur le
+        #    chemin hard-delete elles sont forcément vides (sinon on anonymise),
+        #    donc la FK ne bloque jamais le DELETE FROM accounts.
         c.execute(
             "SELECT COUNT(*) FROM mobile_subscriptions WHERE user_id=%s",
             (user_id,),
         )
         has_subscription_proof = int(c.fetchone()[0]) > 0
+        c.execute(
+            "SELECT COUNT(*) FROM mobile_purchases WHERE user_id=%s",
+            (user_id,),
+        )
+        has_purchase_proof = int(c.fetchone()[0]) > 0
 
-        if has_subscription_proof:
+        if has_subscription_proof or has_purchase_proof:
             c.execute(
                 "UPDATE accounts SET "
                 "  email=NULL, email_normalized=NULL, password_hash=NULL, "
@@ -6992,7 +7068,9 @@ def api_app_account_delete():
                 "WHERE user_id=%s",
                 (now, user_id),
             )
-            outcome = "anonymized_kept_subscription_proof"
+            outcome = ("anonymized_kept_subscription_proof"
+                       if has_subscription_proof
+                       else "anonymized_kept_purchase_proof")
         else:
             c.execute("DELETE FROM accounts WHERE user_id=%s", (user_id,))
             outcome = "hard_deleted"
@@ -10382,10 +10460,19 @@ def _process_consultation_activity_tx(cursor, user_id, consultation_id, now):
 # ============================================================
 
 _MOBILE_STORES = ("google_play", "app_store")
-# À ce stade, seule l'offre Premium mensuelle est enregistrée dans cette
-# table. Le consommable 'auryel_consultation_extra' passera par
-# earned_credits, pas par mobile_subscriptions.
+# Seule l'offre Premium mensuelle (abonnement auto-renouvelable) vit dans
+# mobile_subscriptions / consultation_allowance.
 _MOBILE_SUB_PRODUCT_IDS = ("auryel_premium_monthly",)
+
+# Produits CONSOMMABLES à usage unique, RÉPÉTABLES (rachat possible), gérés
+# par mobile_purchases (migration v44) + POST /api/billing/purchase. AUCUN
+# lien avec l'abonnement Premium. Mapping SERVEUR FIGÉ product_id -> secondes
+# créditées dans le bucket 'purchased' ; la durée n'est JAMAIS lue du client.
+_MOBILE_CONSUMABLE_PRODUCT_IDS = ("auryel_extra_hour",)
+_CONSUMABLE_PRODUCT_SECONDS = {
+    "auryel_extra_hour": 3600,
+}
+_EXTRA_HOUR_LEDGER_REASON = "purchase_extra_hour"
 
 
 class MobileSubscriptionError(Exception):
@@ -10692,6 +10779,128 @@ def record_and_resync_mobile_subscription(user_id, store, product_id, subscripti
 
         conn.commit()
         return {"subscription": record_result, "resync": resync_result}
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        conn.close()
+
+
+# ============================================================
+# BILLING MOBILE (v44) — ACHAT CONSOMMABLE « +1 heure » : crédit EXACTLY-ONCE
+#
+# Cette primitive NE contacte JAMAIS le store : elle reçoit une référence
+# d'achat DÉJÀ vérifiée (cf. _google_verify_product) et crédite une fois les
+# secondes du mapping serveur dans accounts.purchased_seconds_remaining.
+# N'EFFLEURE PAS mobile_subscriptions / consultation_allowance / earned /
+# first_free / Stripe. Une seule connexion / transaction.
+# ============================================================
+
+def credit_consumable_purchase(user_id, store, product_id, purchase_key,
+                               order_id=None, purchased_at=None,
+                               raw_payload=None, now=None):
+    """Crédite EXACTLY-ONCE les secondes d'un achat consommable DÉJÀ vérifié
+    auprès du store, dans le bucket 'purchased'.
+
+    `credited_seconds` vient EXCLUSIVEMENT de _CONSUMABLE_PRODUCT_SECONDS
+    (mapping serveur figé) — jamais du client.
+
+    Anti-double-crédit : INSERT mobile_purchases ON CONFLICT (store,
+    purchase_key) DO NOTHING sous `accounts ... FOR UPDATE` + garde
+    `rowcount == 1`. Deux achats DISTINCTS du même produit = deux
+    purchase_key distincts = deux crédits de 3600 s. Rejeu du même token =
+    aucun crédit.
+
+    Lève MobileSubscriptionError :
+      - 'invalid_product'  : product_id hors _MOBILE_CONSUMABLE_PRODUCT_IDS
+      - 'invalid_store'    : store hors _MOBILE_STORES
+      - 'missing_field'    : user_id / purchase_key vide
+      - 'account_mismatch' : (store, purchase_key) déjà rattaché à un AUTRE
+                             compte -> aucun crédit, aucune réattribution
+
+    Retour : {"credited": bool, "credited_seconds": int,
+              "already_credited": bool, "purchased_seconds_remaining": int}
+    """
+    seconds = _CONSUMABLE_PRODUCT_SECONDS.get(product_id)
+    if seconds is None:
+        raise MobileSubscriptionError("invalid_product", "produit consommable inconnu")
+    store_norm = store.strip() if isinstance(store, str) else ""
+    if store_norm not in _MOBILE_STORES:
+        raise MobileSubscriptionError("invalid_store", "store non autorisé")
+    key = purchase_key.strip() if isinstance(purchase_key, str) else ""
+    uid = str(user_id).strip() if user_id is not None else ""
+    if not key or not uid:
+        raise MobileSubscriptionError("missing_field", "user_id / purchase_key requis")
+    if now is None:
+        now = _utcnow()
+    row_id = str(uuid.uuid4())
+    payload_json = _json.dumps(raw_payload) if raw_payload is not None else None
+
+    conn = get_conn()
+    try:
+        c = conn.cursor()
+        # mutex par utilisateur — pris AVANT toute écriture (idiome A.3 / J5 / J7).
+        c.execute(
+            "SELECT user_id FROM accounts "
+            "WHERE user_id=%s AND deleted_at IS NULL FOR UPDATE",
+            (uid,),
+        )
+        if c.fetchone() is None:
+            conn.rollback()
+            raise MobileSubscriptionError(
+                "account_mismatch", "compte introuvable ou supprimé")
+
+        c.execute(
+            "INSERT INTO mobile_purchases "
+            "(id, user_id, store, product_id, purchase_key, order_id, "
+            " credited_seconds, status, purchased_at, credited_at, "
+            " raw_payload, created_at) "
+            "VALUES (%s, %s, %s, %s, %s, %s, %s, 'credited', %s, %s, %s, %s) "
+            "ON CONFLICT (store, purchase_key) DO NOTHING",
+            (row_id, uid, store_norm, product_id, key, order_id,
+             seconds, purchased_at, now, payload_json, now),
+        )
+        if c.rowcount == 1:
+            c.execute(
+                "UPDATE accounts SET purchased_seconds_remaining = "
+                "COALESCE(purchased_seconds_remaining, 0) + %s "
+                "WHERE user_id=%s",
+                (seconds, uid),
+            )
+            _time_ledger_write(
+                c, uid, [("purchased", seconds)],
+                _EXTRA_HOUR_LEDGER_REASON, row_id, now,
+            )
+            credited = True
+        else:
+            # Course perdue / rejeu : la ligne existe déjà. On tranche
+            # l'appartenance — jamais de crédit silencieux sur un 2e compte.
+            c.execute(
+                "SELECT user_id FROM mobile_purchases "
+                "WHERE store=%s AND purchase_key=%s",
+                (store_norm, key),
+            )
+            ex = c.fetchone()
+            if ex is not None and str(ex[0]) != uid:
+                conn.rollback()
+                raise MobileSubscriptionError(
+                    "account_mismatch",
+                    "achat déjà rattaché à un autre compte")
+            credited = False
+
+        c.execute(
+            "SELECT COALESCE(purchased_seconds_remaining, 0) "
+            "FROM accounts WHERE user_id=%s",
+            (uid,),
+        )
+        purchased_remaining = int(c.fetchone()[0])
+        conn.commit()
+        return {
+            "credited": credited,
+            "credited_seconds": seconds if credited else 0,
+            "already_credited": not credited,
+            "purchased_seconds_remaining": purchased_remaining,
+        }
     except Exception:
         conn.rollback()
         raise
@@ -11081,6 +11290,112 @@ def _google_acknowledge_subscription(purchase_token, product_id, ack_state=None)
             return {"acknowledged": False, "reason": "already_acknowledged"}
     raise StoreVerificationError("store_verification_unavailable",
                                  "échec acknowledge Google", retryable=True)
+
+
+# ------------------------------------------------------------
+# GOOGLE PLAY — purchases.products.get + :acknowledge (CONSOMMABLE « +1 h »)
+# ------------------------------------------------------------
+# purchaseState : 0 = Purchased, 1 = Canceled, 2 = Pending.
+_GP_PRODUCT_STATE_PURCHASED = 0
+_GP_PRODUCT_STATE_CANCELED = 1
+_GP_PRODUCT_STATE_PENDING = 2
+
+
+def _google_verify_product(purchase_token, expected_product_id, now=None):
+    """Vérifie un achat CONSOMMABLE Google Play (purchases.products.get).
+    Retourne une structure normalisée. Lève StoreVerificationError.
+
+    Le product_id est dans l'URL : un token appartenant à un autre produit
+    -> 404 -> 'invalid_store_receipt'. Aucun acknowledge / consume ici.
+
+      purchaseState 0 -> OK
+      purchaseState 1 (annulé / remboursé / révoqué) -> 'invalid_store_receipt'
+      purchaseState 2 (paiement différé) -> 'store_verification_unavailable'
+                                            (retryable -> 503, le client rejoue)
+    consumptionState (0/1) est IGNORÉ pour la décision : le client
+    (autoConsume) peut avoir déjà consommé le token entre l'achat et la
+    vérification. L'anti-double-crédit est porté par mobile_purchases, pas
+    par l'état de consommation Google.
+    """
+    if now is None:
+        now = _utcnow()
+    package = os.environ.get("GOOGLE_PLAY_PACKAGE_NAME", "").strip()
+    if not package:
+        raise StoreVerificationError("verification_not_configured",
+                                     "GOOGLE_PLAY_PACKAGE_NAME absent")
+    status_code, body = _google_api_request(
+        "GET",
+        "/applications/%s/purchases/products/%s/tokens/%s"
+        % (package, expected_product_id, purchase_token),
+    )
+    err = _google_status_to_http(status_code)
+    if err is not None:
+        raise err
+    if not isinstance(body, dict):
+        raise StoreVerificationError("invalid_store_receipt",
+                                     "corps products.get non JSON")
+
+    purchase_state = body.get("purchaseState")
+    if purchase_state == _GP_PRODUCT_STATE_PENDING:
+        raise StoreVerificationError("store_verification_unavailable",
+                                     "achat Google encore en attente",
+                                     retryable=True)
+    if purchase_state != _GP_PRODUCT_STATE_PURCHASED:
+        raise StoreVerificationError("invalid_store_receipt",
+                                     "achat Google non abouti (annulé / remboursé)")
+
+    ack_state = body.get("acknowledgementState")
+    normalized = {
+        "store": "google_play",
+        "product_id": expected_product_id,
+        "purchase_key": purchase_token,
+        "order_id": body.get("orderId"),
+        "purchased_at": _billing_parse_epoch_millis(body.get("purchaseTimeMillis")),
+        "acknowledgement_state": ack_state,
+        # raw_payload : sous-ensemble NON sensible, jamais le purchase_token.
+        "raw_payload": {
+            "source": "google_play",
+            "purchase_state": purchase_state,
+            "consumption_state": body.get("consumptionState"),
+            "acknowledgement_state": ack_state,
+            "test_purchase": body.get("purchaseType") == 0,
+            "region_code": body.get("regionCode"),
+        },
+    }
+    print("[billing] google verify product %s state=%s consumed=%s"
+          % (_billing_mask(purchase_token), purchase_state,
+             body.get("consumptionState")))
+    return normalized
+
+
+def _google_acknowledge_product(purchase_token, product_id, ack_state=None):
+    """Acknowledge BEST-EFFORT d'un achat produit Google Play. Contrairement à
+    l'abonnement, l'échec n'est JAMAIS fatal : l'achat consommable est déjà
+    crédité et enregistré, et le client Flutter le consomme aussi via
+    autoConsume (ce qui acquitte implicitement). Ne lève rien ; retourne un
+    dict d'observabilité.
+
+    (Une acquittement serveur reste utile : si l'app est tuée après le crédit
+    mais avant completePurchase, il évite le remboursement automatique
+    Google à 3 jours.)"""
+    if ack_state in ("ACKNOWLEDGEMENT_STATE_ACKNOWLEDGED", 1, "1"):
+        return {"acknowledged": False, "reason": "already_acknowledged"}
+    package = os.environ.get("GOOGLE_PLAY_PACKAGE_NAME", "").strip()
+    if not package:
+        return {"acknowledged": False, "reason": "not_configured"}
+    try:
+        status_code, body = _google_api_request(
+            "POST",
+            "/applications/%s/purchases/products/%s/tokens/%s:acknowledge"
+            % (package, product_id, purchase_token),
+        )
+    except StoreVerificationError:
+        return {"acknowledged": False, "reason": "unavailable"}
+    if 200 <= status_code < 300:
+        return {"acknowledged": True}
+    # 400 / 404 : déjà acquitté, ou token déjà consommé/invalidé par le
+    # client -> no-op assumé.
+    return {"acknowledged": False, "reason": "not_acknowledgeable_%d" % status_code}
 
 
 # ------------------------------------------------------------
@@ -11529,6 +11844,122 @@ def api_billing_verify():
             "status": normalized["status"],
             "entitled": normalized["entitled"],
             "expires_at": _ts_iso(normalized["expires_at"]),
+        },
+        "quota": _quota_json(state["quota"]),
+    }, 200)
+
+
+# ------------------------------------------------------------
+# ROUTE — POST /api/billing/purchase  (achat CONSOMMABLE « +1 heure »)
+# ------------------------------------------------------------
+
+@app.route("/api/billing/purchase", methods=["POST"])
+@limiter.limit("10 per 10 minutes")
+@require_app_auth
+def api_billing_purchase():
+    """Vérifie un achat CONSOMMABLE mobile (produit à usage unique, RÉPÉTABLE)
+    auprès du store officiel, puis crédite EXACTLY-ONCE le temps acheté dans
+    le bucket 'purchased'. NE TOUCHE PAS l'abonnement Premium.
+
+    Identité : g.app_account['user_id'] (jeton Bearer) UNIQUEMENT.
+
+    Body attendu (Android) :
+      {"store":"google_play","product_id":"auryel_extra_hour",
+       "purchase_token":"..."}
+    (app_store : consommables non supportés dans ce lot -> 422.)
+
+    Mapping SERVEUR FIXE : auryel_extra_hour => 3600 s 'purchased'. La durée
+    n'est JAMAIS lue du client. Chaque achat DISTINCT (nouveau purchaseToken)
+    crédite 3600 s ; rejouer un token déjà crédité ne crédite rien
+    (already_credited=true).
+
+    Réponses (via _auth_json -> Cache-Control: no-store) :
+      200 {"purchase":{store,product_id,credited_seconds,already_credited},
+           "quota":{...}}
+      400 invalid_request / invalid_store / invalid_product /
+          missing_purchase_token
+      401 unauthorized
+      409 account_mismatch      (token déjà rattaché à un autre compte)
+      422 invalid_store_receipt (annulé / remboursé / token inconnu /
+                                 app_store non supporté)
+      503 store_verification_unavailable / verification_not_configured
+          (Google injoignable, achat encore en attente)
+      500 internal_error
+    """
+    user_id = g.app_account["user_id"]
+
+    data = request.get_json(silent=True)
+    if not isinstance(data, dict):
+        return _auth_json({"error": "invalid_request"}, 400)
+
+    store = data.get("store")
+    store = store.strip() if isinstance(store, str) else ""
+    product_id = data.get("product_id")
+    product_id = product_id.strip() if isinstance(product_id, str) else ""
+    if store not in _MOBILE_STORES:
+        return _auth_json({"error": "invalid_store"}, 400)
+    if product_id not in _MOBILE_CONSUMABLE_PRODUCT_IDS:
+        return _auth_json({"error": "invalid_product"}, 400)
+    if store != "google_play":
+        # Vérification StoreKit des consommables = lot ultérieur (Android d'abord).
+        return _auth_json({"error": "invalid_store_receipt"}, 422)
+
+    token = data.get("purchase_token")
+    token = token.strip() if isinstance(token, str) else ""
+    if not token:
+        return _auth_json({"error": "missing_purchase_token"}, 400)
+
+    # 1) Vérification auprès du store officiel (RÉSEAU).
+    try:
+        normalized = _google_verify_product(token, product_id)
+    except StoreVerificationError as exc:
+        return _auth_json({"error": exc.code}, 503 if exc.retryable else 422)
+
+    # 2) Crédit EXACTLY-ONCE (transaction DB, AUCUN réseau).
+    try:
+        result = credit_consumable_purchase(
+            user_id=user_id,
+            store=normalized["store"],
+            product_id=normalized["product_id"],
+            purchase_key=normalized["purchase_key"],
+            order_id=normalized["order_id"],
+            purchased_at=normalized["purchased_at"],
+            raw_payload=normalized["raw_payload"],
+        )
+    except MobileSubscriptionError as exc:
+        return _auth_json({"error": exc.code},
+                          _MOBILE_SUB_ERR_HTTP.get(exc.code, 400))
+    except Exception:
+        print("[billing] échec crédit consommable user=%s"
+              % _billing_mask(str(user_id)))
+        return _auth_json({"error": "internal_error"}, 500)
+
+    # 3) Acknowledge Google BEST-EFFORT (housekeeping ; le client consomme
+    #    aussi via autoConsume). Aucune erreur ne remonte : déjà crédité.
+    try:
+        _google_acknowledge_product(
+            token, product_id,
+            ack_state=(normalized["raw_payload"] or {}).get("acknowledgement_state"),
+        )
+    except Exception:
+        print("[billing] ack produit best-effort échoué user=%s"
+              % _billing_mask(str(user_id)))
+
+    # 4) Quota renvoyé (le portefeuille temps -> bloc `time` de
+    #    GET /api/consultation/state, relu par le client juste après).
+    try:
+        state = get_consultation_state(user_id)
+    except Exception:
+        print("[billing] état post-crédit indisponible user=%s"
+              % _billing_mask(str(user_id)))
+        return _auth_json({"error": "internal_error"}, 500)
+
+    return _auth_json({
+        "purchase": {
+            "store": normalized["store"],
+            "product_id": normalized["product_id"],
+            "credited_seconds": result["credited_seconds"],
+            "already_credited": result["already_credited"],
         },
         "quota": _quota_json(state["quota"]),
     }, 200)

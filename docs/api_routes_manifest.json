@@ -43,6 +43,7 @@
     { "method": "POST",   "path": "/api/app/push/unregister" },
     { "method": "POST",   "path": "/api/app/support" },
 
-    { "method": "POST",   "path": "/api/billing/verify" }
+    { "method": "POST",   "path": "/api/billing/verify" },
+    { "method": "POST",   "path": "/api/billing/purchase" }
   ]
 }
