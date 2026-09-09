@@ -1707,6 +1707,75 @@ def init_db():
         conn.rollback()
         print(f"Migration v42 (backfill purchased->earned): {e}")
 
+    # Migration v43 — CONTENU DISTANT (méditations + contenu du jour), pilotable
+    # depuis l'admin SANS mise à jour de l'application. PUREMENT ADDITIF : 2
+    # tables neuves + index. Aucune colonne existante ALTER-ée, aucun backfill,
+    # aucun DROP. Aucune FK vers accounts (contenu GLOBAL, identique pour tous).
+    # Miroir lisible : migrations/017_remote_content.sql.
+    #
+    #   meditation_catalog
+    #     Catalogue distant des séances « Ton Moment ». `slug` UNIQUE = clé
+    #     stable d'upsert admin. `audio_url` / `image_url` : URL HTTPS bornées
+    #     et validées (_validate_media_url) — l'admin colle une URL, aucun
+    #     upload binaire dans ce lot. `is_active` + `published_at` filtrent ce
+    #     que l'app reçoit. `version` s'incrémente à chaque édition -> sert à
+    #     l'invalidation du cache client. `sort_order` = réordonnancement.
+    #
+    #   daily_content
+    #     Deux `content_type` : 'daily_thought' (phrase + explication + visuel)
+    #     et 'daily_publication' (titre + texte + visuel). Contrainte UNIQUE
+    #     (content_type, publication_date) : au plus un contenu de chaque type
+    #     par jour. `publication_date` = jour Europe/Paris (déterminé serveur).
+    try:
+        c.execute("""
+            CREATE TABLE IF NOT EXISTS meditation_catalog (
+                id               UUID         PRIMARY KEY,
+                slug             TEXT         NOT NULL UNIQUE,
+                title            TEXT         NOT NULL,
+                description      TEXT         NOT NULL DEFAULT '',
+                category         TEXT         NOT NULL DEFAULT '',
+                duration_seconds INTEGER      NOT NULL DEFAULT 0,
+                audio_url        TEXT         NOT NULL,
+                image_url        TEXT,
+                sort_order       INTEGER      NOT NULL DEFAULT 0,
+                is_active        BOOLEAN      NOT NULL DEFAULT TRUE,
+                published_at     TIMESTAMPTZ,
+                created_at       TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
+                updated_at       TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
+                version          INTEGER      NOT NULL DEFAULT 1
+            )
+        """)
+        c.execute("""
+            CREATE INDEX IF NOT EXISTS idx_meditation_catalog_active
+            ON meditation_catalog (is_active, sort_order, id)
+        """)
+        c.execute("""
+            CREATE TABLE IF NOT EXISTS daily_content (
+                id               UUID         PRIMARY KEY,
+                content_type     TEXT         NOT NULL,
+                publication_date DATE         NOT NULL,
+                title            TEXT,
+                text             TEXT         NOT NULL DEFAULT '',
+                explanation      TEXT,
+                image_url        TEXT,
+                is_active        BOOLEAN      NOT NULL DEFAULT TRUE,
+                created_at       TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
+                updated_at       TIMESTAMPTZ  NOT NULL DEFAULT NOW()
+            )
+        """)
+        c.execute("""
+            CREATE UNIQUE INDEX IF NOT EXISTS uq_daily_content_type_date
+            ON daily_content (content_type, publication_date)
+        """)
+        c.execute("""
+            CREATE INDEX IF NOT EXISTS idx_daily_content_lookup
+            ON daily_content (publication_date, content_type, is_active)
+        """)
+        conn.commit()
+    except Exception as e:
+        conn.rollback()
+        print(f"Migration v43 (remote content): {e}")
+
     conn.close()
 
 def reset_db():
@@ -6457,6 +6526,180 @@ def api_app_ai_report():
 
     log_event("ai_report_received", user_hash=_user_hash(user_id), reason=reason)
     return _auth_json({"status": "received"}, 200)
+
+
+# ============================================================
+# CONTENU DISTANT — méditations + contenu du jour (Migration v43)
+# ============================================================
+# Le contenu ne dépend plus d'une liste figée dans Flutter : il vit en base et
+# se pilote depuis l'admin (surface /admin/content) SANS republier l'app.
+#   GET /api/app/content/meditations : catalogue actif/publié, contrat versionné,
+#     ETag / catalog_version pour éviter les retéléchargements.
+#   GET /api/app/content/today : phrase du jour + publication du jour, date de
+#     référence = SERVEUR en Europe/Paris (jamais l'horloge du téléphone).
+# Les URL média (audio / image) sont HTTPS, bornées et validées ; une variable
+# facultative CONTENT_MEDIA_ALLOWED_HOSTS restreint les domaines autorisés.
+
+_CONTENT_API_VERSION = 1
+_MEDIA_URL_MAX_LEN = 2048
+_DAILY_CONTENT_TYPES = ("daily_thought", "daily_publication")
+
+# Domaines média autorisés (option). Vide -> tout hôte HTTPS est accepté.
+_CONTENT_MEDIA_ALLOWED_HOSTS = tuple(
+    h.strip().lower()
+    for h in os.environ.get("CONTENT_MEDIA_ALLOWED_HOSTS", "").split(",")
+    if h.strip()
+)
+
+
+def _validate_media_url(value, *, required):
+    """Valide une URL média collée par l'admin. Retourne (url|None, error|None).
+    Règles : HTTPS obligatoire, longueur bornée, hôte présent, et — si
+    CONTENT_MEDIA_ALLOWED_HOSTS est défini — hôte dans l'allowlist. Une valeur
+    vide est acceptée quand `required` est False (-> None)."""
+    if value is None or (isinstance(value, str) and not value.strip()):
+        return (None, None) if not required else (None, "url_required")
+    if not isinstance(value, str):
+        return (None, "url_invalid")
+    url = value.strip()
+    if len(url) > _MEDIA_URL_MAX_LEN:
+        return (None, "url_too_long")
+    from urllib.parse import urlparse
+    try:
+        parts = urlparse(url)
+    except ValueError:
+        return (None, "url_invalid")
+    if parts.scheme != "https" or not parts.netloc:
+        return (None, "url_not_https")
+    host = (parts.hostname or "").lower()
+    if not host:
+        return (None, "url_invalid")
+    if _CONTENT_MEDIA_ALLOWED_HOSTS and host not in _CONTENT_MEDIA_ALLOWED_HOSTS:
+        return (None, "url_host_not_allowed")
+    return (url, None)
+
+
+def _paris_today(now=None):
+    """Jour calendaire Europe/Paris (date), déterminé par le SERVEUR. `now`
+    figeable pour les tests (datetime tz-aware UTC ; naïf -> traité UTC)."""
+    from zoneinfo import ZoneInfo
+    dt = now or _utcnow()
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    return dt.astimezone(ZoneInfo("Europe/Paris")).date()
+
+
+def _meditation_catalog_active_rows():
+    """Lignes du catalogue ACTIVES et PUBLIÉES (published_at NULL ou <= now),
+    triées (sort_order, id). Lecture seule."""
+    conn = get_conn()
+    try:
+        c = conn.cursor()
+        c.execute(
+            "SELECT id, slug, title, description, category, duration_seconds, "
+            "       audio_url, image_url, sort_order, published_at, updated_at, "
+            "       version "
+            "FROM meditation_catalog "
+            "WHERE is_active = TRUE "
+            "  AND (published_at IS NULL OR published_at <= NOW()) "
+            "ORDER BY sort_order ASC, id ASC"
+        )
+        return c.fetchall()
+    finally:
+        conn.close()
+
+
+def _catalog_version_tag(rows):
+    """Empreinte STABLE du catalogue servi : change dès qu'une entrée est
+    ajoutée / retirée / éditée (version + updated_at). Sert d'ETag et de
+    `catalog_version` -> le client saute le téléchargement si rien n'a bougé."""
+    basis = "|".join(
+        f"{r[0]}:{r[11]}:{r[10].isoformat() if r[10] else ''}" for r in rows
+    )
+    return hashlib.sha256(basis.encode("utf-8")).hexdigest()[:32]
+
+
+@app.route("/api/app/content/meditations", methods=["GET"])
+@limiter.limit("60 per hour")
+@require_app_auth
+def api_content_meditations():
+    """Catalogue distant des méditations — entrées actives et publiées, contrat
+    JSON versionné. Supporte ETag / If-None-Match : renvoie 304 si le client a
+    déjà la version courante."""
+    rows = _meditation_catalog_active_rows()
+    tag = _catalog_version_tag(rows)
+    inm = request.headers.get("If-None-Match", "").strip().strip('"')
+    if inm and inm == tag:
+        resp = jsonify({})
+        resp.headers["ETag"] = f'"{tag}"'
+        resp.headers["Cache-Control"] = "no-cache"
+        return resp, 304
+
+    meditations = [{
+        "id": str(r[0]),
+        "slug": r[1],
+        "title": r[2],
+        "description": r[3] or "",
+        "category": r[4] or "",
+        "duration_seconds": int(r[5] or 0),
+        "audio_url": r[6],
+        "image_url": r[7] or None,
+        "sort_order": int(r[8] or 0),
+        "published_at": _ts_iso(r[9]) if r[9] else None,
+        "version": int(r[11] or 1),
+    } for r in rows]
+
+    resp = jsonify({
+        "version": _CONTENT_API_VERSION,
+        "catalog_version": tag,
+        "meditations": meditations,
+    })
+    resp.headers["ETag"] = f'"{tag}"'
+    resp.headers["Cache-Control"] = "no-cache"
+    return resp, 200
+
+
+@app.route("/api/app/content/today", methods=["GET"])
+@limiter.limit("60 per hour")
+@require_app_auth
+def api_content_today():
+    """Phrase du jour + publication du jour. La date de référence est
+    déterminée par le SERVEUR en Europe/Paris — jamais par l'horloge du
+    téléphone. Un type absent -> null (l'app garde son dernier contenu valide)."""
+    today = _paris_today()
+    conn = get_conn()
+    try:
+        c = conn.cursor()
+        c.execute(
+            "SELECT content_type, title, text, explanation, image_url "
+            "FROM daily_content "
+            "WHERE publication_date = %s AND is_active = TRUE "
+            "  AND content_type IN ('daily_thought', 'daily_publication')",
+            (today,),
+        )
+        rows = c.fetchall()
+    finally:
+        conn.close()
+
+    by_type = {r[0]: r for r in rows}
+    thought = by_type.get("daily_thought")
+    publication = by_type.get("daily_publication")
+
+    return jsonify({
+        "date": today.isoformat(),
+        "version": _CONTENT_API_VERSION,
+        "daily_thought": ({
+            "title": thought[1] or None,
+            "text": thought[2] or "",
+            "explanation": thought[3] or None,
+            "image_url": thought[4] or None,
+        } if thought is not None else None),
+        "daily_publication": ({
+            "title": publication[1] or None,
+            "text": publication[2] or "",
+            "image_url": publication[4] or None,
+        } if publication is not None else None),
+    }), 200
 
 
 # ============================================================
@@ -12693,6 +12936,389 @@ def admin_purge_anciens():
                      detail=f"{len(candidates)} users anonymisés (cutoff={cutoff[:10]})")
     return jsonify({"mode": "executed", "anonymized": len(candidates),
                     "phones": [r["phone"] for r in candidates]}), 200
+
+
+# ============================================================
+# ADMIN — CONTENU DISTANT (méditations + contenu du jour)
+# ============================================================
+# Réutilise l'auth admin (session) + la protection CSRF (@require_csrf)
+# existantes. Ajouter / modifier / activer / programmer / réordonner sans
+# republier l'app. Aucun upload binaire : l'admin colle des URL HTTPS validées.
+
+_MEDITATION_SLUG_RE = re.compile(r"^[a-z0-9][a-z0-9_-]{1,63}$")
+
+
+def _admin_int(value, default=0, lo=None, hi=None):
+    try:
+        n = int(value)
+    except (TypeError, ValueError):
+        return default
+    if lo is not None and n < lo:
+        n = lo
+    if hi is not None and n > hi:
+        n = hi
+    return n
+
+
+@app.route("/admin/content/meditation", methods=["POST"])
+@require_csrf
+def admin_content_meditation():
+    """Crée ou met à jour une méditation (upsert par `slug`). Champs
+    obligatoires : slug, title, audio_url (HTTPS). image_url facultative.
+    `version` est incrémentée à chaque mise à jour -> invalidation du cache
+    client. `published_at` : ISO 8601 ou vide (= publié tout de suite)."""
+    if not admin_auth():
+        return jsonify({"error": "unauthorized"}), 401
+    data = request.get_json(silent=True) or {}
+
+    slug = str(data.get("slug", "")).strip().lower()
+    if not _MEDITATION_SLUG_RE.match(slug):
+        return jsonify({"error": "invalid_slug"}), 400
+    title = str(data.get("title", "")).strip()
+    if not title or len(title) > 200:
+        return jsonify({"error": "invalid_title"}), 400
+    description = str(data.get("description", "")).strip()[:2000]
+    category = str(data.get("category", "")).strip()[:80]
+    duration_seconds = _admin_int(data.get("duration_seconds"), 0, lo=0, hi=24 * 3600)
+    sort_order = _admin_int(data.get("sort_order"), 0, lo=0, hi=100000)
+
+    audio_url, err = _validate_media_url(data.get("audio_url"), required=True)
+    if err is not None:
+        return jsonify({"error": f"audio_{err}"}), 400
+    image_url, err = _validate_media_url(data.get("image_url"), required=False)
+    if err is not None:
+        return jsonify({"error": f"image_{err}"}), 400
+
+    published_at = None
+    raw_pub = str(data.get("published_at", "")).strip()
+    if raw_pub:
+        try:
+            published_at = datetime.fromisoformat(raw_pub.replace("Z", "+00:00"))
+        except ValueError:
+            return jsonify({"error": "invalid_published_at"}), 400
+
+    conn = get_conn()
+    try:
+        c = conn.cursor()
+        c.execute(
+            "INSERT INTO meditation_catalog "
+            "(id, slug, title, description, category, duration_seconds, "
+            " audio_url, image_url, sort_order, published_at, "
+            " created_at, updated_at, version) "
+            "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, NOW(), NOW(), 1) "
+            "ON CONFLICT (slug) DO UPDATE SET "
+            "  title = EXCLUDED.title, description = EXCLUDED.description, "
+            "  category = EXCLUDED.category, "
+            "  duration_seconds = EXCLUDED.duration_seconds, "
+            "  audio_url = EXCLUDED.audio_url, image_url = EXCLUDED.image_url, "
+            "  sort_order = EXCLUDED.sort_order, "
+            "  published_at = EXCLUDED.published_at, "
+            "  updated_at = NOW(), "
+            "  version = meditation_catalog.version + 1 "
+            "RETURNING id, version",
+            (str(uuid.uuid4()), slug, title, description, category,
+             duration_seconds, audio_url, image_url, sort_order, published_at),
+        )
+        row = c.fetchone()
+        conn.commit()
+    except Exception as e:
+        conn.rollback()
+        print(f"[admin-content] meditation upsert: {type(e).__name__}")
+        return jsonify({"error": "write_failed"}), 500
+    finally:
+        conn.close()
+
+    log_admin_action("content-meditation", slug, detail=f"v{row[1]}")
+    return jsonify({"ok": True, "id": str(row[0]), "slug": slug,
+                    "version": int(row[1])}), 200
+
+
+@app.route("/admin/content/meditation/toggle", methods=["POST"])
+@require_csrf
+def admin_content_meditation_toggle():
+    """Active / désactive une méditation. body : { "id": "...", "is_active": bool }.
+    Incrémente `version` (le client réévalue le catalogue)."""
+    if not admin_auth():
+        return jsonify({"error": "unauthorized"}), 401
+    data = request.get_json(silent=True) or {}
+    mid = str(data.get("id", "")).strip()
+    if not _is_uuid(mid):
+        return jsonify({"error": "invalid_id"}), 400
+    is_active = bool(data.get("is_active"))
+    conn = get_conn()
+    try:
+        c = conn.cursor()
+        c.execute(
+            "UPDATE meditation_catalog "
+            "SET is_active=%s, updated_at=NOW(), version=version+1 "
+            "WHERE id=%s",
+            (is_active, mid),
+        )
+        found = c.rowcount == 1
+        conn.commit()
+    finally:
+        conn.close()
+    if not found:
+        return jsonify({"error": "not_found"}), 404
+    log_admin_action("content-meditation-toggle", mid,
+                     detail="on" if is_active else "off")
+    return jsonify({"ok": True, "id": mid, "is_active": is_active}), 200
+
+
+@app.route("/admin/content/daily", methods=["POST"])
+@require_csrf
+def admin_content_daily():
+    """Crée ou met à jour un contenu du jour (upsert par
+    (content_type, publication_date)). content_type ∈
+    {daily_thought, daily_publication}. publication_date : YYYY-MM-DD
+    (jour Europe/Paris). image_url facultative, HTTPS validée."""
+    if not admin_auth():
+        return jsonify({"error": "unauthorized"}), 401
+    data = request.get_json(silent=True) or {}
+
+    content_type = str(data.get("content_type", "")).strip()
+    if content_type not in _DAILY_CONTENT_TYPES:
+        return jsonify({"error": "invalid_content_type"}), 400
+
+    raw_date = str(data.get("publication_date", "")).strip()
+    try:
+        pub_date = date.fromisoformat(raw_date)
+    except ValueError:
+        return jsonify({"error": "invalid_publication_date"}), 400
+
+    text = str(data.get("text", "")).strip()
+    if not text or len(text) > 5000:
+        return jsonify({"error": "invalid_text"}), 400
+    title = (str(data.get("title", "")).strip() or None)
+    if title and len(title) > 200:
+        return jsonify({"error": "invalid_title"}), 400
+    explanation = (str(data.get("explanation", "")).strip() or None)
+    if explanation and len(explanation) > 5000:
+        return jsonify({"error": "invalid_explanation"}), 400
+
+    image_url, err = _validate_media_url(data.get("image_url"), required=False)
+    if err is not None:
+        return jsonify({"error": f"image_{err}"}), 400
+
+    conn = get_conn()
+    try:
+        c = conn.cursor()
+        c.execute(
+            "INSERT INTO daily_content "
+            "(id, content_type, publication_date, title, text, explanation, "
+            " image_url, created_at, updated_at) "
+            "VALUES (%s, %s, %s, %s, %s, %s, %s, NOW(), NOW()) "
+            "ON CONFLICT (content_type, publication_date) DO UPDATE SET "
+            "  title = EXCLUDED.title, text = EXCLUDED.text, "
+            "  explanation = EXCLUDED.explanation, "
+            "  image_url = EXCLUDED.image_url, updated_at = NOW() "
+            "RETURNING id",
+            (str(uuid.uuid4()), content_type, pub_date, title, text,
+             explanation, image_url),
+        )
+        row = c.fetchone()
+        conn.commit()
+    except Exception as e:
+        conn.rollback()
+        print(f"[admin-content] daily upsert: {type(e).__name__}")
+        return jsonify({"error": "write_failed"}), 500
+    finally:
+        conn.close()
+
+    log_admin_action("content-daily", f"{content_type}:{pub_date.isoformat()}")
+    return jsonify({"ok": True, "id": str(row[0]),
+                    "content_type": content_type,
+                    "publication_date": pub_date.isoformat()}), 200
+
+
+@app.route("/admin/content/daily/toggle", methods=["POST"])
+@require_csrf
+def admin_content_daily_toggle():
+    """Active / désactive un contenu du jour. body : { "id", "is_active" }."""
+    if not admin_auth():
+        return jsonify({"error": "unauthorized"}), 401
+    data = request.get_json(silent=True) or {}
+    did = str(data.get("id", "")).strip()
+    if not _is_uuid(did):
+        return jsonify({"error": "invalid_id"}), 400
+    is_active = bool(data.get("is_active"))
+    conn = get_conn()
+    try:
+        c = conn.cursor()
+        c.execute(
+            "UPDATE daily_content SET is_active=%s, updated_at=NOW() WHERE id=%s",
+            (is_active, did),
+        )
+        found = c.rowcount == 1
+        conn.commit()
+    finally:
+        conn.close()
+    if not found:
+        return jsonify({"error": "not_found"}), 404
+    log_admin_action("content-daily-toggle", did,
+                     detail="on" if is_active else "off")
+    return jsonify({"ok": True, "id": did, "is_active": is_active}), 200
+
+
+@app.route("/admin/content", methods=["GET"])
+def admin_content_page():
+    """Surface admin simple : liste + formulaires méditations / contenu du jour.
+    Auth admin par session ; les POST portent le X-CSRF-Token."""
+    if not admin_auth():
+        return redirect("/admin/login")
+
+    conn = get_conn()
+    try:
+        c = conn.cursor()
+        c.execute(
+            "SELECT id, slug, title, category, duration_seconds, audio_url, "
+            "       image_url, sort_order, is_active, published_at, version "
+            "FROM meditation_catalog ORDER BY sort_order ASC, slug ASC"
+        )
+        meds = c.fetchall()
+        c.execute(
+            "SELECT id, content_type, publication_date, title, text, "
+            "       explanation, image_url, is_active "
+            "FROM daily_content "
+            "ORDER BY publication_date DESC, content_type ASC LIMIT 60"
+        )
+        dailies = c.fetchall()
+    finally:
+        conn.close()
+
+    def esc(v):
+        return html.escape("" if v is None else str(v))
+
+    med_rows = ""
+    for m in meds:
+        (mid, slug, title, category, dur, audio_url, image_url, sort_order,
+         is_active, published_at, version) = m
+        med_rows += f"""<tr>
+  <td>{esc(sort_order)}</td>
+  <td><strong>{esc(title)}</strong><br><small>{esc(slug)} · v{esc(version)}</small></td>
+  <td>{esc(category)}</td>
+  <td>{esc(dur)}s</td>
+  <td><small>{esc(audio_url)}</small></td>
+  <td>{'✅' if is_active else '⛔️'}</td>
+  <td><small>{esc(published_at) or 'publié'}</small></td>
+  <td><button onclick="toggleMed('{esc(mid)}',{str(not is_active).lower()})">{'Désactiver' if is_active else 'Activer'}</button></td>
+</tr>"""
+
+    daily_rows = ""
+    for d in dailies:
+        (did, ctype, pdate, title, text, expl, image_url, is_active) = d
+        daily_rows += f"""<tr>
+  <td>{esc(pdate)}</td>
+  <td>{esc(ctype)}</td>
+  <td>{esc(title)}</td>
+  <td><small>{esc((text or '')[:120])}</small></td>
+  <td>{'✅' if is_active else '⛔️'}</td>
+  <td><button onclick="toggleDaily('{esc(did)}',{str(not is_active).lower()})">{'Désactiver' if is_active else 'Activer'}</button></td>
+</tr>"""
+
+    csrf = esc(session.get("csrf_token", ""))
+    allowed_hosts = ", ".join(_CONTENT_MEDIA_ALLOWED_HOSTS) or "(tous les hôtes HTTPS)"
+    return f"""<!DOCTYPE html><html lang="fr"><head><meta charset="utf-8">
+<title>Auryel · Contenu distant</title>
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="csrf-token" content="{csrf}">
+<style>
+ body{{font-family:system-ui,sans-serif;background:#0f0f14;color:#e8e0d0;margin:0;padding:24px;max-width:1100px;margin:0 auto}}
+ h1,h2{{font-weight:600}} a{{color:#C8A96E}}
+ table{{width:100%;border-collapse:collapse;margin:12px 0;font-size:13px}}
+ th,td{{border:1px solid #333;padding:6px 8px;text-align:left;vertical-align:top}}
+ small{{color:#8a7a6a;word-break:break-all}}
+ fieldset{{border:1px solid #333;border-radius:8px;margin:16px 0;padding:12px 16px}}
+ label{{display:block;margin:6px 0 2px;font-size:12px;color:#b0a290}}
+ input,textarea,select{{width:100%;padding:6px;background:#1a1a22;border:1px solid #333;color:#e8e0d0;border-radius:4px}}
+ button{{background:#C8A96E;color:#1a1a22;border:0;border-radius:4px;padding:8px 14px;cursor:pointer;font-weight:600;margin-top:8px}}
+ .row{{display:grid;grid-template-columns:1fr 1fr;gap:10px}}
+ #msg{{position:sticky;top:0;padding:8px;background:#1a1a22;border-radius:4px}}
+</style></head><body>
+<p><a href="/admin">&larr; Admin</a></p>
+<h1>Contenu distant</h1>
+<p id="msg"><small>Domaines média autorisés : {esc(allowed_hosts)}. URL HTTPS uniquement. Aucun upload de fichier — collez une URL déjà hébergée.</small></p>
+
+<h2>Méditations</h2>
+<table><thead><tr><th>#</th><th>Titre / slug</th><th>Catégorie</th><th>Durée</th><th>audio_url</th><th>Actif</th><th>Publié</th><th></th></tr></thead>
+<tbody>{med_rows or '<tr><td colspan="8"><small>Aucune méditation.</small></td></tr>'}</tbody></table>
+
+<fieldset><legend>Ajouter / modifier une méditation (upsert par slug)</legend>
+ <div class="row">
+  <div><label>slug *</label><input id="m_slug" placeholder="respiration_calme"></div>
+  <div><label>title *</label><input id="m_title"></div>
+ </div>
+ <div class="row">
+  <div><label>category</label><input id="m_category" placeholder="respiration"></div>
+  <div><label>duration_seconds</label><input id="m_duration" type="number" min="0" value="0"></div>
+ </div>
+ <label>description</label><textarea id="m_description" rows="2"></textarea>
+ <label>audio_url * (HTTPS)</label><input id="m_audio" placeholder="https://...">
+ <label>image_url (HTTPS, facultatif)</label><input id="m_image" placeholder="https://...">
+ <div class="row">
+  <div><label>sort_order</label><input id="m_sort" type="number" min="0" value="0"></div>
+  <div><label>published_at (ISO, vide = maintenant)</label><input id="m_pub" placeholder="2026-09-10T08:00:00Z"></div>
+ </div>
+ <button onclick="saveMed()">Enregistrer la méditation</button>
+</fieldset>
+
+<h2>Contenu du jour</h2>
+<table><thead><tr><th>Date</th><th>Type</th><th>Titre</th><th>Texte</th><th>Actif</th><th></th></tr></thead>
+<tbody>{daily_rows or '<tr><td colspan="6"><small>Aucun contenu.</small></td></tr>'}</tbody></table>
+
+<fieldset><legend>Ajouter / modifier un contenu du jour (upsert par type + date)</legend>
+ <div class="row">
+  <div><label>content_type *</label>
+   <select id="d_type"><option value="daily_thought">daily_thought</option><option value="daily_publication">daily_publication</option></select></div>
+  <div><label>publication_date * (YYYY-MM-DD, Europe/Paris)</label><input id="d_date" placeholder="2026-09-10"></div>
+ </div>
+ <label>title (facultatif)</label><input id="d_title">
+ <label>text *</label><textarea id="d_text" rows="3"></textarea>
+ <label>explanation (facultatif, phrase du jour)</label><textarea id="d_expl" rows="2"></textarea>
+ <label>image_url (HTTPS, facultatif — visuel partageable)</label><input id="d_image" placeholder="https://...">
+ <button onclick="saveDaily()">Enregistrer le contenu du jour</button>
+</fieldset>
+
+<script>
+const CSRF = document.querySelector('meta[name=csrf-token]').content;
+const msg = document.getElementById('msg');
+function say(t){{ msg.textContent = t; }}
+async function post(url, body){{
+  const r = await fetch(url, {{method:'POST', headers:{{'Content-Type':'application/json','X-CSRF-Token':CSRF}}, body:JSON.stringify(body)}});
+  const j = await r.json().catch(()=>({{}}));
+  if(!r.ok){{ say('Erreur : ' + (j.error || r.status)); return null; }}
+  return j;
+}}
+async function saveMed(){{
+  const b = {{
+    slug: m_slug.value.trim(), title: m_title.value.trim(),
+    category: m_category.value.trim(), description: m_description.value.trim(),
+    duration_seconds: m_duration.value, sort_order: m_sort.value,
+    audio_url: m_audio.value.trim(), image_url: m_image.value.trim(),
+    published_at: m_pub.value.trim()
+  }};
+  const j = await post('/admin/content/meditation', b);
+  if(j){{ say('Méditation enregistrée (v'+j.version+').'); location.reload(); }}
+}}
+async function toggleMed(id, active){{
+  const j = await post('/admin/content/meditation/toggle', {{id, is_active:active}});
+  if(j){{ location.reload(); }}
+}}
+async function saveDaily(){{
+  const b = {{
+    content_type: d_type.value, publication_date: d_date.value.trim(),
+    title: d_title.value.trim(), text: d_text.value.trim(),
+    explanation: d_expl.value.trim(), image_url: d_image.value.trim()
+  }};
+  const j = await post('/admin/content/daily', b);
+  if(j){{ say('Contenu du jour enregistré.'); location.reload(); }}
+}}
+async function toggleDaily(id, active){{
+  const j = await post('/admin/content/daily/toggle', {{id, is_active:active}});
+  if(j){{ location.reload(); }}
+}}
+</script>
+</body></html>"""
 
 @app.route("/admin/login", methods=["GET","POST"])
 @limiter.limit("3 per 15 minutes")
