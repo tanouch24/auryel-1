@@ -12490,6 +12490,163 @@ def cron_push_tick():
 
 
 # ============================================================
+# CRON — RE-VÉRIFICATION PÉRIODIQUE DES ABONNEMENTS GOOGLE PLAY
+# ============================================================
+# SÉPARÉ du push (secret dédié BILLING_REVERIFY_SECRET). Re-vérifie auprès de
+# Google les abonnements actifs dont la dernière vérification est trop ancienne,
+# met à jour last_verified_at, et RETIRE le droit Premium si Google confirme une
+# expiration / révocation / remboursement. Aucune confiance dans le client.
+# Aucune double attribution des 28 800 s : resync_premium_entitlement RE-PROJETTE
+# le quota (idempotent), il ne crédite jamais. Aucune seconde déjà consommée
+# n'est retirée (monthly_used / earned / purchased jamais touchés par le resync).
+#
+# RTDN / Pub/Sub (Real-time Developer Notifications) = amélioration FUTURE non
+# implémentée dans ce lot : un cron n'est PAS instantané (latence = intervalle
+# du cron + BILLING_REVERIFY_MIN_AGE_HOURS). RTDN notifierait Google -> serveur
+# en quasi temps réel ; à câbler plus tard sur le même chemin de révocation.
+
+_BILLING_REVERIFY_SECRET = os.environ.get("BILLING_REVERIFY_SECRET", "")
+try:
+    _BILLING_REVERIFY_BATCH = max(1, min(500,
+        int(os.environ.get("BILLING_REVERIFY_BATCH", "50"))))
+except ValueError:
+    _BILLING_REVERIFY_BATCH = 50
+try:
+    _BILLING_REVERIFY_MIN_AGE_HOURS = max(1,
+        int(os.environ.get("BILLING_REVERIFY_MIN_AGE_HOURS", "24")))
+except ValueError:
+    _BILLING_REVERIFY_MIN_AGE_HOURS = 24
+
+# Statuts considérés « droit actif » à re-contrôler.
+_BILLING_ACTIVE_STATUSES = ("active", "billing_retry", "grace_period", "paused")
+
+
+def _billing_reverify_revoke(user_id, sub_id, status_label, now):
+    """Retire le droit d'un abonnement (Google confirme expiration / révocation /
+    remboursement OU achat inconnu de Google) : entitled=FALSE + statut, puis
+    re-projection du quota Premium DANS LA MÊME transaction (accounts FOR UPDATE
+    d'abord). Ne retire jamais une seconde déjà consommée."""
+    uid = str(user_id)
+    conn = get_conn()
+    try:
+        c = conn.cursor()
+        c.execute(
+            "SELECT user_id FROM accounts "
+            "WHERE user_id=%s AND deleted_at IS NULL FOR UPDATE",
+            (uid,),
+        )
+        if c.fetchone() is None:
+            conn.rollback()
+            return False
+        c.execute(
+            "UPDATE mobile_subscriptions "
+            "SET entitled=FALSE, status=%s, last_verified_at=%s, updated_at=NOW() "
+            "WHERE id=%s AND user_id=%s",
+            (status_label, now, str(sub_id), uid),
+        )
+        _resync_premium_entitlement_tx(c, uid, now)
+        conn.commit()
+        return True
+    except Exception as e:
+        try:
+            conn.rollback()
+        except Exception:
+            pass
+        print(f"[billing-reverify] revoke échec {_billing_mask(uid)}: {type(e).__name__}")
+        return False
+    finally:
+        conn.close()
+
+
+@app.route("/cron/billing-reverify", methods=["POST"])
+@limiter.limit("6 per hour")
+def cron_billing_reverify():
+    body = request.get_json(silent=True) or {}
+    provided = body.get("secret", "") or request.headers.get("X-Cron-Secret", "")
+    if not _BILLING_REVERIFY_SECRET or not hmac.compare_digest(
+        str(provided), str(_BILLING_REVERIFY_SECRET)
+    ):
+        return jsonify({"error": "unauthorized"}), 401
+
+    now = _utcnow()
+    cutoff = now - timedelta(hours=_BILLING_REVERIFY_MIN_AGE_HOURS)
+
+    conn = get_conn()
+    try:
+        c = conn.cursor()
+        c.execute(
+            "SELECT id, user_id, product_id, subscription_key "
+            "FROM mobile_subscriptions "
+            "WHERE store='google_play' "
+            "  AND status = ANY(%s) "
+            "  AND (last_verified_at IS NULL OR last_verified_at < %s) "
+            "ORDER BY last_verified_at ASC NULLS FIRST "
+            "LIMIT %s",
+            (list(_BILLING_ACTIVE_STATUSES), cutoff, _BILLING_REVERIFY_BATCH),
+        )
+        rows = c.fetchall()
+    finally:
+        conn.close()
+
+    checked = reverified = revoked = skipped = errors = 0
+    for sub_id, user_id, product_id, purchase_token in rows:
+        checked += 1
+        try:
+            normalized = _google_verify_subscription(purchase_token, product_id,
+                                                     now=now)
+        except StoreVerificationError as exc:
+            if exc.retryable:
+                # Google momentanément injoignable -> on ne touche à rien,
+                # last_verified_at reste ancien, on retentera au prochain tick.
+                skipped += 1
+                continue
+            # 'invalid_store_receipt' / 'product_mismatch' : Google ne reconnaît
+            # plus cet achat (remboursement / révocation complète) -> on retire.
+            if _billing_reverify_revoke(user_id, sub_id, "revoked", now):
+                revoked += 1
+            else:
+                errors += 1
+            continue
+        except Exception:
+            errors += 1
+            continue
+
+        try:
+            record_and_resync_mobile_subscription(
+                user_id=user_id,
+                store=normalized["store"],
+                product_id=normalized["product_id"],
+                subscription_key=normalized["subscription_key"],
+                latest_transaction_id=normalized["latest_transaction_id"],
+                status=normalized["status"],
+                entitled=normalized["entitled"],
+                purchased_at=normalized["purchased_at"],
+                current_period_start=normalized["current_period_start"],
+                expires_at=normalized["expires_at"],
+                auto_renewing=normalized["auto_renewing"],
+                raw_payload=normalized["raw_payload"],
+                now=now,
+            )
+            reverified += 1
+            if not normalized["entitled"]:
+                revoked += 1
+        except Exception:
+            errors += 1
+
+    log_event("billing_reverify", checked=checked, reverified=reverified,
+              revoked=revoked, skipped=skipped, errors=errors)
+    return jsonify({
+        "status": "ok",
+        "checked": checked,
+        "reverified": reverified,
+        "revoked": revoked,
+        "skipped": skipped,
+        "errors": errors,
+        "batch_limit": _BILLING_REVERIFY_BATCH,
+    }), 200
+
+
+# ============================================================
 # CRON DAILY
 # ============================================================
 @app.route("/cron/daily", methods=["POST"])
