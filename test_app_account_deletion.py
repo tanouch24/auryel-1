@@ -41,13 +41,9 @@ def check(cond, label):
 UID1 = "11111111-1111-4111-8111-111111111111"
 UID2 = "22222222-2222-4222-8222-222222222222"
 
-_CHILD = (
-    "messages", "tirages", "earned_credits", "user_advisor_memory",
-    "consultations", "consultation_allowance", "app_profiles",
-    "share_reward_days", "wellbeing_mission_days", "wellbeing_cycle_rewards",
-    "memory_games", "memory_rewards",
-    "app_sessions",
-)
+# Dérivé de la source de vérité pour ne jamais dériver (v40 : + push_devices,
+# + notification_sends).
+_CHILD = tuple(A._ACCOUNT_DELETE_CHILD_TABLES)
 
 # ---------------------------------------------------------------------------
 # Fausse DB.
