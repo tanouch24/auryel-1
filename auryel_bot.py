@@ -7,7 +7,6 @@ from flask_limiter.util import get_remote_address
 from werkzeug.middleware.proxy_fix import ProxyFix
 from werkzeug.security import generate_password_hash, check_password_hash
 from groq import Groq
-from apscheduler.schedulers.background import BackgroundScheduler
 import json as _json
 _RELANCES_PATH = os.path.join(os.path.dirname(__file__), "auryel_relances_h4_h22.json")
 try:
@@ -197,6 +196,13 @@ OPENAI_MODEL       = os.environ.get("OPENAI_MODEL", "gpt-4o")
 OPENROUTER_API_KEY = os.environ.get("OPENROUTER_API_KEY", "")
 OPENROUTER_MODEL   = os.environ.get("OPENROUTER_MODEL", "google/gemini-2.5-flash")
 
+# Délai HTTP par fournisseur LLM (secondes). La chaîne de repli est bornée à 3
+# fournisseurs -> pire cas ~3 x LLM_HTTP_TIMEOUT, à garder < gunicorn --timeout.
+try:
+    LLM_HTTP_TIMEOUT = max(5, int(os.environ.get("LLM_HTTP_TIMEOUT", "30")))
+except ValueError:
+    LLM_HTTP_TIMEOUT = 30
+
 if LLM_PROVIDER == "openai" and not OPENAI_API_KEY:
     print("[WARNING] LLM_PROVIDER=openai mais OPENAI_API_KEY est vide — fallback openrouter/groq sera utilisé")
 
@@ -253,10 +259,121 @@ MOTS_CONSENTEMENT_TIRAGE = [
 ]
 
 # ============================================================
-# BASE DE DONNÉES
+# BASE DE DONNÉES — pool borné, thread-safe (1 worker gthread, N threads)
 # ============================================================
+# gunicorn tourne en `--worker-class gthread --workers 1 --threads N` : un seul
+# process, plusieurs threads. Le pool psycopg2.pool.ThreadedConnectionPool est
+# sûr dans cette configuration. Un passage FUTUR à plusieurs workers imposerait
+# un stockage Redis PARTAGÉ pour flask-limiter (le compteur en mémoire n'est
+# valable que dans CE process) ET conviendrait avec un pool par worker.
+#
+# get_conn() rend un PROXY : toutes les méthodes délèguent à la vraie
+# connexion, mais `.close()` la RESTITUE au pool (après rollback si une
+# transaction est restée ouverte) au lieu de la fermer physiquement. Les ~100
+# sites appelant `conn.close()` n'ont pas à changer et ne fuient plus de
+# connexion. `with get_conn() as conn:` conserve la sémantique psycopg2
+# (commit / rollback autour d'une transaction, PAS de close).
+
+try:
+    DB_POOL_MIN = max(1, int(os.environ.get("DB_POOL_MIN", "1")))
+except ValueError:
+    DB_POOL_MIN = 1
+try:
+    DB_POOL_MAX = max(DB_POOL_MIN, int(os.environ.get("DB_POOL_MAX", "10")))
+except ValueError:
+    DB_POOL_MAX = max(DB_POOL_MIN, 10)
+
+_DB_POOL = None
+_DB_POOL_LOCK = threading.Lock()
+
+
+def _get_db_pool():
+    """Pool global (créé à la première demande). Peut lever : l'appelant
+    (get_conn) retombe alors sur une connexion directe."""
+    global _DB_POOL
+    if _DB_POOL is None:
+        with _DB_POOL_LOCK:
+            if _DB_POOL is None:
+                from psycopg2 import pool as _pgpool
+                _DB_POOL = _pgpool.ThreadedConnectionPool(
+                    DB_POOL_MIN, DB_POOL_MAX, dsn=DATABASE_URL)
+    return _DB_POOL
+
+
+class _PooledConn:
+    """Proxy de connexion : délègue tout, mais `.close()` restitue au pool."""
+    __slots__ = ("_conn", "_pool", "_returned")
+
+    def __init__(self, conn, pool):
+        self._conn = conn
+        self._pool = pool
+        self._returned = False
+
+    def __getattr__(self, name):
+        return getattr(self._conn, name)
+
+    def cursor(self, *a, **k):
+        return self._conn.cursor(*a, **k)
+
+    def commit(self):
+        return self._conn.commit()
+
+    def rollback(self):
+        return self._conn.rollback()
+
+    def close(self):
+        if self._returned:
+            return
+        self._returned = True
+        conn = self._conn
+        # Ne JAMAIS rendre une connexion avec une transaction ouverte : rollback
+        # d'abord (idempotent si déjà IDLE). Une connexion cassée est fermée
+        # physiquement et retirée du pool.
+        try:
+            from psycopg2 import extensions as _pgext
+            if conn.get_transaction_status() != _pgext.TRANSACTION_STATUS_IDLE:
+                conn.rollback()
+        except Exception:
+            try:
+                self._pool.putconn(conn, close=True)
+            except Exception:
+                pass
+            return
+        try:
+            self._pool.putconn(conn)
+        except Exception:
+            try:
+                conn.close()
+            except Exception:
+                pass
+
+    # `with get_conn() as conn:` = transaction (commit/rollback), PAS close —
+    # sémantique psycopg2 inchangée. La restitution reste à la charge du
+    # `finally: conn.close()` de l'appelant.
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc, tb):
+        try:
+            if exc_type is not None:
+                self._conn.rollback()
+            else:
+                self._conn.commit()
+        except Exception:
+            pass
+        return False
+
+
 def get_conn():
-    return psycopg2.connect(DATABASE_URL)
+    """Connexion Postgres depuis le pool borné. `conn.close()` la restitue.
+    Repli sur connexion directe si le pool est indisponible (ex. tests sans
+    vraie base — mais les tests mockent get_conn de toute façon)."""
+    try:
+        pool = _get_db_pool()
+        raw = pool.getconn()
+        return _PooledConn(raw, pool)
+    except Exception:
+        return psycopg2.connect(DATABASE_URL)
 
 def init_db():
     conn = get_conn()
@@ -5179,7 +5296,7 @@ _SHARE_REWARD_CREDIT_SECONDS  = 3600
 def _reward_share_date(now=None):
     """Jour calendaire (Europe/Paris) d'une action de partage. `now` = datetime
     tz-aware UTC (naïf -> traité comme UTC). Séparé pour être figeable en test.
-    Aligné sur le fuseau du planificateur (`BackgroundScheduler("Europe/Paris")`)
+    Aligné sur le fuseau du planificateur EXTERNE (Railway Cron, Europe/Paris)
     et sur le public FR : la journée bascule à minuit heure de Paris."""
     from zoneinfo import ZoneInfo
     dt = now or _utcnow()
@@ -7752,7 +7869,7 @@ def call_llm(messages, temperature=0.85, max_tokens=220):
                     "https://api.openai.com/v1/chat/completions",
                     headers={"Authorization": f"Bearer {OPENAI_API_KEY}", "Content-Type": "application/json"},
                     json={"model": model, "messages": messages, "temperature": temperature, "max_tokens": max_tokens},
-                    timeout=45,
+                    timeout=LLM_HTTP_TIMEOUT,
                 )
                 resp.raise_for_status()
                 content = resp.json()["choices"][0]["message"]["content"]
@@ -7770,7 +7887,7 @@ def call_llm(messages, temperature=0.85, max_tokens=220):
                     headers={"Authorization": f"Bearer {OPENROUTER_API_KEY}", "Content-Type": "application/json",
                              "HTTP-Referer": SITE_URL, "X-Title": "Auryel"},
                     json={"model": model, "messages": messages, "temperature": temperature, "max_tokens": max_tokens},
-                    timeout=45,
+                    timeout=LLM_HTTP_TIMEOUT,
                 )
                 resp.raise_for_status()
                 content = resp.json()["choices"][0]["message"]["content"]
@@ -7785,6 +7902,7 @@ def call_llm(messages, temperature=0.85, max_tokens=220):
                     messages=messages,
                     max_tokens=max_tokens,
                     temperature=temperature,
+                    timeout=LLM_HTTP_TIMEOUT,
                 )
                 content = resp.choices[0].message.content
                 if not content:
@@ -12559,9 +12677,35 @@ def cron_morning():
 def home():
     return "🔮 Auryel Bot v9 — En ligne", 200
 
+def _db_ping(timeout_s=2):
+    """True si Postgres répond à `SELECT 1` dans le délai. Connexion DÉDIÉE
+    courte (jamais le pool applicatif), fermée immédiatement. Ne lève jamais."""
+    conn = None
+    try:
+        conn = psycopg2.connect(DATABASE_URL, connect_timeout=timeout_s)
+        conn.autocommit = True
+        cur = conn.cursor()
+        cur.execute("SELECT 1")
+        row = cur.fetchone()
+        cur.close()
+        return bool(row) and row[0] == 1
+    except Exception:
+        return False
+    finally:
+        if conn is not None:
+            try:
+                conn.close()
+            except Exception:
+                pass
+
+
 @app.route("/health", methods=["GET"])
 def health():
-    return jsonify({"status":"ok","version":"v10","timestamp":datetime.now().isoformat()}), 200
+    """Contrôle RÉEL : process vivant + `SELECT 1` avec délai court. 503 si la
+    base est indisponible. Aucune information sensible (ni DSN, ni version, ni
+    horodatage serveur) dans la réponse."""
+    ok = _db_ping()
+    return jsonify({"status": "ok" if ok else "unavailable"}), (200 if ok else 503)
 
 @app.route("/reset-db", methods=["POST"])
 def reset_database():
@@ -13516,14 +13660,12 @@ def check_and_increment_daily_limit(phone, user):
     update_user_silent(phone, messages_today_count=count + 1)
     return False
 
-# Démarrage APScheduler
-scheduler = BackgroundScheduler(timezone="Europe/Paris")
-# COUPÉ (neutralisation relances, réversible) — job intraday non enregistré,
-# cron_relances_intraday() reste en place mais n'est plus planifié.
-# scheduler.add_job(cron_relances_intraday, 'interval', hours=1, id='relances_intraday')
-scheduler.start()
-import atexit
-atexit.register(lambda: scheduler.shutdown())
+# PLUS AUCUN APScheduler dans le process web (Partie E) : il n'y avait qu'un
+# scheduler VIDE (0 job) dont le seul effet était un thread de fond au démarrage.
+# La planification est EXTERNE : Railway Cron -> POST /cron/push-tick
+# (push_scheduler.push_tick), POST /cron/daily, POST /cron/morning.
+# `cron_relances_intraday()` reste une fonction appelable par un cron externe si
+# besoin, mais n'est jamais planifiée ici.
 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 5000))
