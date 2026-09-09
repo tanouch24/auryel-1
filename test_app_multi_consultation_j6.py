@@ -75,10 +75,11 @@ def reset_db():
 
 
 def seed_account(uid=UID, deleted_at=None, first_free=3600, purchased=0,
-                 first_consultation_used_at=None):
+                 first_consultation_used_at=None, earned=0):
     DB["accounts"][str(uid)] = {
         "user_id": str(uid), "email": f"{uid}@ex.com", "deleted_at": deleted_at,
         "first_free_seconds_remaining": first_free,
+        "earned_seconds_remaining": earned,
         "purchased_seconds_remaining": purchased,
         "first_consultation_used_at": first_consultation_used_at,
     }
@@ -96,6 +97,9 @@ def seed_profile(uid=UID, guide="selena"):
     row = {f: "" for f in A._APP_PROFILE_FIELDS}
     row["user_id"] = str(uid)
     row["guide"] = guide
+    # Contrôle 18+ serveur (v41) : consultation/open exigent une date de
+    # naissance adulte au profil. Ces tests ne portent pas sur le gate.
+    row["date_naissance"] = "2000-01-01"
     for c in ("nb_echanges", "nb_echanges_decouverte", "nb_echanges_dernier_tirage",
               "nb_echanges_dernier_psaume", "niveau_detresse", "niveau_attachement",
               "chemin_de_vie"):
@@ -206,22 +210,28 @@ class FakeCursor:
             a = DB["accounts"].get(str(uid))
             self._result = ((a["user_id"], a["first_consultation_used_at"])
                             if a and a["deleted_at"] is None else None)
-        elif k in ("SELECT first_free_seconds_remaining, purchased_seconds_remaining "
-                   "FROM accounts WHERE user_id=%s",
-                   "SELECT first_free_seconds_remaining, purchased_seconds_remaining "
-                   "FROM accounts WHERE user_id=%s FOR UPDATE"):
+        elif k in ("SELECT first_free_seconds_remaining, earned_seconds_remaining, "
+                   "purchased_seconds_remaining FROM accounts WHERE user_id=%s",
+                   "SELECT first_free_seconds_remaining, earned_seconds_remaining, "
+                   "purchased_seconds_remaining FROM accounts WHERE user_id=%s "
+                   "FOR UPDATE"):
             (uid,) = p
             a = DB["accounts"].get(str(uid))
             self._result = ((a["first_free_seconds_remaining"],
+                             a.get("earned_seconds_remaining", 0),
                              a["purchased_seconds_remaining"]) if a else None)
         elif k == ("UPDATE accounts SET first_free_seconds_remaining=%s, "
-                   "purchased_seconds_remaining=%s WHERE user_id=%s"):
-            ff, pu, uid = p
+                   "earned_seconds_remaining=%s, purchased_seconds_remaining=%s "
+                   "WHERE user_id=%s"):
+            ff, ea, pu, uid = p
             a = DB["accounts"].get(str(uid))
             if a:
                 a["first_free_seconds_remaining"] = ff
+                a["earned_seconds_remaining"] = ea
                 a["purchased_seconds_remaining"] = pu
                 self.rowcount = 1
+        elif k.startswith("INSERT INTO time_ledger "):
+            self.rowcount = 1
         elif k == ("UPDATE accounts SET first_consultation_used_at=%s "
                    "WHERE user_id=%s AND first_consultation_used_at IS NULL"):
             ts, uid = p
@@ -430,7 +440,7 @@ class FakeCursor:
                    "consultation_id) VALUES (%s, NULL, %s, %s, %s, %s)"):
             uid, role, content, ts, cid = p
             seed_message(uid, cid, role, content, ts)
-        elif k == ("SELECT role, content, timestamp FROM messages WHERE user_id=%s "
+        elif k == ("SELECT id, role, content, timestamp FROM messages WHERE user_id=%s "
                    "AND consultation_id=%s AND role IN ('user','assistant') "
                    "ORDER BY timestamp ASC, id ASC"):
             uid, cid = p
@@ -439,7 +449,17 @@ class FakeCursor:
                            and str(m["consultation_id"]) == str(cid)
                            and m["role"] in ("user", "assistant")],
                           key=lambda m: (m["timestamp"], m["id"]))
-            self._rows = [(m["role"], m["content"], m["timestamp"]) for m in rows]
+            self._rows = [(m["id"], m["role"], m["content"], m["timestamp"]) for m in rows]
+        elif k == ("SELECT id FROM messages WHERE user_id=%s "
+                   "AND consultation_id=%s AND role='assistant' "
+                   "ORDER BY id DESC LIMIT 1"):
+            uid, cid = p
+            rows = sorted([m for m in DB["messages"]
+                           if m["user_id"] == str(uid)
+                           and str(m["consultation_id"]) == str(cid)
+                           and m["role"] == "assistant"],
+                          key=lambda m: m["id"], reverse=True)
+            self._result = (rows[0]["id"],) if rows else None
         elif k in ("SELECT role,content FROM messages WHERE user_id=%s "
                    "AND consultation_id=%s ORDER BY id DESC LIMIT %s",):
             uid, cid, lim = p

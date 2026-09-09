@@ -64,7 +64,8 @@ def reset_db():
 def seed_account(user_id, deleted_at=None, email="u@example.com",
                  first_consultation_used_at=None,
                  first_free_seconds_remaining="__backfill__",
-                 purchased_seconds_remaining=0):
+                 purchased_seconds_remaining=0,
+                 earned_seconds_remaining=0):
     # first_free_seconds_remaining : miroir du backfill migration v34
     # (3600 si la gratuite n'a jamais été consommée, 0 sinon), sauf override.
     if first_free_seconds_remaining == "__backfill__":
@@ -74,6 +75,7 @@ def seed_account(user_id, deleted_at=None, email="u@example.com",
         "user_id": user_id, "email": email, "deleted_at": deleted_at,
         "first_consultation_used_at": first_consultation_used_at,
         "first_free_seconds_remaining": first_free_seconds_remaining,
+        "earned_seconds_remaining": earned_seconds_remaining,
         "purchased_seconds_remaining": purchased_seconds_remaining,
     })
 
@@ -87,6 +89,9 @@ def _blank_profile(uid):
     row = {f: "" for f in A._APP_PROFILE_FIELDS}
     row["user_id"] = uid
     row["guide"] = "selena"
+    # Contrôle 18+ serveur (v41) : la consultation exige une date de naissance
+    # adulte au profil. Ces tests ne portent pas sur le gate -> profil majeur.
+    row["date_naissance"] = "2000-01-01"
     for c in ("nb_echanges", "nb_echanges_decouverte", "nb_echanges_dernier_tirage",
               "nb_echanges_dernier_psaume"):
         row[c] = 0
@@ -195,7 +200,7 @@ class FakeCursor:
             rows = sorted([m for m in FAKE["messages"] if m["user_id"] == uid],
                           key=lambda m: m["id"], reverse=True)
             self._rows = [(m["role"], m["content"]) for m in rows[:limit]]
-        elif k == ("SELECT role, content, timestamp FROM messages "
+        elif k == ("SELECT id, role, content, timestamp FROM messages "
                    "WHERE user_id=%s AND consultation_id=%s AND role IN ('user','assistant') "
                    "ORDER BY timestamp ASC, id ASC"):
             uid, cid = p
@@ -203,7 +208,18 @@ class FakeCursor:
                     if m["user_id"] == uid and m["consultation_id"] == cid
                     and m["role"] in ("user", "assistant")]
             rows.sort(key=lambda m: (m["timestamp"], m["id"]))
-            self._rows = [(m["role"], m["content"], m["timestamp"]) for m in rows]
+            self._rows = [(m["id"], m["role"], m["content"], m["timestamp"]) for m in rows]
+        elif k == ("SELECT id FROM messages "
+                   "WHERE user_id=%s AND consultation_id=%s AND role='assistant' "
+                   "ORDER BY id DESC LIMIT 1"):
+            uid, cid = p
+            rows = sorted(
+                [m for m in FAKE["messages"]
+                 if m["user_id"] == uid
+                 and str(m.get("consultation_id")) == str(cid)
+                 and m["role"] == "assistant"],
+                key=lambda m: m["id"], reverse=True)
+            self._result = (rows[0]["id"],) if rows else None
 
         # ---- moteur consultations 2 h / crédits (B4.1) ----
         elif k == ("SELECT user_id, first_consultation_used_at FROM accounts "
@@ -453,13 +469,15 @@ class FakeCursor:
             else:
                 self.rowcount = 0
 
-        elif k in ("SELECT first_free_seconds_remaining, purchased_seconds_remaining "
-                   "FROM accounts WHERE user_id=%s",
-                   "SELECT first_free_seconds_remaining, purchased_seconds_remaining "
-                   "FROM accounts WHERE user_id=%s FOR UPDATE"):
+        elif k in ("SELECT first_free_seconds_remaining, earned_seconds_remaining, "
+                   "purchased_seconds_remaining FROM accounts WHERE user_id=%s",
+                   "SELECT first_free_seconds_remaining, earned_seconds_remaining, "
+                   "purchased_seconds_remaining FROM accounts WHERE user_id=%s "
+                   "FOR UPDATE"):
             (uid,) = p
             a = next((x for x in FAKE["accounts"] if x["user_id"] == str(uid)), None)
             self._result = ((a.get("first_free_seconds_remaining"),
+                             a.get("earned_seconds_remaining", 0),
                              a.get("purchased_seconds_remaining")) if a else None)
 
         elif k in ("SELECT monthly_allowance_seconds, monthly_used_seconds "
@@ -494,15 +512,20 @@ class FakeCursor:
                 self._result = (rows[0]["period_start"], rows[0]["period_end"])
 
         elif k == ("UPDATE accounts SET first_free_seconds_remaining=%s, "
-                   "purchased_seconds_remaining=%s WHERE user_id=%s"):
-            ff, pu, uid = p
+                   "earned_seconds_remaining=%s, purchased_seconds_remaining=%s "
+                   "WHERE user_id=%s"):
+            ff, ea, pu, uid = p
             a = next((x for x in FAKE["accounts"] if x["user_id"] == str(uid)), None)
             if a is not None:
                 a["first_free_seconds_remaining"] = ff
+                a["earned_seconds_remaining"] = ea
                 a["purchased_seconds_remaining"] = pu
                 self.rowcount = 1
             else:
                 self.rowcount = 0
+
+        elif k.startswith("INSERT INTO time_ledger "):
+            self.rowcount = 1
 
         elif k == ("UPDATE consultation_allowance SET monthly_used_seconds=%s "
                    "WHERE user_id=%s AND period_start=%s"):
@@ -607,8 +630,8 @@ with patch.object(A, "call_llm", return_value=REPLY) as m_llm, \
 j = r.get_json()
 check(r.status_code == 200, "1a premier message Premium -> 200")
 check(j["reply"] == REPLY and m_llm.call_count == 1, "1b reply renvoyé, call_llm appelé 1x")
-check(set(j.keys()) == {"reply", "consultation", "time", "quota"},
-      "1c racine = reply / consultation / time / quota")
+check(set(j.keys()) == {"reply", "message_id", "llm_status", "consultation", "time", "quota"},
+      "1c racine = reply / message_id / llm_status / consultation / time / quota")
 check(j["consultation"]["opened_now"] is True, "1d opened_now = true (flow.consultation.created)")
 check(j["consultation"]["credit_source"] == "time", "1e credit_source = time")
 check(j["consultation"]["advisor_id"] == "selena", "1f advisor_id = selena (guide du profil)")
@@ -1002,13 +1025,14 @@ check(len(FAKE["consultations"]) == 2, "8g exactement 2 consultations logiques")
 tok = fresh()
 with patch.object(A, "call_llm", return_value=REPLY):
     j9 = _post(tok).get_json()
-check(set(j9.keys()) == {"reply", "consultation", "time", "quota"},
-      "9a clés racine = reply / consultation / time / quota")
+check(set(j9.keys()) == {"reply", "message_id", "llm_status", "consultation", "time", "quota"},
+      "9a clés racine = reply / message_id / llm_status / consultation / time / quota")
 check(set(j9["consultation"].keys()) == {"id", "advisor_id", "started_at", "expires_at",
                                           "seconds_remaining", "credit_source", "opened_now"},
       "9b clés consultation exactes")
 check(set(j9["time"].keys()) == {"first_free_remaining_seconds", "premium_remaining_seconds",
-                                  "purchased_remaining_seconds", "total_remaining_seconds",
+                                  "earned_remaining_seconds", "purchased_remaining_seconds",
+                                  "total_remaining_seconds",
                                   "window_active", "window_expires_at"},
       "9c clés time exactes")
 check(set(j9["quota"].keys()) == {"is_premium", "monthly_limit", "monthly_used",
@@ -1342,8 +1366,10 @@ check(all(m["role"] in ("user", "assistant") for m in jh["messages"]),
       "M-H2 rôle 'system' non exposé à l'app")
 check(all("CONFIDENTIEL" not in m["content"] for m in jh["messages"]),
       "M-H3 contenu d'un message non-conversationnel non exposé")
-check(all(set(m.keys()) == {"role", "content", "timestamp"} for m in jh["messages"]),
-      "M-H4 clés de chaque message = role / content / timestamp")
+check(all(set(m.keys()) == {"id", "role", "content", "timestamp"} for m in jh["messages"]),
+      "M-H4 clés de chaque message = id / role / content / timestamp")
+check(all(isinstance(m["id"], str) and m["id"] for m in jh["messages"]),
+      "M-H4b id stable (chaîne non vide) sur chaque message — cible du signalement IA")
 
 # --- M-I. timestamps présents ------------------------------------------
 check(all(isinstance(m["timestamp"], str) and m["timestamp"] for m in jh["messages"]),

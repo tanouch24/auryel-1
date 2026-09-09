@@ -41,13 +41,9 @@ def check(cond, label):
 UID1 = "11111111-1111-4111-8111-111111111111"
 UID2 = "22222222-2222-4222-8222-222222222222"
 
-_CHILD = (
-    "messages", "tirages", "earned_credits", "user_advisor_memory",
-    "consultations", "consultation_allowance", "app_profiles",
-    "share_reward_days", "wellbeing_mission_days", "wellbeing_cycle_rewards",
-    "memory_games", "memory_rewards",
-    "app_sessions",
-)
+# Dérivé de la source de vérité pour ne jamais dériver (v40 : + push_devices,
+# + notification_sends).
+_CHILD = tuple(A._ACCOUNT_DELETE_CHILD_TABLES)
 
 # ---------------------------------------------------------------------------
 # Fausse DB.
@@ -61,14 +57,16 @@ _T = {t: [] for t in _CHILD}
 _ACCOUNTS = {}
 _USERS = []
 _SUBS = []
+_PURCHASES = []   # mobile_purchases (v44) — preuve d'achat consommable
 
 
-def _seed(with_sub_for=None):
+def _seed(with_sub_for=None, with_purchase_for=None):
     for t in _CHILD:
         _T[t] = []
     _ACCOUNTS.clear()
     _USERS.clear()
     _SUBS.clear()
+    _PURCHASES.clear()
     for uid in (UID1, UID2):
         _ACCOUNTS[uid] = {
             "email": f"{uid[:4]}@x.co", "email_normalized": f"{uid[:4]}@x.co",
@@ -86,6 +84,8 @@ def _seed(with_sub_for=None):
     _USERS.append({"phone": "+33600000001", "user_id": UID1})  # lien legacy
     if with_sub_for:
         _SUBS.append({"user_id": with_sub_for, "id": "sub-1"})
+    if with_purchase_for:
+        _PURCHASES.append({"user_id": with_purchase_for, "id": "buy-1"})
 
 
 def _count(table, uid):
@@ -138,6 +138,10 @@ class _Cur:
         elif k == "SELECT COUNT(*) FROM mobile_subscriptions WHERE user_id=%s":
             uid = p[0]
             self._r = (sum(1 for s in _SUBS if s["user_id"] == uid),)
+
+        elif k == "SELECT COUNT(*) FROM mobile_purchases WHERE user_id=%s":
+            uid = p[0]
+            self._r = (sum(1 for s in _PURCHASES if s["user_id"] == uid),)
 
         elif k == ("UPDATE accounts SET email=NULL, email_normalized=NULL, "
                    "password_hash=NULL, provider_sub=NULL, last_login_at=NULL, "
@@ -281,6 +285,19 @@ check(_fake_resolve("tok-1111") is None, "11g jeton inutilisable (compte anonymi
 _seed(with_sub_for=None)
 _delete(UID1)
 check(UID1 not in _ACCOUNTS, "11h sans abonnement -> hard delete réel du compte")
+
+# 11c — preuve d'achat CONSOMMABLE seule (mobile_purchases, aucun abonnement)
+#       -> anonymisation, compte + achat conservés (v44).
+_seed(with_purchase_for=UID1)
+r = _delete(UID1)
+check(r.status_code == 200, "11i DELETE compte AVEC achat consommable seul -> 200")
+check(UID1 in _ACCOUNTS and _ACCOUNTS[UID1]["deleted_at"] is not None
+      and _ACCOUNTS[UID1]["email"] is None,
+      "11j accounts anonymisé (pas de hard delete) car preuve d'achat consommable")
+check(sum(1 for s in _PURCHASES if s["user_id"] == UID1) == 1,
+      "11k mobile_purchases CONSERVÉE (preuve transactionnelle)")
+check(all(_count(t, UID1) == 0 for t in _CHILD),
+      "11l autres données personnelles supprimées")
 
 # ===========================================================================
 # 12. la suppression ne touche JAMAIS un autre user

@@ -52,7 +52,7 @@ UID2 = "22222222-2222-4222-8222-222222222222"
 
 # ---------------------------------------------------------------------------
 # Fausse DB.
-#   _ACCOUNTS : uid -> {"purchased": int, "deleted_at": None|dt}
+#   _ACCOUNTS : uid -> {"earned": int, "deleted_at": None|dt}
 #   _GAMES    : game_id -> dict(user_id, difficulty, started_at, status,
 #                               completed_at, elapsed_seconds, reward_seconds,
 #                               reward_credited, outcome)
@@ -70,8 +70,8 @@ def _reset_db():
     _GAMES.clear()
     _REWARDS.clear()
     _SQL_SEEN.clear()
-    _ACCOUNTS[UID1] = {"purchased": 0, "deleted_at": None}
-    _ACCOUNTS[UID2] = {"purchased": 0, "deleted_at": None}
+    _ACCOUNTS[UID1] = {"earned": 0, "deleted_at": None}
+    _ACCOUNTS[UID2] = {"earned": 0, "deleted_at": None}
 
 
 class _Cur:
@@ -171,15 +171,18 @@ class _Cur:
                 })
                 self.rowcount = 1
 
-        elif k == ("UPDATE accounts SET purchased_seconds_remaining = "
-                   "COALESCE(purchased_seconds_remaining, 0) + %s WHERE user_id=%s"):
+        elif k == ("UPDATE accounts SET earned_seconds_remaining = "
+                   "COALESCE(earned_seconds_remaining, 0) + %s WHERE user_id=%s"):
             secs, uid = p
             acc = _ACCOUNTS.get(uid)
             if acc:
-                acc["purchased"] += secs
+                acc["earned"] += secs
                 self.rowcount = 1
             else:
                 self.rowcount = 0
+
+        elif k.startswith("INSERT INTO time_ledger "):
+            self.rowcount = 1
 
         elif k == ("UPDATE memory_games SET status='completed', completed_at=%s, "
                    "elapsed_seconds=%s, reward_seconds=%s, reward_credited=%s, "
@@ -348,18 +351,18 @@ check(_complete("99999999-9999-4999-8999-999999999999").status_code == 404,
 _reset_db()
 _, out = _play(UID1, "easy", 19)
 check(out["outcome"] == "rewarded" and out["reward_credited"] is True
-      and out["credited_seconds"] == 300 and _ACCOUNTS[UID1]["purchased"] == 300,
+      and out["credited_seconds"] == 300 and _ACCOUNTS[UID1]["earned"] == 300,
       "5a easy en 19 s -> +300, purchased=300")
 
 _reset_db()
 _, out = _play(UID1, "easy", 20)
 check(out["outcome"] == "time_limit_exceeded" and out["reward_credited"] is False
-      and out["credited_seconds"] == 0 and _ACCOUNTS[UID1]["purchased"] == 0,
+      and out["credited_seconds"] == 0 and _ACCOUNTS[UID1]["earned"] == 0,
       "5b easy en 20 s PILE -> aucun crédit (« moins de » strict)")
 
 _reset_db()
 _, out = _play(UID1, "easy", 45)
-check(out["reward_credited"] is False and _ACCOUNTS[UID1]["purchased"] == 0,
+check(out["reward_credited"] is False and _ACCOUNTS[UID1]["earned"] == 0,
       "5c easy en 45 s -> aucun crédit")
 
 # ===========================================================================
@@ -368,18 +371,18 @@ check(out["reward_credited"] is False and _ACCOUNTS[UID1]["purchased"] == 0,
 _reset_db()
 _, out = _play(UID1, "medium", 39)
 check(out["reward_credited"] and out["credited_seconds"] == 600
-      and _ACCOUNTS[UID1]["purchased"] == 600, "6a medium 39 s -> +600")
+      and _ACCOUNTS[UID1]["earned"] == 600, "6a medium 39 s -> +600")
 _reset_db()
 _, out = _play(UID1, "medium", 40)
-check(not out["reward_credited"] and _ACCOUNTS[UID1]["purchased"] == 0,
+check(not out["reward_credited"] and _ACCOUNTS[UID1]["earned"] == 0,
       "6b medium 40 s PILE -> aucun crédit")
 _reset_db()
 _, out = _play(UID1, "hard", 79)
 check(out["reward_credited"] and out["credited_seconds"] == 900
-      and _ACCOUNTS[UID1]["purchased"] == 900, "6c hard 79 s -> +900")
+      and _ACCOUNTS[UID1]["earned"] == 900, "6c hard 79 s -> +900")
 _reset_db()
 _, out = _play(UID1, "hard", 80)
-check(not out["reward_credited"] and _ACCOUNTS[UID1]["purchased"] == 0,
+check(not out["reward_credited"] and _ACCOUNTS[UID1]["earned"] == 0,
       "6d hard 80 s PILE -> aucun crédit")
 
 # ===========================================================================
@@ -389,7 +392,7 @@ _reset_db()
 _play(UID1, "easy", 10)
 _play(UID1, "medium", 10)
 _play(UID1, "hard", 10)
-check(_ACCOUNTS[UID1]["purchased"] == 1800,
+check(_ACCOUNTS[UID1]["earned"] == 1800,
       "7 easy+medium+hard gagnés -> +1800 s = 30 min")
 
 # ===========================================================================
@@ -397,10 +400,10 @@ check(_ACCOUNTS[UID1]["purchased"] == 1800,
 # ===========================================================================
 _reset_db()
 gid, out1 = _play(UID1, "easy", 10)
-check(_ACCOUNTS[UID1]["purchased"] == 300, "8a 1er complete -> +300")
+check(_ACCOUNTS[UID1]["earned"] == 300, "8a 1er complete -> +300")
 out2 = _complete(gid).get_json()
 out3 = _complete(gid).get_json()
-check(_ACCOUNTS[UID1]["purchased"] == 300
+check(_ACCOUNTS[UID1]["earned"] == 300
       and out2["reward_credited"] is False and out2.get("already_finalized") is True
       and out3["reward_credited"] is False,
       "8b rejeux -> toujours 300, already_finalized, aucun double crédit")
@@ -414,7 +417,7 @@ _reset_db()
 gid, out = _play(UID1, "easy", 30)  # au-dessus du seuil
 check(out["outcome"] == "time_limit_exceeded", "9a partie perdante terminée")
 out2 = _complete(gid).get_json()
-check(out2.get("already_finalized") is True and _ACCOUNTS[UID1]["purchased"] == 0,
+check(out2.get("already_finalized") is True and _ACCOUNTS[UID1]["earned"] == 0,
       "9b rejeu d'une partie perdante -> aucun crédit")
 
 # ===========================================================================
@@ -427,7 +430,7 @@ _NOW["t"] = t0 + timedelta(seconds=A._MEMORY_DIFFICULTIES["easy"]["expiry_second
 out = _complete(gid).get_json()
 _NOW["t"] = t0
 check(out["status"] == "expired" and out["reward_credited"] is False
-      and _ACCOUNTS[UID1]["purchased"] == 0 and _GAMES[gid]["status"] == "expired",
+      and _ACCOUNTS[UID1]["earned"] == 0 and _GAMES[gid]["status"] == "expired",
       "10a easy complétée après expiration -> expired, aucun crédit")
 out2 = _complete(gid).get_json()
 check(out2.get("already_finalized") is True,
@@ -440,11 +443,11 @@ check(out2.get("already_finalized") is True,
 _reset_db()
 gid, out = _play(UID1, "hard", 2)  # plancher hard = 9 s
 check(out["outcome"] == "implausible_time" and out["reward_credited"] is False
-      and _ACCOUNTS[UID1]["purchased"] == 0,
+      and _ACCOUNTS[UID1]["earned"] == 0,
       "11a hard en 2 s -> implausible_time, aucun crédit")
 # éligibilité intacte : une vraie partie juste après crédite
 _, out2 = _play(UID1, "hard", 20)
-check(out2["reward_credited"] is True and _ACCOUNTS[UID1]["purchased"] == 900,
+check(out2["reward_credited"] is True and _ACCOUNTS[UID1]["earned"] == 900,
       "11b partie impossible ne consomme PAS l'éligibilité -> +900 ensuite")
 
 # ===========================================================================
@@ -453,24 +456,24 @@ check(out2["reward_credited"] is True and _ACCOUNTS[UID1]["purchased"] == 900,
 _reset_db()
 base = _NOW["t"]
 _play(UID1, "easy", 10)                       # crédit à J0
-check(_ACCOUNTS[UID1]["purchased"] == 300, "12a easy gagné à J0")
+check(_ACCOUNTS[UID1]["earned"] == 300, "12a easy gagné à J0")
 
 _NOW["t"] = base + timedelta(days=3)
 gid, out = _play(UID1, "easy", 10)
 check(out["outcome"] == "cooldown_active" and out["reward_credited"] is False
-      and _ACCOUNTS[UID1]["purchased"] == 300 and "next_eligible_at" in out,
+      and _ACCOUNTS[UID1]["earned"] == 300 and "next_eligible_at" in out,
       "12b easy rejoué à J+3 -> cooldown_active, aucun crédit, next_eligible_at")
 check(_GAMES[gid]["status"] == "completed",
       "12c la partie en cooldown est quand même terminée normalement")
 
 _NOW["t"] = base + timedelta(days=7) - timedelta(seconds=1)
 _, out = _play(UID1, "easy", 10)
-check(out["reward_credited"] is False and _ACCOUNTS[UID1]["purchased"] == 300,
+check(out["reward_credited"] is False and _ACCOUNTS[UID1]["earned"] == 300,
       "12d juste avant J+7 -> toujours cooldown")
 
 _NOW["t"] = base + timedelta(days=7)
 _, out = _play(UID1, "easy", 10)
-check(out["reward_credited"] is True and _ACCOUNTS[UID1]["purchased"] == 600,
+check(out["reward_credited"] is True and _ACCOUNTS[UID1]["earned"] == 600,
       "12e exactement à J+7 -> easy redevient éligible -> +300")
 _NOW["t"] = base
 
@@ -482,7 +485,7 @@ _play(UID1, "easy", 10)
 _, m = _play(UID1, "medium", 10)
 _, h = _play(UID1, "hard", 10)
 check(m["reward_credited"] and h["reward_credited"]
-      and _ACCOUNTS[UID1]["purchased"] == 1800,
+      and _ACCOUNTS[UID1]["earned"] == 1800,
       "13 easy gagné n'entame ni medium ni hard -> +1800 au total")
 
 # ===========================================================================
@@ -497,7 +500,7 @@ first = _complete(gid).get_json()
 second = _complete(gid).get_json()     # arrive juste après, game déjà 'completed'
 _NOW["t"] = t0
 check(first["reward_credited"] is True and second["reward_credited"] is False
-      and _ACCOUNTS[UID1]["purchased"] == 300
+      and _ACCOUNTS[UID1]["earned"] == 300
       and len([r for r in _REWARDS if r["game_id"] == gid]) == 1,
       "14 complete rejoué immédiatement -> 1 seul crédit, 1 seule ligne reward")
 
@@ -507,12 +510,12 @@ check(first["reward_credited"] is True and second["reward_credited"] is False
 _reset_db()
 _play(UID1, "easy", 10)
 _, b = _play(UID2, "easy", 10)
-check(_ACCOUNTS[UID1]["purchased"] == 300 and _ACCOUNTS[UID2]["purchased"] == 300
+check(_ACCOUNTS[UID1]["earned"] == 300 and _ACCOUNTS[UID2]["earned"] == 300
       and b["reward_credited"] is True,
       "15a A et B gagnent chacun leur easy indépendamment")
 # B en cooldown n'affecte pas A : A a aussi son propre cooldown
 _, a2 = _play(UID1, "easy", 10)
-check(a2["reward_credited"] is False and _ACCOUNTS[UID1]["purchased"] == 300,
+check(a2["reward_credited"] is False and _ACCOUNTS[UID1]["earned"] == 300,
       "15b A reste en cooldown sur SON easy")
 
 # ===========================================================================
@@ -544,7 +547,7 @@ check(all(d["eligible_now"] is True and d["last_reward_at"] is None
 for _ in range(3):
     _progress()
 check(_ACCOUNTS[UID1] == before and not any("INSERT INTO memory_rewards" in s
-      for s in _SQL_SEEN) and not any("purchased_seconds_remaining" in s
+      for s in _SQL_SEEN) and not any("earned_seconds_remaining" in s
       for s in _SQL_SEEN),
       "17c progress répété -> aucun INSERT reward, aucun crédit")
 
@@ -576,7 +579,7 @@ out = _complete(gid, extra={"elapsed_seconds": 3, "reward_seconds": 99999,
                             "difficulty": "hard"}).get_json()
 _NOW["t"] = t0
 check(out["reward_credited"] is False and out["elapsed_seconds"] == 50
-      and out["reward_seconds"] == 300 and _ACCOUNTS[UID1]["purchased"] == 0,
+      and out["reward_seconds"] == 300 and _ACCOUNTS[UID1]["earned"] == 0,
       "20 body { elapsed_seconds:3, reward_seconds:99999 } ignoré -> serveur "
       "calcule 50 s, seuil easy, aucun crédit")
 

@@ -65,11 +65,13 @@ def reset_db():
 def seed_account(user_id, deleted_at=None, email="u@example.com",
                  first_consultation_used_at=None,
                  first_free_seconds_remaining=3600,
-                 purchased_seconds_remaining=0):
+                 purchased_seconds_remaining=0,
+                 earned_seconds_remaining=0):
     FAKE["accounts"].append({"user_id": user_id, "email": email,
                              "deleted_at": deleted_at,
                              "first_consultation_used_at": first_consultation_used_at,
                              "first_free_seconds_remaining": first_free_seconds_remaining,
+                             "earned_seconds_remaining": earned_seconds_remaining,
                              "purchased_seconds_remaining": purchased_seconds_remaining})
 
 
@@ -190,6 +192,17 @@ class FakeCursor:
             rows = sorted([m for m in FAKE["messages"] if m["user_id"] == uid],
                           key=lambda m: m["id"], reverse=True)
             self._rows = [(m["role"], m["content"]) for m in rows[:limit]]
+        elif k == ("SELECT id FROM messages "
+                   "WHERE user_id=%s AND consultation_id=%s AND role='assistant' "
+                   "ORDER BY id DESC LIMIT 1"):
+            uid, cid = p
+            rows = sorted(
+                [m for m in FAKE["messages"]
+                 if m["user_id"] == uid
+                 and str(m.get("consultation_id")) == str(cid)
+                 and m["role"] == "assistant"],
+                key=lambda m: m["id"], reverse=True)
+            self._result = (rows[0]["id"],) if rows else None
 
         # ---- moteur consultations 2 h / crédits (B4.1) ----
         elif k == ("SELECT user_id, first_consultation_used_at FROM accounts "
@@ -408,30 +421,31 @@ class FakeCursor:
                     c["billed_until"] = bu
                     self.rowcount = 1
 
-        elif k == ("SELECT first_free_seconds_remaining, purchased_seconds_remaining "
-                   "FROM accounts WHERE user_id=%s FOR UPDATE"):
+        elif k in ("SELECT first_free_seconds_remaining, earned_seconds_remaining, "
+                   "purchased_seconds_remaining FROM accounts WHERE user_id=%s "
+                   "FOR UPDATE",
+                   "SELECT first_free_seconds_remaining, earned_seconds_remaining, "
+                   "purchased_seconds_remaining FROM accounts WHERE user_id=%s"):
             (uid,) = p
             r = next((a for a in FAKE["accounts"] if a["user_id"] == str(uid)), None)
             if r is not None:
                 self._result = (r.get("first_free_seconds_remaining", 0),
-                                r.get("purchased_seconds_remaining", 0))
-
-        elif k == ("SELECT first_free_seconds_remaining, purchased_seconds_remaining "
-                   "FROM accounts WHERE user_id=%s"):
-            (uid,) = p
-            r = next((a for a in FAKE["accounts"] if a["user_id"] == str(uid)), None)
-            if r is not None:
-                self._result = (r.get("first_free_seconds_remaining", 0),
+                                r.get("earned_seconds_remaining", 0),
                                 r.get("purchased_seconds_remaining", 0))
 
         elif k == ("UPDATE accounts SET first_free_seconds_remaining=%s, "
-                   "purchased_seconds_remaining=%s WHERE user_id=%s"):
-            ff, pu, uid = p
+                   "earned_seconds_remaining=%s, purchased_seconds_remaining=%s "
+                   "WHERE user_id=%s"):
+            ff, ea, pu, uid = p
             r = next((a for a in FAKE["accounts"] if a["user_id"] == str(uid)), None)
             if r is not None:
                 r["first_free_seconds_remaining"] = ff
+                r["earned_seconds_remaining"] = ea
                 r["purchased_seconds_remaining"] = pu
                 self.rowcount = 1
+
+        elif k.startswith("INSERT INTO time_ledger "):
+            self.rowcount = 1
 
         elif k == ("SELECT period_start, monthly_allowance_seconds, monthly_used_seconds "
                    "FROM consultation_allowance WHERE user_id=%s AND period_start <= %s "
@@ -660,6 +674,9 @@ now = A._utcnow()
 A.provision_allowance(UID1, now - timedelta(days=1), now + timedelta(days=29), monthly_limit=4)
 tok = A.create_app_session(UID1)
 _get(tok)  # profil créé, guide=selena
+# Contrôle 18+ serveur (v41) : la consultation exige une date de naissance
+# adulte au profil. Ce test porte sur le figeage du conseiller, pas sur le gate.
+_patch(tok, {"date_naissance": "1990-01-01"})
 
 with patch.object(A, "call_llm", return_value=REPLY) as m1, \
      patch("auryel_bot.random.random", return_value=1.0):

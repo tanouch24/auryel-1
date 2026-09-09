@@ -56,8 +56,8 @@ _ACCOUNTS = {}                      # uid -> {purchased, credited_at, deleted_at
 def _reset_db():
     _DAYS.clear()
     _ACCOUNTS.clear()
-    _ACCOUNTS[UID1] = {"purchased": 0, "credited_at": None, "deleted_at": None}
-    _ACCOUNTS[UID2] = {"purchased": 0, "credited_at": None, "deleted_at": None}
+    _ACCOUNTS[UID1] = {"earned": 0, "credited_at": None, "deleted_at": None}
+    _ACCOUNTS[UID2] = {"earned": 0, "credited_at": None, "deleted_at": None}
 
 
 class _Cur:
@@ -99,18 +99,21 @@ class _Cur:
             uid = p[0]
             self._r = (sum(1 for (u, _d) in _DAYS if u == uid),)
 
-        elif k == ("UPDATE accounts SET purchased_seconds_remaining = "
-                   "COALESCE(purchased_seconds_remaining, 0) + %s, "
+        elif k == ("UPDATE accounts SET earned_seconds_remaining = "
+                   "COALESCE(earned_seconds_remaining, 0) + %s, "
                    "share_reward_credited_at = %s "
                    "WHERE user_id=%s AND share_reward_credited_at IS NULL"):
             secs, ts, uid = p
             acc = _ACCOUNTS.get(uid)
             if acc and acc["credited_at"] is None:
-                acc["purchased"] += secs
+                acc["earned"] = acc.get("earned", 0) + secs
                 acc["credited_at"] = ts
                 self.rowcount = 1
             else:
                 self.rowcount = 0
+
+        elif k.startswith("INSERT INTO time_ledger "):
+            self.rowcount = 1
 
         else:
             raise AssertionError("SQL non géré par le fake rewards : " + k)
@@ -212,7 +215,7 @@ for i in range(29):
     last = _post().get_json()
 check(last["count"] == 29, "16a 29 jours distincts -> 29/30")
 check(last["credited"] is False and last["credited_seconds"] == 0, "16b 29 jours -> aucun crédit")
-check(_ACCOUNTS[UID1]["purchased"] == 0, "16c portefeuille inchangé à 29 jours")
+check(_ACCOUNTS[UID1]["earned"] == 0, "16c portefeuille inchangé à 29 jours")
 
 # ===========================================================================
 # 17. 30e jour -> credited=true + credited_seconds=3600
@@ -224,9 +227,9 @@ check(j30["credited"] is True, "17b 30e jour -> credited=true")
 check(j30["credited_seconds"] == 3600, "17c 30e jour -> credited_seconds=3600")
 
 # ===========================================================================
-# 18. portefeuille +3600 EXACTEMENT (bucket purchased_seconds_remaining)
+# 18. portefeuille +3600 EXACTEMENT (bucket earned_seconds_remaining)
 # ===========================================================================
-check(_ACCOUNTS[UID1]["purchased"] == 3600, "18a purchased_seconds_remaining = +3600")
+check(_ACCOUNTS[UID1]["earned"] == 3600, "18a earned_seconds_remaining = +3600")
 check(_ACCOUNTS[UID1]["credited_at"] is not None, "18b share_reward_credited_at posé")
 
 # ===========================================================================
@@ -235,16 +238,16 @@ check(_ACCOUNTS[UID1]["credited_at"] is not None, "18b share_reward_credited_at 
 jr = _post().get_json()
 check(jr["count"] == 30, "19a retry -> toujours 30/30")
 check(jr["credited"] is False and jr["credited_seconds"] == 0, "19b retry -> aucun 2e crédit")
-check(_ACCOUNTS[UID1]["purchased"] == 3600, "19c portefeuille toujours +3600 (pas +7200)")
+check(_ACCOUNTS[UID1]["earned"] == 3600, "19c portefeuille toujours +3600 (pas +7200)")
 
 # ===========================================================================
 # 20. GET après crédit -> 30/30, aucun nouveau crédit
 # ===========================================================================
-before = _ACCOUNTS[UID1]["purchased"]
+before = _ACCOUNTS[UID1]["earned"]
 jg = _get().get_json()
 check(jg["count"] == 30 and jg["target"] == 30, "20a GET après crédit -> 30/30")
 check(jg["credited"] is False and jg["credited_seconds"] == 0, "20b GET n'accorde jamais de crédit")
-check(_ACCOUNTS[UID1]["purchased"] == before, "20c GET ne touche pas le portefeuille")
+check(_ACCOUNTS[UID1]["earned"] == before, "20c GET ne touche pas le portefeuille")
 
 # ===========================================================================
 # 21. idempotence garantie EN BASE (contrainte d'unicité)
@@ -275,7 +278,7 @@ for i in range(31):
     jj = _post().get_json()
 check(jj["count"] == 30, "22a 31 jours distincts -> count plafonné à 30")
 check(jj["target"] == 30, "22b target reste 30 (aucun nouveau cycle)")
-check(_ACCOUNTS[UID1]["purchased"] == 3600, "22c un seul crédit total (+3600, jamais +7200)")
+check(_ACCOUNTS[UID1]["earned"] == 3600, "22c un seul crédit total (+3600, jamais +7200)")
 
 # ===========================================================================
 # 23. utilisateurs isolés
@@ -285,11 +288,11 @@ _as(UID1)
 for i in range(30):
     _FAKE_TODAY["d"] = date(2026, 9, 1) + timedelta(days=i)
     _post()
-check(_ACCOUNTS[UID1]["purchased"] == 3600, "23a UID1 crédité")
+check(_ACCOUNTS[UID1]["earned"] == 3600, "23a UID1 crédité")
 _as(UID2)
 jj = _get().get_json()
 check(jj["count"] == 0, "23b UID2 -> 0/30 (indépendant de UID1)")
-check(_ACCOUNTS[UID2]["purchased"] == 0 and _ACCOUNTS[UID2]["credited_at"] is None,
+check(_ACCOUNTS[UID2]["earned"] == 0 and _ACCOUNTS[UID2]["credited_at"] is None,
       "23c UID2 portefeuille et marqueur intacts")
 _FAKE_TODAY["d"] = date(2026, 9, 1)
 jj = _post().get_json()
