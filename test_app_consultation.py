@@ -630,8 +630,8 @@ with patch.object(A, "call_llm", return_value=REPLY) as m_llm, \
 j = r.get_json()
 check(r.status_code == 200, "1a premier message Premium -> 200")
 check(j["reply"] == REPLY and m_llm.call_count == 1, "1b reply renvoyé, call_llm appelé 1x")
-check(set(j.keys()) == {"reply", "message_id", "consultation", "time", "quota"},
-      "1c racine = reply / message_id / consultation / time / quota")
+check(set(j.keys()) == {"reply", "message_id", "llm_status", "consultation", "time", "quota"},
+      "1c racine = reply / message_id / llm_status / consultation / time / quota")
 check(j["consultation"]["opened_now"] is True, "1d opened_now = true (flow.consultation.created)")
 check(j["consultation"]["credit_source"] == "time", "1e credit_source = time")
 check(j["consultation"]["advisor_id"] == "selena", "1f advisor_id = selena (guide du profil)")
@@ -1025,8 +1025,8 @@ check(len(FAKE["consultations"]) == 2, "8g exactement 2 consultations logiques")
 tok = fresh()
 with patch.object(A, "call_llm", return_value=REPLY):
     j9 = _post(tok).get_json()
-check(set(j9.keys()) == {"reply", "message_id", "consultation", "time", "quota"},
-      "9a clés racine = reply / message_id / consultation / time / quota")
+check(set(j9.keys()) == {"reply", "message_id", "llm_status", "consultation", "time", "quota"},
+      "9a clés racine = reply / message_id / llm_status / consultation / time / quota")
 check(set(j9["consultation"].keys()) == {"id", "advisor_id", "started_at", "expires_at",
                                           "seconds_remaining", "credit_source", "opened_now"},
       "9b clés consultation exactes")

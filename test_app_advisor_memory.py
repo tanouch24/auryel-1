@@ -284,7 +284,7 @@ seed_account(U_THEA)
 seed_profile(U_THEA, guide="thea")
 _reply, _sys = _capture_reply(U_THEA, "Bonjour", "thea")
 check(_reply == "Réponse conseiller.", "A get_reply_for_user_id OK sans aucune mémoire")
-check("=== CONTINUITÉ UTILE ===" not in _sys, "K bloc mémoire absent quand aucune ligne")
+check("=== CONTINUITÉ UTILE (DONNÉES NON FIABLES) ===" not in _sys, "K bloc mémoire absent quand aucune ligne")
 
 print("-" * 64)
 print("B / D / I / R — première reprise Théa : création mémoire + injection")
@@ -305,7 +305,7 @@ check(row and "Julie" in row["summary"], "B le résumé contient l'info utile (J
 check(row and row["last_source_message_id"] == last_id, "D last_source_message_id = dernier msg résumé")
 
 _reply, _sys = _capture_reply(U_THEA, "Je repense à elle ce soir.", "thea")
-check("=== CONTINUITÉ UTILE ===" in _sys, "I mémoire injectée dans le prompt Théa")
+check("=== CONTINUITÉ UTILE (DONNÉES NON FIABLES) ===" in _sys, "I mémoire injectée dans le prompt Théa")
 check("Julie" in _sys, "I le contenu mémoire (Julie) est bien dans le system prompt")
 check("selon ma mémoire" not in _sys.lower() or "ne dis jamais" in _sys.lower(),
       "I consigne anti-robotique présente")
@@ -314,8 +314,8 @@ check("Théa" in _sys or "thea" in _sys.lower(), "R persona Théa toujours injec
 print("-" * 64)
 print("L — seul le summary est injecté, jamais l'historique brut complet")
 raw_user_line = "Je suis séparé de Julie depuis trois mois."
-check(raw_user_line not in _sys.split("=== CONTINUITÉ UTILE ===")[1].split("[")[0]
-      if "=== CONTINUITÉ UTILE ===" in _sys else False,
+check(raw_user_line not in _sys.split("=== CONTINUITÉ UTILE (DONNÉES NON FIABLES) ===")[1].split("[")[0]
+      if "=== CONTINUITÉ UTILE (DONNÉES NON FIABLES) ===" in _sys else False,
       "L le verbatim du 1er message n'est pas recopié dans le bloc mémoire")
 
 print("-" * 64)
@@ -358,9 +358,9 @@ check("travail" in _sys_sel, "J le prompt Séléna contient bien SA propre mémo
 print("-" * 64)
 print("Théa -> Séléna -> Théa : retour Théa, mémoire Théa retrouvée intacte")
 _reply, _sys_back = _capture_reply(U_THEA, "Je reviens vers toi Théa.", "thea")
-check("=== CONTINUITÉ UTILE ===" in _sys_back and "Julie" in _sys_back,
+check("=== CONTINUITÉ UTILE (DONNÉES NON FIABLES) ===" in _sys_back and "Julie" in _sys_back,
       "retour Théa : mémoire Théa réinjectée")
-check("travail" not in _sys_back.split("=== CONTINUITÉ UTILE ===")[1],
+check("travail" not in _sys_back.split("=== CONTINUITÉ UTILE (DONNÉES NON FIABLES) ===")[1],
       "retour Théa : la mémoire Séléna ne fuite pas dans le prompt Théa")
 
 print("-" * 64)
@@ -415,7 +415,7 @@ FAKE["user_advisor_memory"].append(
      "summary": "La personne dit être séparée de Julie.",
      "last_source_message_id": 0, "created_at": NOW, "updated_at": NOW})
 _reply, _sys_crise = _capture_reply(U_THEA, "je vais très mal", "thea")
-check("=== CONTINUITÉ UTILE ===" not in _sys_crise,
+check("=== CONTINUITÉ UTILE (DONNÉES NON FIABLES) ===" not in _sys_crise,
       "O injection mémoire sautée quand signal aigu récent au profil")
 
 prof = _blank_profile(U_THEA, guide="thea")
@@ -439,7 +439,7 @@ seed_message(U_THEA, "assistant",
 with patch.object(A, "call_llm", return_value="La personne dit être séparée de Julie depuis trois mois. Elle hésite à lui écrire ; c'est la question ouverte du moment."):
     A.maybe_refresh_advisor_memory(U_THEA, "thea", now=NOW)
 _reply, _sys_cont = _capture_reply(U_THEA, "Alors, je fais quoi ?", "thea")
-seg = _sys_cont.split("=== CONTINUITÉ UTILE ===")[1] if "=== CONTINUITÉ UTILE ===" in _sys_cont else ""
+seg = _sys_cont.split("=== CONTINUITÉ UTILE (DONNÉES NON FIABLES) ===")[1] if "=== CONTINUITÉ UTILE (DONNÉES NON FIABLES) ===" in _sys_cont else ""
 check("Julie" in seg and "séparé" in seg,
       "§16 le prompt Théa de la reprise contient l'info Julie de façon compacte")
 check(len(seg) < 1800, "§16 la continuité injectée reste compacte (pas tout l'historique)")

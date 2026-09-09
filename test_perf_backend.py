@@ -223,13 +223,17 @@ check("--worker-class gthread" in _cmd and "--threads 8" in _cmd
 # ===========================================================================
 check(A.LLM_HTTP_TIMEOUT <= 30 and A.LLM_HTTP_TIMEOUT * 3 < 120,
       "11a LLM_HTTP_TIMEOUT réduit (<=30 s) -> pire cas 3 fournisseurs < gunicorn timeout")
-_llm_src = inspect.getsource(A.call_llm)
+_llm_src = inspect.getsource(A._call_llm_once)
 check("timeout=45" not in _llm_src and _llm_src.count("timeout=LLM_HTTP_TIMEOUT") >= 3,
-      "11b call_llm : chaque fournisseur borné par LLM_HTTP_TIMEOUT (openai/openrouter/groq)")
+      "11b _call_llm_once : chaque fournisseur borné par LLM_HTTP_TIMEOUT (openai/openrouter/groq)")
 check('chain = [provider]' in _llm_src
       and _llm_src.count('chain.append(') == 2
       and _llm_src.count("for p in chain") == 1,
       "11c chaîne de repli bornée et fixe (provider -> openrouter -> groq)")
+_wrap_src = inspect.getsource(A.call_llm)
+check("_call_llm_once(" in _wrap_src and "fallback_failure" in _wrap_src
+      and "_llm_output_safety_filter(" in _wrap_src,
+      "11d call_llm : signal fallback_failure + filtre de sortie borné")
 
 # ---------------------------------------------------------------------------
 print("-" * 60)
