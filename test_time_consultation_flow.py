@@ -87,10 +87,11 @@ def seed_earned(n=1, uid=UID):
 
 
 def seed_account(uid=UID, deleted_at=None, first_free=3600, purchased=0,
-                 first_consultation_used_at=None):
+                 first_consultation_used_at=None, earned=0):
     DB["accounts"][str(uid)] = {
         "user_id": str(uid), "deleted_at": deleted_at,
         "first_free_seconds_remaining": first_free,
+        "earned_seconds_remaining": earned,
         "purchased_seconds_remaining": purchased,
         "first_consultation_used_at": first_consultation_used_at,
     }
@@ -225,13 +226,15 @@ class FakeCursor:
                 c0["last_activity_at"] = la
                 self.rowcount = 1
 
-        elif k in ("SELECT first_free_seconds_remaining, purchased_seconds_remaining "
-                   "FROM accounts WHERE user_id=%s",
-                   "SELECT first_free_seconds_remaining, purchased_seconds_remaining "
-                   "FROM accounts WHERE user_id=%s FOR UPDATE"):
+        elif k in ("SELECT first_free_seconds_remaining, earned_seconds_remaining, "
+                   "purchased_seconds_remaining FROM accounts WHERE user_id=%s",
+                   "SELECT first_free_seconds_remaining, earned_seconds_remaining, "
+                   "purchased_seconds_remaining FROM accounts WHERE user_id=%s "
+                   "FOR UPDATE"):
             (uid,) = p
             a = DB["accounts"].get(str(uid))
             self._result = ((a["first_free_seconds_remaining"],
+                             a.get("earned_seconds_remaining", 0),
                              a["purchased_seconds_remaining"]) if a else None)
 
         elif k in ("SELECT monthly_allowance_seconds, monthly_used_seconds "
@@ -256,13 +259,18 @@ class FakeCursor:
                                     a0["monthly_used_seconds"])
 
         elif k == ("UPDATE accounts SET first_free_seconds_remaining=%s, "
-                   "purchased_seconds_remaining=%s WHERE user_id=%s"):
-            ff, pu, uid = p
+                   "earned_seconds_remaining=%s, purchased_seconds_remaining=%s "
+                   "WHERE user_id=%s"):
+            ff, ea, pu, uid = p
             a = DB["accounts"].get(str(uid))
             if a:
                 a["first_free_seconds_remaining"] = ff
+                a["earned_seconds_remaining"] = ea
                 a["purchased_seconds_remaining"] = pu
                 self.rowcount = 1
+
+        elif k.startswith("INSERT INTO time_ledger "):
+            self.rowcount = 1
 
         elif k == ("UPDATE accounts SET first_consultation_used_at=%s "
                    "WHERE user_id=%s AND first_consultation_used_at IS NULL"):

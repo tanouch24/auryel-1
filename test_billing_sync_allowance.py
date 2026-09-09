@@ -119,8 +119,8 @@ GS_EARNED = _norm("SELECT COUNT(*) FROM earned_credits "
                   "WHERE user_id=%s AND consumed_at IS NULL")
 GS_FF = _norm("SELECT first_consultation_used_at FROM accounts WHERE user_id=%s")
 # _get_time_snapshot_tx (moteur temps, lecture seule)
-TS_ACC = _norm("SELECT first_free_seconds_remaining, purchased_seconds_remaining "
-               "FROM accounts WHERE user_id=%s")
+TS_ACC = _norm("SELECT first_free_seconds_remaining, earned_seconds_remaining, "
+               "purchased_seconds_remaining FROM accounts WHERE user_id=%s")
 TS_ALW = _norm("SELECT monthly_allowance_seconds, monthly_used_seconds "
                "FROM consultation_allowance WHERE user_id=%s AND period_start <= %s "
                "AND period_end > %s ORDER BY period_start DESC LIMIT 1")
@@ -291,6 +291,7 @@ class FakeCursor:
             with _STORE_LOCK:
                 r = next((a for a in DB["accounts"] if a["user_id"] == uid), None)
             self._result = ((r.get("first_free_seconds_remaining"),
+                             r.get("earned_seconds_remaining", 0),
                              r.get("purchased_seconds_remaining")) if r else None)
 
         elif k == TS_ALW:

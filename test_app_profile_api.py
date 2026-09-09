@@ -65,11 +65,13 @@ def reset_db():
 def seed_account(user_id, deleted_at=None, email="u@example.com",
                  first_consultation_used_at=None,
                  first_free_seconds_remaining=3600,
-                 purchased_seconds_remaining=0):
+                 purchased_seconds_remaining=0,
+                 earned_seconds_remaining=0):
     FAKE["accounts"].append({"user_id": user_id, "email": email,
                              "deleted_at": deleted_at,
                              "first_consultation_used_at": first_consultation_used_at,
                              "first_free_seconds_remaining": first_free_seconds_remaining,
+                             "earned_seconds_remaining": earned_seconds_remaining,
                              "purchased_seconds_remaining": purchased_seconds_remaining})
 
 
@@ -419,30 +421,31 @@ class FakeCursor:
                     c["billed_until"] = bu
                     self.rowcount = 1
 
-        elif k == ("SELECT first_free_seconds_remaining, purchased_seconds_remaining "
-                   "FROM accounts WHERE user_id=%s FOR UPDATE"):
+        elif k in ("SELECT first_free_seconds_remaining, earned_seconds_remaining, "
+                   "purchased_seconds_remaining FROM accounts WHERE user_id=%s "
+                   "FOR UPDATE",
+                   "SELECT first_free_seconds_remaining, earned_seconds_remaining, "
+                   "purchased_seconds_remaining FROM accounts WHERE user_id=%s"):
             (uid,) = p
             r = next((a for a in FAKE["accounts"] if a["user_id"] == str(uid)), None)
             if r is not None:
                 self._result = (r.get("first_free_seconds_remaining", 0),
-                                r.get("purchased_seconds_remaining", 0))
-
-        elif k == ("SELECT first_free_seconds_remaining, purchased_seconds_remaining "
-                   "FROM accounts WHERE user_id=%s"):
-            (uid,) = p
-            r = next((a for a in FAKE["accounts"] if a["user_id"] == str(uid)), None)
-            if r is not None:
-                self._result = (r.get("first_free_seconds_remaining", 0),
+                                r.get("earned_seconds_remaining", 0),
                                 r.get("purchased_seconds_remaining", 0))
 
         elif k == ("UPDATE accounts SET first_free_seconds_remaining=%s, "
-                   "purchased_seconds_remaining=%s WHERE user_id=%s"):
-            ff, pu, uid = p
+                   "earned_seconds_remaining=%s, purchased_seconds_remaining=%s "
+                   "WHERE user_id=%s"):
+            ff, ea, pu, uid = p
             r = next((a for a in FAKE["accounts"] if a["user_id"] == str(uid)), None)
             if r is not None:
                 r["first_free_seconds_remaining"] = ff
+                r["earned_seconds_remaining"] = ea
                 r["purchased_seconds_remaining"] = pu
                 self.rowcount = 1
+
+        elif k.startswith("INSERT INTO time_ledger "):
+            self.rowcount = 1
 
         elif k == ("SELECT period_start, monthly_allowance_seconds, monthly_used_seconds "
                    "FROM consultation_allowance WHERE user_id=%s AND period_start <= %s "

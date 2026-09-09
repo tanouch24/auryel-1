@@ -64,18 +64,21 @@ def T(h, m, s=0):
 # ---------------------------------------------------------------------------
 # Fake DB dédié
 # ---------------------------------------------------------------------------
-DB = {"accounts": {}, "allowance": [], "consultations": {}}
+DB = {"accounts": {}, "allowance": [], "consultations": {}, "ledger": []}
 
 
 def reset_db():
     DB["accounts"].clear()
     DB["allowance"].clear()
     DB["consultations"].clear()
+    DB["ledger"].clear()
 
 
-def seed_account(uid, first_free=None, purchased=0, first_consultation_used_at=None):
+def seed_account(uid, first_free=None, purchased=0, first_consultation_used_at=None,
+                 earned=0):
     DB["accounts"][str(uid)] = {
         "first_free_seconds_remaining": first_free,
+        "earned_seconds_remaining": earned,
         "purchased_seconds_remaining": purchased,
         "first_consultation_used_at": first_consultation_used_at,
     }
@@ -119,13 +122,15 @@ class FakeCursor:
         self._result = None
         self.rowcount = -1
 
-        if k == ("SELECT first_free_seconds_remaining, purchased_seconds_remaining "
-                 "FROM accounts WHERE user_id=%s") \
-           or k == ("SELECT first_free_seconds_remaining, purchased_seconds_remaining "
-                    "FROM accounts WHERE user_id=%s FOR UPDATE"):
+        if k == ("SELECT first_free_seconds_remaining, earned_seconds_remaining, "
+                 "purchased_seconds_remaining FROM accounts WHERE user_id=%s") \
+           or k == ("SELECT first_free_seconds_remaining, earned_seconds_remaining, "
+                    "purchased_seconds_remaining FROM accounts WHERE user_id=%s "
+                    "FOR UPDATE"):
             (uid,) = p
             a = DB["accounts"].get(str(uid))
             self._result = (a["first_free_seconds_remaining"],
+                            a.get("earned_seconds_remaining", 0),
                             a["purchased_seconds_remaining"]) if a else None
 
         elif k == ("SELECT monthly_allowance_seconds, monthly_used_seconds "
@@ -154,15 +159,25 @@ class FakeCursor:
                                 rows[0]["monthly_used_seconds"])
 
         elif k == ("UPDATE accounts SET first_free_seconds_remaining=%s, "
-                   "purchased_seconds_remaining=%s WHERE user_id=%s"):
-            ff, pu, uid = p
+                   "earned_seconds_remaining=%s, purchased_seconds_remaining=%s "
+                   "WHERE user_id=%s"):
+            ff, ea, pu, uid = p
             a = DB["accounts"].get(str(uid))
             if a is not None:
                 a["first_free_seconds_remaining"] = ff
+                a["earned_seconds_remaining"] = ea
                 a["purchased_seconds_remaining"] = pu
                 self.rowcount = 1
             else:
                 self.rowcount = 0
+
+        elif k.startswith("INSERT INTO time_ledger "):
+            # audit append-only : on capture pour d'éventuelles assertions
+            _, _uid, _bucket, _delta, _reason, _ref, _ca = p
+            DB["ledger"].append({"user_id": _uid, "bucket": _bucket,
+                                 "delta_seconds": _delta, "reason": _reason,
+                                 "ref_id": _ref})
+            self.rowcount = 1
 
         elif k == ("UPDATE accounts SET first_consultation_used_at=%s "
                    "WHERE user_id=%s AND first_consultation_used_at IS NULL"):

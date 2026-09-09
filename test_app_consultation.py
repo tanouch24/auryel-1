@@ -64,7 +64,8 @@ def reset_db():
 def seed_account(user_id, deleted_at=None, email="u@example.com",
                  first_consultation_used_at=None,
                  first_free_seconds_remaining="__backfill__",
-                 purchased_seconds_remaining=0):
+                 purchased_seconds_remaining=0,
+                 earned_seconds_remaining=0):
     # first_free_seconds_remaining : miroir du backfill migration v34
     # (3600 si la gratuite n'a jamais été consommée, 0 sinon), sauf override.
     if first_free_seconds_remaining == "__backfill__":
@@ -74,6 +75,7 @@ def seed_account(user_id, deleted_at=None, email="u@example.com",
         "user_id": user_id, "email": email, "deleted_at": deleted_at,
         "first_consultation_used_at": first_consultation_used_at,
         "first_free_seconds_remaining": first_free_seconds_remaining,
+        "earned_seconds_remaining": earned_seconds_remaining,
         "purchased_seconds_remaining": purchased_seconds_remaining,
     })
 
@@ -467,13 +469,15 @@ class FakeCursor:
             else:
                 self.rowcount = 0
 
-        elif k in ("SELECT first_free_seconds_remaining, purchased_seconds_remaining "
-                   "FROM accounts WHERE user_id=%s",
-                   "SELECT first_free_seconds_remaining, purchased_seconds_remaining "
-                   "FROM accounts WHERE user_id=%s FOR UPDATE"):
+        elif k in ("SELECT first_free_seconds_remaining, earned_seconds_remaining, "
+                   "purchased_seconds_remaining FROM accounts WHERE user_id=%s",
+                   "SELECT first_free_seconds_remaining, earned_seconds_remaining, "
+                   "purchased_seconds_remaining FROM accounts WHERE user_id=%s "
+                   "FOR UPDATE"):
             (uid,) = p
             a = next((x for x in FAKE["accounts"] if x["user_id"] == str(uid)), None)
             self._result = ((a.get("first_free_seconds_remaining"),
+                             a.get("earned_seconds_remaining", 0),
                              a.get("purchased_seconds_remaining")) if a else None)
 
         elif k in ("SELECT monthly_allowance_seconds, monthly_used_seconds "
@@ -508,15 +512,20 @@ class FakeCursor:
                 self._result = (rows[0]["period_start"], rows[0]["period_end"])
 
         elif k == ("UPDATE accounts SET first_free_seconds_remaining=%s, "
-                   "purchased_seconds_remaining=%s WHERE user_id=%s"):
-            ff, pu, uid = p
+                   "earned_seconds_remaining=%s, purchased_seconds_remaining=%s "
+                   "WHERE user_id=%s"):
+            ff, ea, pu, uid = p
             a = next((x for x in FAKE["accounts"] if x["user_id"] == str(uid)), None)
             if a is not None:
                 a["first_free_seconds_remaining"] = ff
+                a["earned_seconds_remaining"] = ea
                 a["purchased_seconds_remaining"] = pu
                 self.rowcount = 1
             else:
                 self.rowcount = 0
+
+        elif k.startswith("INSERT INTO time_ledger "):
+            self.rowcount = 1
 
         elif k == ("UPDATE consultation_allowance SET monthly_used_seconds=%s "
                    "WHERE user_id=%s AND period_start=%s"):
@@ -1022,7 +1031,8 @@ check(set(j9["consultation"].keys()) == {"id", "advisor_id", "started_at", "expi
                                           "seconds_remaining", "credit_source", "opened_now"},
       "9b clés consultation exactes")
 check(set(j9["time"].keys()) == {"first_free_remaining_seconds", "premium_remaining_seconds",
-                                  "purchased_remaining_seconds", "total_remaining_seconds",
+                                  "earned_remaining_seconds", "purchased_remaining_seconds",
+                                  "total_remaining_seconds",
                                   "window_active", "window_expires_at"},
       "9c clés time exactes")
 check(set(j9["quota"].keys()) == {"is_premium", "monthly_limit", "monthly_used",

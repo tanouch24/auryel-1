@@ -1584,6 +1584,129 @@ def init_db():
         $$;
     """)
     conn.commit()
+
+    # Migration v42 — SÉPARATION DES BUCKETS DE TEMPS (minutes GAGNÉES vs heures
+    # ACHETÉES). PUREMENT ADDITIF : 1 colonne + 2 tables neuves + 1 FK + 1
+    # backfill NON REJOUABLE. Aucune colonne existante ALTER-ée hors ajout,
+    # aucun DROP / TRUNCATE. `resync_premium_entitlement` NON touché. Miroir
+    # lisible : migrations/016_time_buckets.sql.
+    #
+    #   accounts.earned_seconds_remaining
+    #     Nouveau bucket « minutes gagnées » (récompenses partage / bien-être /
+    #     Memory). Débité APRÈS Premium et AVANT purchased. DEFAULT 0.
+    #
+    #   time_ledger
+    #     Journal d'audit des mouvements de temps (crédits > 0, débits < 0),
+    #     `bucket` ∈ (first_free, premium, earned, purchased). JAMAIS relu comme
+    #     source de vérité — les soldes restent sur accounts /
+    #     consultation_allowance. FK -> accounts(user_id), purge explicite au
+    #     DELETE compte (_ACCOUNT_DELETE_CHILD_TABLES).
+    #
+    #   schema_backfills
+    #     Marqueur générique « ce backfill a déjà été appliqué » : rend le
+    #     déplacement purchased -> earned STRICTEMENT non rejouable.
+    #
+    #   BACKFILL v42_purchased_rewards_to_earned
+    #     HYPOTHÈSE VÉRIFIÉE DANS LE CODE : les seules écritures de
+    #     `accounts.purchased_seconds_remaining` sont (1) le débit du moteur
+    #     temps et (2) TROIS crédits de récompense (partage L~5040, cycle
+    #     bien-être L~5290, jeu Memory L~5735). AUCUN achat mobile (le
+    #     consommable `auryel_consultation_extra` n'est pas implémenté). Donc
+    #     tout le stock actuel de `purchased_seconds_remaining` provient des
+    #     récompenses -> on le déplace UNE fois vers `earned_seconds_remaining`,
+    #     on remet purchased à 0, on trace chaque mouvement au ledger, et on
+    #     pose le marqueur. Au rejeu d'init_db() : le marqueur est présent ->
+    #     rien n'est déplacé une seconde fois.
+    try:
+        c.execute(
+            "ALTER TABLE accounts "
+            "ADD COLUMN IF NOT EXISTS earned_seconds_remaining INTEGER DEFAULT 0"
+        )
+        c.execute("""
+            CREATE TABLE IF NOT EXISTS time_ledger (
+                id            UUID         PRIMARY KEY,
+                user_id       UUID         NOT NULL,
+                bucket        TEXT         NOT NULL,
+                delta_seconds INTEGER      NOT NULL,
+                reason        TEXT         NOT NULL,
+                ref_id        TEXT,
+                created_at    TIMESTAMPTZ  NOT NULL DEFAULT NOW()
+            )
+        """)
+        c.execute("""
+            CREATE INDEX IF NOT EXISTS idx_time_ledger_user
+            ON time_ledger (user_id, created_at DESC)
+        """)
+        c.execute("""
+            CREATE TABLE IF NOT EXISTS schema_backfills (
+                name       TEXT         PRIMARY KEY,
+                applied_at TIMESTAMPTZ  NOT NULL DEFAULT NOW()
+            )
+        """)
+        conn.commit()
+    except Exception as e:
+        conn.rollback()
+        print(f"Migration v42 (time buckets): {e}")
+    c.execute("""
+        DO $$
+        BEGIN
+            ALTER TABLE time_ledger
+                ADD CONSTRAINT fk_time_ledger_account
+                FOREIGN KEY (user_id) REFERENCES accounts(user_id);
+        EXCEPTION
+            WHEN duplicate_object THEN NULL;
+        END
+        $$;
+    """)
+    conn.commit()
+
+    # Backfill NON REJOUABLE : purchased (récompenses) -> earned, une seule fois.
+    try:
+        c.execute(
+            "SELECT 1 FROM schema_backfills "
+            "WHERE name='v42_purchased_rewards_to_earned'"
+        )
+        if c.fetchone() is None:
+            c.execute(
+                "SELECT user_id, COALESCE(purchased_seconds_remaining, 0) "
+                "FROM accounts WHERE COALESCE(purchased_seconds_remaining, 0) <> 0"
+            )
+            _rows = c.fetchall()
+            for _uid, _amt in _rows:
+                _amt = int(_amt)
+                c.execute(
+                    "UPDATE accounts SET "
+                    "  earned_seconds_remaining = "
+                    "      COALESCE(earned_seconds_remaining, 0) + %s, "
+                    "  purchased_seconds_remaining = 0 "
+                    "WHERE user_id=%s",
+                    (_amt, str(_uid)),
+                )
+                c.execute(
+                    "INSERT INTO time_ledger "
+                    "(id, user_id, bucket, delta_seconds, reason, ref_id, created_at) "
+                    "VALUES (%s, %s, 'purchased', %s, "
+                    "        'backfill_v42_purchased_to_earned', NULL, NOW())",
+                    (str(uuid.uuid4()), str(_uid), -_amt),
+                )
+                c.execute(
+                    "INSERT INTO time_ledger "
+                    "(id, user_id, bucket, delta_seconds, reason, ref_id, created_at) "
+                    "VALUES (%s, %s, 'earned', %s, "
+                    "        'backfill_v42_purchased_to_earned', NULL, NOW())",
+                    (str(uuid.uuid4()), str(_uid), _amt),
+                )
+            c.execute(
+                "INSERT INTO schema_backfills (name) "
+                "VALUES ('v42_purchased_rewards_to_earned') "
+                "ON CONFLICT (name) DO NOTHING"
+            )
+            conn.commit()
+            print(f"Migration v42 backfill : {len(_rows)} compte(s) purchased->earned")
+    except Exception as e:
+        conn.rollback()
+        print(f"Migration v42 (backfill purchased->earned): {e}")
+
     conn.close()
 
 def reset_db():
@@ -3797,6 +3920,7 @@ def _state_with_time_settle(user_id, now=None):
                 "time_snapshot": {
                     "first_free_remaining_seconds": 0,
                     "premium_remaining_seconds": 0,
+                    "earned_remaining_seconds": 0,
                     "purchased_remaining_seconds": 0,
                     "total_remaining_seconds": 0,
                 },
@@ -3888,6 +4012,7 @@ def _time_json(st):
     return {
         "first_free_remaining_seconds": int(snap["first_free_remaining_seconds"]),
         "premium_remaining_seconds": int(snap["premium_remaining_seconds"]),
+        "earned_remaining_seconds": int(snap.get("earned_remaining_seconds", 0)),
         "purchased_remaining_seconds": int(snap["purchased_remaining_seconds"]),
         "total_remaining_seconds": int(snap["total_remaining_seconds"]),
         "window_active": bool(st["window_active"]),
@@ -5040,13 +5165,19 @@ def api_rewards_daily_share():
         if raw_count >= _SHARE_REWARD_TARGET_DAYS:
             c.execute(
                 "UPDATE accounts SET "
-                "  purchased_seconds_remaining = "
-                "      COALESCE(purchased_seconds_remaining, 0) + %s, "
+                "  earned_seconds_remaining = "
+                "      COALESCE(earned_seconds_remaining, 0) + %s, "
                 "  share_reward_credited_at = %s "
                 "WHERE user_id=%s AND share_reward_credited_at IS NULL",
                 (_SHARE_REWARD_CREDIT_SECONDS, now, user_id),
             )
             credited = (c.rowcount == 1)
+            if credited:
+                _time_ledger_write(
+                    c, user_id,
+                    [("earned", _SHARE_REWARD_CREDIT_SECONDS)],
+                    "reward_share", None, now,
+                )
 
         conn.commit()
         if credited:
@@ -5284,10 +5415,15 @@ def _reconcile_wellbeing_progress(user_id, now=None):
             )
             if c.rowcount == 1:
                 c.execute(
-                    "UPDATE accounts SET purchased_seconds_remaining = "
-                    "COALESCE(purchased_seconds_remaining, 0) + %s "
+                    "UPDATE accounts SET earned_seconds_remaining = "
+                    "COALESCE(earned_seconds_remaining, 0) + %s "
                     "WHERE user_id=%s",
                     (_WELLBEING_REWARD_SECONDS, user_id),
+                )
+                _time_ledger_write(
+                    c, user_id,
+                    [("earned", _WELLBEING_REWARD_SECONDS)],
+                    "reward_wellbeing_cycle", cyc, now,
                 )
                 credited = True
                 credited_seconds += _WELLBEING_REWARD_SECONDS
@@ -5730,10 +5866,15 @@ def api_memory_complete():
                 )
                 if c.rowcount == 1:
                     c.execute(
-                        "UPDATE accounts SET purchased_seconds_remaining = "
-                        "COALESCE(purchased_seconds_remaining, 0) + %s "
+                        "UPDATE accounts SET earned_seconds_remaining = "
+                        "COALESCE(earned_seconds_remaining, 0) + %s "
                         "WHERE user_id=%s",
                         (cfg["reward_seconds"], user_id),
+                    )
+                    _time_ledger_write(
+                        c, user_id,
+                        [("earned", cfg["reward_seconds"])],
+                        "reward_memory_game", game_id, now,
                     )
                     credited = True
                     credited_seconds = cfg["reward_seconds"]
@@ -6350,6 +6491,7 @@ _ACCOUNT_DELETE_CHILD_TABLES = (
     # puis consultations, puis profil, table récompense et sessions.
     "messages",
     "ai_reports",
+    "time_ledger",
     "tirages",
     "earned_credits",
     "user_advisor_memory",
@@ -9071,6 +9213,8 @@ def _open_time_consultation_flow_tx(user_id, preferred_advisor_id, tirage_id, no
                         int(snap["first_free_remaining_seconds"]),
                     "premium_remaining_seconds":
                         int(snap["premium_remaining_seconds"]),
+                    "earned_remaining_seconds":
+                        int(snap.get("earned_remaining_seconds", 0)),
                     "purchased_remaining_seconds":
                         int(snap["purchased_remaining_seconds"]),
                     "total_remaining_seconds": 0,
@@ -9136,6 +9280,8 @@ def _open_time_consultation_flow_tx(user_id, preferred_advisor_id, tirage_id, no
                     int(snap2["first_free_remaining_seconds"]),
                 "premium_remaining_seconds":
                     int(snap2["premium_remaining_seconds"]),
+                "earned_remaining_seconds":
+                    int(snap2.get("earned_remaining_seconds", 0)),
                 "purchased_remaining_seconds":
                     int(snap2["purchased_remaining_seconds"]),
                 "total_remaining_seconds":
@@ -9231,17 +9377,46 @@ def _window_end(last_activity_at):
     return last_activity_at + timedelta(seconds=ACTIVITY_GRACE_SECONDS)
 
 
-def _time_totals(first_free, premium, purchased):
-    """Normalise (borne >= 0) et calcule le total."""
+def _time_totals(first_free, premium, earned, purchased):
+    """Normalise (borne >= 0) et calcule le total. Ordre des arguments = ordre
+    de DÉBIT : first_free -> premium -> earned -> purchased."""
     ff = first_free if first_free and first_free > 0 else 0
     pr = premium if premium and premium > 0 else 0
+    ea = earned if earned and earned > 0 else 0
     pu = purchased if purchased and purchased > 0 else 0
     return {
         "first_free_remaining_seconds": ff,
         "premium_remaining_seconds": pr,
+        "earned_remaining_seconds": ea,
         "purchased_remaining_seconds": pu,
-        "total_remaining_seconds": ff + pr + pu,
+        "total_remaining_seconds": ff + pr + ea + pu,
     }
+
+
+_TIME_LEDGER_BUCKETS = ("first_free", "premium", "earned", "purchased")
+
+
+def _time_ledger_write(cursor, user_id, entries, reason, ref_id, now):
+    """Trace des mouvements de temps dans `time_ledger`, DANS la transaction
+    courante (aucun commit ici — l'atomicité de l'appelant est préservée).
+
+    `entries` : itérable de (bucket, delta_seconds). Une ligne est écrite par
+    delta NON NUL uniquement. `delta_seconds` > 0 = crédit, < 0 = débit.
+    Le ledger est APPEND-ONLY et n'est JAMAIS relu comme source de vérité."""
+    for bucket, delta in entries:
+        try:
+            d = int(delta or 0)
+        except (TypeError, ValueError):
+            d = 0
+        if d == 0:
+            continue
+        cursor.execute(
+            "INSERT INTO time_ledger "
+            "(id, user_id, bucket, delta_seconds, reason, ref_id, created_at) "
+            "VALUES (%s, %s, %s, %s, %s, %s, %s)",
+            (str(uuid.uuid4()), str(user_id), bucket, d, reason,
+             str(ref_id) if ref_id is not None else None, now),
+        )
 
 
 def _active_allowance_seconds_for_update(cursor, uid, now):
@@ -9267,13 +9442,15 @@ def _get_time_snapshot_tx(cursor, user_id, now):
     get_consultation_state (period_start <= now < period_end, la plus récente)."""
     uid = str(user_id)
     cursor.execute(
-        "SELECT first_free_seconds_remaining, purchased_seconds_remaining "
+        "SELECT first_free_seconds_remaining, earned_seconds_remaining, "
+        "       purchased_seconds_remaining "
         "FROM accounts WHERE user_id=%s",
         (uid,),
     )
     arow = cursor.fetchone()
     first_free = arow[0] if arow and arow[0] is not None else 0
-    purchased = arow[1] if arow and arow[1] is not None else 0
+    earned = arow[1] if arow and arow[1] is not None else 0
+    purchased = arow[2] if arow and arow[2] is not None else 0
 
     cursor.execute(
         """SELECT monthly_allowance_seconds, monthly_used_seconds
@@ -9291,14 +9468,16 @@ def _get_time_snapshot_tx(cursor, user_id, now):
     else:
         premium = 0
 
-    return _time_totals(first_free, premium, purchased)
+    return _time_totals(first_free, premium, earned, purchased)
 
 
-def _debit_consultation_seconds_tx(cursor, user_id, seconds, now):
+def _debit_consultation_seconds_tx(cursor, user_id, seconds, now, ref_id=None):
     """Débite `seconds` (>= 0) dans l'ordre STRICT first_free -> premium ->
-    purchased, sur un curseur DÉJÀ ouvert. Verrous : accounts FOR UPDATE puis la
-    période Premium active FOR UPDATE. Ni commit ni rollback. Aucun bucket ne
-    passe sous 0 ; un intervalle qui traverse plusieurs buckets est réparti.
+    earned -> purchased, sur un curseur DÉJÀ ouvert. Verrous : accounts FOR
+    UPDATE puis la période Premium active FOR UPDATE. Ni commit ni rollback.
+    Aucun bucket ne passe sous 0 ; un intervalle qui traverse plusieurs buckets
+    est réparti. `ref_id` (consultation_id) sert uniquement à annoter le
+    time_ledger — le débit lui-même ne le lit jamais.
 
     TIMER-A.3c-2a — POSE COMMUNE de `first_consultation_used_at` : dès qu'AU
     MOINS 1 seconde de `first_free_seconds_remaining` est réellement débitée
@@ -9315,6 +9494,7 @@ def _debit_consultation_seconds_tx(cursor, user_id, seconds, now):
         "exhausted": <bool>,          # total restant == 0 après débit
         "first_free_remaining_seconds": <int>,
         "premium_remaining_seconds": <int>,
+        "earned_remaining_seconds": <int>,
         "purchased_remaining_seconds": <int>,
         "total_remaining_seconds": <int> }
     """
@@ -9322,15 +9502,19 @@ def _debit_consultation_seconds_tx(cursor, user_id, seconds, now):
     remaining = _as_seconds(seconds)
 
     cursor.execute(
-        "SELECT first_free_seconds_remaining, purchased_seconds_remaining "
+        "SELECT first_free_seconds_remaining, earned_seconds_remaining, "
+        "       purchased_seconds_remaining "
         "FROM accounts WHERE user_id=%s FOR UPDATE",
         (uid,),
     )
     arow = cursor.fetchone()
     first_free = arow[0] if arow and arow[0] is not None else 0
-    purchased = arow[1] if arow and arow[1] is not None else 0
+    earned = arow[1] if arow and arow[1] is not None else 0
+    purchased = arow[2] if arow and arow[2] is not None else 0
     if first_free < 0:
         first_free = 0
+    if earned < 0:
+        earned = 0
     if purchased < 0:
         purchased = 0
 
@@ -9353,19 +9537,24 @@ def _debit_consultation_seconds_tx(cursor, user_id, seconds, now):
     premium_remaining -= take_pr
     remaining -= take_pr
 
+    take_ea = earned if earned < remaining else remaining
+    earned -= take_ea
+    remaining -= take_ea
+
     take_pu = purchased if purchased < remaining else remaining
     purchased -= take_pu
     remaining -= take_pu
 
-    debited = take_ff + take_pr + take_pu
+    debited = take_ff + take_pr + take_ea + take_pu
     unbilled = remaining  # toujours >= 0
 
-    if take_ff or take_pu:
+    if take_ff or take_ea or take_pu:
         cursor.execute(
             "UPDATE accounts "
-            "SET first_free_seconds_remaining=%s, purchased_seconds_remaining=%s "
+            "SET first_free_seconds_remaining=%s, earned_seconds_remaining=%s, "
+            "    purchased_seconds_remaining=%s "
             "WHERE user_id=%s",
-            (first_free, purchased, uid),
+            (first_free, earned, purchased, uid),
         )
     if take_ff > 0:
         # 1er débit réel de la gratuite -> marque analytique/rétro-compat.
@@ -9382,7 +9571,16 @@ def _debit_consultation_seconds_tx(cursor, user_id, seconds, now):
             (used + take_pr, uid, period_start),
         )
 
-    totals = _time_totals(first_free, premium_remaining, purchased)
+    # Audit APPEND-ONLY : une ligne par bucket réellement débité (delta < 0),
+    # DANS cette transaction. Ne modifie aucun solde, ne lève pas l'atomicité.
+    _time_ledger_write(
+        cursor, uid,
+        [("first_free", -take_ff), ("premium", -take_pr),
+         ("earned", -take_ea), ("purchased", -take_pu)],
+        "consultation_debit", ref_id, now,
+    )
+
+    totals = _time_totals(first_free, premium_remaining, earned, purchased)
     totals["debited_seconds"] = debited
     totals["unbilled_seconds"] = unbilled
     totals["exhausted"] = totals["total_remaining_seconds"] == 0
@@ -9451,7 +9649,8 @@ def _settle_consultation_time_tx(cursor, user_id, consultation_id, now):
     debited = 0
     exhausted = False
     if requested > 0:
-        debit = _debit_consultation_seconds_tx(cursor, uid, requested, now)
+        debit = _debit_consultation_seconds_tx(
+            cursor, uid, requested, now, ref_id=str(consultation_id))
         debited = debit["debited_seconds"]
         exhausted = debit["unbilled_seconds"] > 0
 

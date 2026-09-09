@@ -57,7 +57,7 @@ UID2 = "22222222-2222-4222-8222-222222222222"
 #   _TIRAGE   : {(uid, date)}              -> tirages (date Europe/Paris de created_at)
 #   _CONSULT  : {(uid, date)}              -> consultations (date Europe/Paris de last_activity_at)
 #   _CYCLES   : {(uid, cycle_number)}      -> wellbeing_cycle_rewards
-#   _ACCOUNTS : uid -> {"purchased": int, "deleted_at": None|ts}
+#   _ACCOUNTS : uid -> {"earned": int, "deleted_at": None|ts}
 # ---------------------------------------------------------------------------
 _MISSION = set()
 _TIRAGE = set()
@@ -70,8 +70,8 @@ _SQL_SEEN = []
 def _reset_db():
     _MISSION.clear(); _TIRAGE.clear(); _CONSULT.clear()
     _CYCLES.clear(); _ACCOUNTS.clear(); _SQL_SEEN.clear()
-    _ACCOUNTS[UID1] = {"purchased": 0, "deleted_at": None}
-    _ACCOUNTS[UID2] = {"purchased": 0, "deleted_at": None}
+    _ACCOUNTS[UID1] = {"earned": 0, "deleted_at": None}
+    _ACCOUNTS[UID2] = {"earned": 0, "deleted_at": None}
 
 
 def _seed_derived_day(uid, d):
@@ -166,15 +166,18 @@ class _Cur:
                 _CYCLES.add(key)
                 self.rowcount = 1
 
-        elif k == ("UPDATE accounts SET purchased_seconds_remaining = "
-                   "COALESCE(purchased_seconds_remaining, 0) + %s WHERE user_id=%s"):
+        elif k == ("UPDATE accounts SET earned_seconds_remaining = "
+                   "COALESCE(earned_seconds_remaining, 0) + %s WHERE user_id=%s"):
             secs, uid = p
             acc = _ACCOUNTS.get(uid)
             if acc:
-                acc["purchased"] += secs
+                acc["earned"] += secs
                 self.rowcount = 1
             else:
                 self.rowcount = 0
+
+        elif k.startswith("INSERT INTO time_ledger "):
+            self.rowcount = 1
 
         else:
             raise AssertionError("SQL non géré par le fake wellbeing : " + k)
@@ -362,17 +365,17 @@ def _cycle30_via(fourth):
     # exécution de la 4e action
     if fourth == "pensee":
         rj = _post("pensee").get_json()
-        return rj["reward"], _ACCOUNTS[UID1]["purchased"], rj
+        return rj["reward"], _ACCOUNTS[UID1]["earned"], rj
     if fourth == "moment":
         rj = _post("moment").get_json()
-        return rj["reward"], _ACCOUNTS[UID1]["purchased"], rj
+        return rj["reward"], _ACCOUNTS[UID1]["earned"], rj
     if fourth == "tirage":
         _TIRAGE.add((UID1, today))
     if fourth == "consultation":
         _CONSULT.add((UID1, today))
     rec = _reconcile(UID1)
     return ({"credited": rec["credited"], "credited_seconds": rec["credited_seconds"]},
-            _ACCOUNTS[UID1]["purchased"], _get().get_json())
+            _ACCOUNTS[UID1]["earned"], _get().get_json())
 
 
 for _who in ("consultation", "tirage", "pensee", "moment"):
@@ -390,10 +393,10 @@ _seed_full_days(UID1, 29)
 _seed_derived_day(UID1, today)
 _MISSION.add((UID1, today, "pensee"))
 _post("moment")                            # 30e journée -> crédit
-check(_ACCOUNTS[UID1]["purchased"] == 900, "10a 1er crédit = 900")
+check(_ACCOUNTS[UID1]["earned"] == 900, "10a 1er crédit = 900")
 _post("moment"); _post("pensee")
 _reconcile(UID1); _reconcile(UID1)         # tirage + message rejoués
-check(_ACCOUNTS[UID1]["purchased"] == 900,
+check(_ACCOUNTS[UID1]["earned"] == 900,
       "10b rejeux (POST wellbeing + reconcile x N) -> toujours 900, aucun double crédit")
 check(len([c for c in _CYCLES if c[0] == UID1]) == 1,
       "10c une seule ligne wellbeing_cycle_rewards pour le cycle 1")
@@ -403,11 +406,11 @@ check(len([c for c in _CYCLES if c[0] == UID1]) == 1,
 # ===========================================================================
 _reset_db(); _as(UID1)
 _seed_full_days(UID1, 30)
-before = _ACCOUNTS[UID1]["purchased"]
+before = _ACCOUNTS[UID1]["earned"]
 j = _get().get_json()
 check(j["completed_days_total"] == 30 and j["reward_earned_for_current_cycle"] is False,
       "11a GET voit 30 journées, reward pas encore accordée (aucun reconcile)")
-check(_ACCOUNTS[UID1]["purchased"] == before and "reward" not in j,
+check(_ACCOUNTS[UID1]["earned"] == before and "reward" not in j,
       "11b GET n'a rien crédité et ne renvoie pas de bloc reward")
 
 # ===========================================================================
@@ -425,7 +428,7 @@ check(j["reward"]["credited"] is False, "12b aucun crédit au jour 1 du cycle 2"
 
 _reset_db(); _as(UID1)
 _CYCLES.add((UID1, 1))
-_ACCOUNTS[UID1]["purchased"] = 900
+_ACCOUNTS[UID1]["earned"] = 900
 _seed_full_days(UID1, 59)
 _seed_derived_day(UID1, today)
 _MISSION.add((UID1, today, "pensee"))
@@ -433,7 +436,7 @@ j = _post("moment").get_json()
 check(j["completed_days_total"] == 60 and j["cycle_number"] == 2
       and j["cycle_completed_days"] == 30, "12c 60e journée -> cycle 2, jour 30")
 check(j["reward"] == {"credited": True, "credited_seconds": 900}
-      and _ACCOUNTS[UID1]["purchased"] == 1800,
+      and _ACCOUNTS[UID1]["earned"] == 1800,
       "12d +900 s pour le cycle 2, purchased = 1800")
 
 # ===========================================================================
@@ -480,9 +483,9 @@ _seed_full_days(UID2, 29)
 _seed_derived_day(UID2, today)
 _MISSION.add((UID2, today, "pensee"))
 jb = _post("moment").get_json()
-check(jb["reward"]["credited"] is True and _ACCOUNTS[UID2]["purchased"] == 900,
+check(jb["reward"]["credited"] is True and _ACCOUNTS[UID2]["earned"] == 900,
       "15b B gagne SA récompense")
-check(_ACCOUNTS[UID1]["purchased"] == 0, "15c le wallet de A n'a pas bougé")
+check(_ACCOUNTS[UID1]["earned"] == 0, "15c le wallet de A n'a pas bougé")
 
 # ===========================================================================
 # 16. date Europe/Paris — vrai _wellbeing_day (capturé avant monkeypatch)
