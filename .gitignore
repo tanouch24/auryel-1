@@ -16,6 +16,10 @@ backup_*.sql
 *.dump
 *.bak
 
+# EXCEPTION : les migrations de schéma versionnées SONT suivies (source de
+# vérité lisible, en parallèle des blocs Migration vN de init_db()).
+!migrations/*.sql
+
 # Docs internes
 CLAUDE.md
 CLAUDE copie.md

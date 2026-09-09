@@ -1423,6 +1423,101 @@ def init_db():
         $$;
     """)
     conn.commit()
+
+    # ------------------------------------------------------------------
+    # Migration v40 — PUSH ANDROID MULTI-APPAREIL (FCM). PUREMENT ADDITIF :
+    # 2 tables neuves + FK idempotentes. Aucune colonne existante ALTER-ée,
+    # aucun backfill, aucun DROP. Miroir lisible : migrations/014_push_devices.sql.
+    #
+    #   push_devices
+    #     UN appareil = UN jeton FCM. `fcm_token` UNIQUE : l'upsert
+    #     (POST /api/app/push/register) réaffecte proprement un jeton au compte
+    #     courant si le téléphone a changé de compte. `enabled` = interrupteur
+    #     logique (logout de CET appareil, unregister explicite) ; `revoked_at`
+    #     = suppression de compte ; `invalid_at` = jeton définitivement rejeté
+    #     par FCM (UNREGISTERED / INVALID_ARGUMENT) — jamais réactivé.
+    #     Le jeton n'est JAMAIS loggé.
+    #
+    #   notification_sends
+    #     Journal d'idempotence de l'envoi programmé. `dedupe_key` UNIQUE =
+    #     f"{category}:{user_id}:{periode Europe/Paris}" -> un INSERT ... ON
+    #     CONFLICT DO NOTHING garantit « au plus un envoi par catégorie /
+    #     utilisateur / période », robuste au redémarrage Railway, au
+    #     redéploiement et à un cron qui tourne souvent. `status` ∈
+    #     ('sent','skipped_no_device','skipped_disabled','dry_run','failed').
+    #     `erreur` : message générique borné (<=200), jamais de jeton ni de
+    #     donnée personnelle. Instants persistés en UTC (TIMESTAMPTZ).
+    #
+    # FK ... -> accounts(user_id) SANS ON DELETE CASCADE : DELETE
+    # /api/app/account purge explicitement les 2 tables (cf.
+    # _ACCOUNT_DELETE_CHILD_TABLES). Blocs DO $$ idempotents (duplicate_object
+    # seulement) — même idiome que v38 / v39.
+    try:
+        c.execute("""
+            CREATE TABLE IF NOT EXISTS push_devices (
+                id            UUID         PRIMARY KEY,
+                user_id       UUID         NOT NULL,
+                fcm_token     TEXT         NOT NULL UNIQUE,
+                platform      TEXT         NOT NULL DEFAULT 'android',
+                app_version   TEXT,
+                os_version    TEXT,
+                device_label  TEXT,
+                enabled       BOOLEAN      NOT NULL DEFAULT TRUE,
+                created_at    TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
+                updated_at    TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
+                last_seen_at  TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
+                revoked_at    TIMESTAMPTZ,
+                invalid_at    TIMESTAMPTZ
+            )
+        """)
+        c.execute("""
+            CREATE INDEX IF NOT EXISTS idx_push_devices_user_enabled
+            ON push_devices (user_id, enabled)
+        """)
+        c.execute("""
+            CREATE TABLE IF NOT EXISTS notification_sends (
+                id                   UUID         PRIMARY KEY,
+                user_id              UUID         NOT NULL,
+                category             TEXT         NOT NULL,
+                dedupe_key           TEXT         NOT NULL UNIQUE,
+                status               TEXT         NOT NULL,
+                provider_message_id  TEXT,
+                erreur               TEXT,
+                created_at           TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
+                sent_at              TIMESTAMPTZ
+            )
+        """)
+        c.execute("""
+            CREATE INDEX IF NOT EXISTS idx_notification_sends_user_cat
+            ON notification_sends (user_id, category, created_at DESC)
+        """)
+        conn.commit()
+    except Exception as e:
+        conn.rollback()
+        print(f"Migration v40 (push): {e}")
+    c.execute("""
+        DO $$
+        BEGIN
+            ALTER TABLE push_devices
+                ADD CONSTRAINT fk_push_devices_account
+                FOREIGN KEY (user_id) REFERENCES accounts(user_id);
+        EXCEPTION
+            WHEN duplicate_object THEN NULL;
+        END
+        $$;
+    """)
+    c.execute("""
+        DO $$
+        BEGIN
+            ALTER TABLE notification_sends
+                ADD CONSTRAINT fk_notification_sends_account
+                FOREIGN KEY (user_id) REFERENCES accounts(user_id);
+        EXCEPTION
+            WHEN duplicate_object THEN NULL;
+        END
+        $$;
+    """)
+    conn.commit()
     conn.close()
 
 def reset_db():
@@ -5590,6 +5685,222 @@ def api_memory_progress():
 
 
 # ============================================================
+# PUSH ANDROID MULTI-APPAREIL — POST /api/app/push/register + /unregister
+# ============================================================
+# Enregistre / désenregistre un jeton FCM pour l'appareil courant. Le serveur
+# est l'unique autorité sur l'identité : `user_id` vient TOUJOURS du jeton
+# Bearer (`g.app_account["user_id"]`), jamais du body. Le jeton FCM n'est
+# JAMAIS renvoyé ni écrit dans un log. Voir Migration v40 / push_devices.
+
+_PUSH_PLATFORMS   = frozenset({"android"})   # allowlist (iOS = lot ultérieur)
+_PUSH_TOKEN_MAX   = 4096
+_PUSH_META_MAX    = 60
+_PUSH_LABEL_MAX   = 120
+
+# Types de notification autorisés (allowlist stricte — miroir de
+# NotificationType.wire côté Flutter). Toute autre valeur est refusée par
+# l'envoi FCM (Phase 3) et par le scheduler (Phase 4).
+_PUSH_CATEGORIES = (
+    "daily_thought", "daily_meditation", "personal_guidance",
+    "weekly_sleep", "weekly_life_lesson",
+)
+
+
+def _push_meta_field(data, key, maxlen=_PUSH_META_MAX):
+    """str non vide bornée, sinon None. Ne lève jamais."""
+    v = data.get(key)
+    if not isinstance(v, str):
+        return None
+    v = v.strip()
+    return v[:maxlen] if v else None
+
+
+def upsert_push_device(user_id, fcm_token, platform,
+                       app_version=None, os_version=None, device_label=None,
+                       now=None):
+    """INSERT ... ON CONFLICT (fcm_token) DO UPDATE : (ré)affecte le jeton au
+    compte courant, le (ré)active, efface revoked_at / invalid_at. Idempotent.
+    Retourne l'id (str) de la ligne push_devices. Ne logge jamais le jeton."""
+    now = now or _utcnow()
+    conn = get_conn()
+    try:
+        c = conn.cursor()
+        c.execute(
+            """
+            INSERT INTO push_devices
+                (id, user_id, fcm_token, platform, app_version, os_version,
+                 device_label, enabled, created_at, updated_at, last_seen_at,
+                 revoked_at, invalid_at)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, TRUE, %s, %s, %s, NULL, NULL)
+            ON CONFLICT (fcm_token) DO UPDATE SET
+                user_id      = EXCLUDED.user_id,
+                platform     = EXCLUDED.platform,
+                app_version  = EXCLUDED.app_version,
+                os_version   = EXCLUDED.os_version,
+                device_label = EXCLUDED.device_label,
+                enabled      = TRUE,
+                updated_at   = EXCLUDED.updated_at,
+                last_seen_at = EXCLUDED.last_seen_at,
+                revoked_at   = NULL,
+                invalid_at   = NULL
+            RETURNING id
+            """,
+            (str(uuid.uuid4()), str(user_id), fcm_token, platform,
+             app_version, os_version, device_label, now, now, now),
+        )
+        row = c.fetchone()
+        conn.commit()
+        return str(row[0]) if row else None
+    finally:
+        conn.close()
+
+
+def disable_push_device(user_id, fcm_token, now=None):
+    """Désactive UNIQUEMENT le jeton fourni s'il appartient au compte courant.
+    Ne touche à AUCUN autre appareil du compte. Idempotent (0 ligne -> renvoie
+    False sans erreur)."""
+    now = now or _utcnow()
+    conn = get_conn()
+    try:
+        c = conn.cursor()
+        c.execute(
+            "UPDATE push_devices SET enabled=FALSE, updated_at=%s "
+            "WHERE fcm_token=%s AND user_id=%s",
+            (now, fcm_token, str(user_id)),
+        )
+        conn.commit()
+        return c.rowcount == 1
+    finally:
+        conn.close()
+
+
+def mark_push_token_invalid(fcm_token, now=None):
+    """Jeton définitivement rejeté par FCM (UNREGISTERED / INVALID_ARGUMENT) :
+    enabled=FALSE + invalid_at posé. Jamais réactivé sauf ré-enregistrement
+    explicite par le client (upsert efface invalid_at)."""
+    now = now or _utcnow()
+    conn = get_conn()
+    try:
+        c = conn.cursor()
+        c.execute(
+            "UPDATE push_devices SET enabled=FALSE, invalid_at=%s, updated_at=%s "
+            "WHERE fcm_token=%s AND invalid_at IS NULL",
+            (now, now, fcm_token),
+        )
+        conn.commit()
+        return c.rowcount == 1
+    finally:
+        conn.close()
+
+
+def active_push_tokens_for_user(user_id):
+    """Liste des jetons FCM actifs d'un compte (enabled, non révoqué, non
+    invalidé). Utilisée par l'envoi FCM (Phase 3)."""
+    conn = get_conn()
+    try:
+        c = conn.cursor()
+        c.execute(
+            "SELECT fcm_token FROM push_devices "
+            "WHERE user_id=%s AND enabled=TRUE "
+            "AND revoked_at IS NULL AND invalid_at IS NULL",
+            (str(user_id),),
+        )
+        return [r[0] for r in c.fetchall()]
+    finally:
+        conn.close()
+
+
+@app.route("/api/app/push/register", methods=["POST"])
+@limiter.limit("30 per hour")
+@require_app_auth
+def api_app_push_register():
+    """Enregistre le jeton FCM de l'appareil courant.
+      body : { "fcm_token": "...", "platform": "android",
+               "app_version"?: "...", "os_version"?: "...",
+               "device_label"?: "..." }
+    - identité = Bearer, jamais le body.
+    - fcm_token obligatoire, borné (<= 4096).
+    - platform dans l'allowlist (défaut 'android').
+    - upsert idempotent : réaffecte le jeton au compte courant si le téléphone
+      a changé de compte, réactive un jeton désactivé.
+    Réponses : 200 {"status":"registered"} ; 400 invalid_request ;
+               401 si compte supprimé."""
+    user_id = g.app_account["user_id"]
+    data = request.get_json(silent=True)
+    if not isinstance(data, dict):
+        return _auth_json({"error": "invalid_request"}, 400)
+
+    fcm_token = data.get("fcm_token")
+    if not isinstance(fcm_token, str):
+        return _auth_json({"error": "invalid_request"}, 400)
+    fcm_token = fcm_token.strip()
+    if not fcm_token or len(fcm_token) > _PUSH_TOKEN_MAX:
+        return _auth_json({"error": "invalid_request"}, 400)
+
+    raw_platform = data.get("platform")
+    platform = raw_platform if raw_platform in _PUSH_PLATFORMS else "android"
+
+    app_version  = _push_meta_field(data, "app_version")
+    os_version   = _push_meta_field(data, "os_version")
+    device_label = _push_meta_field(data, "device_label", _PUSH_LABEL_MAX)
+
+    # Compte vivant relu en base (jamais le body).
+    conn = get_conn()
+    try:
+        c = conn.cursor()
+        c.execute(
+            "SELECT 1 FROM accounts WHERE user_id=%s AND deleted_at IS NULL",
+            (user_id,),
+        )
+        alive = c.fetchone() is not None
+    finally:
+        conn.close()
+    if not alive:
+        return _auth_json({"error": "unauthorized"}, 401)
+
+    try:
+        upsert_push_device(user_id, fcm_token, platform,
+                           app_version=app_version, os_version=os_version,
+                           device_label=device_label)
+    except Exception as e:
+        print(f"[push] register erreur {_user_hash(user_id)}: {type(e).__name__}")
+        return _auth_json({"error": "temporarily_unavailable"}, 503)
+
+    log_event("app_push_registered", user_hash=_user_hash(user_id),
+              platform=platform)
+    return _auth_json({"status": "registered"}, 200)
+
+
+@app.route("/api/app/push/unregister", methods=["POST"])
+@limiter.limit("30 per hour")
+@require_app_auth
+def api_app_push_unregister():
+    """Désenregistre le jeton FCM fourni (celui de l'appareil courant).
+      body : { "fcm_token": "..." }
+    - idempotent : un jeton inconnu / déjà désactivé -> 200 quand même.
+    - ne désactive QUE ce jeton, et seulement s'il appartient au compte
+      courant. Ne touche jamais les autres appareils du compte.
+    Réponses : 200 {"status":"unregistered"} ; 400 invalid_request."""
+    user_id = g.app_account["user_id"]
+    data = request.get_json(silent=True)
+    if not isinstance(data, dict):
+        return _auth_json({"error": "invalid_request"}, 400)
+    fcm_token = data.get("fcm_token")
+    if not isinstance(fcm_token, str) or not fcm_token.strip():
+        return _auth_json({"error": "invalid_request"}, 400)
+    fcm_token = fcm_token.strip()
+    if len(fcm_token) > _PUSH_TOKEN_MAX:
+        return _auth_json({"error": "invalid_request"}, 400)
+
+    try:
+        disable_push_device(user_id, fcm_token)
+    except Exception as e:
+        print(f"[push] unregister erreur {_user_hash(user_id)}: {type(e).__name__}")
+        # Best effort : on ne bloque pas le client (logout). Réponse stable.
+    return _auth_json({"status": "unregistered"}, 200)
+
+
+# ============================================================
 # SUPPORT IN-APP — POST /api/app/support
 # ============================================================
 # « Signaler un problème » depuis l'app. Le serveur est l'unique autorité sur
@@ -5738,6 +6049,8 @@ _ACCOUNT_DELETE_CHILD_TABLES = (
     "wellbeing_cycle_rewards",
     "memory_games",
     "memory_rewards",
+    "notification_sends",
+    "push_devices",
     "app_sessions",
 )
 
@@ -11002,6 +11315,49 @@ def _incrementer_proactif(phone, user):
         update_user_silent(phone, proactifs_today_count=1, proactifs_today_date=today)
     else:
         update_user_silent(phone, proactifs_today_count=count + 1)
+
+# ============================================================
+# CRON PUSH-TICK — notifications programmées (FCM). Déclenché par un
+# PLANIFICATEUR EXTERNE (Railway Cron), PAS par APScheduler dans le web.
+# Auth : secret constant-time (PUSH_CRON_SECRET, repli DAILY_SECRET).
+# Idempotent : notification_sends.dedupe_key. Peut être appelé souvent.
+# ============================================================
+_PUSH_CRON_SECRET = os.environ.get("PUSH_CRON_SECRET") or DAILY_SECRET
+
+
+@app.route("/cron/push-tick", methods=["POST"])
+def cron_push_tick():
+    body = request.get_json(silent=True) or {}
+    provided = body.get("secret", "") or request.headers.get("X-Cron-Secret", "")
+    if not _PUSH_CRON_SECRET or not hmac.compare_digest(
+        str(provided), str(_PUSH_CRON_SECRET)
+    ):
+        return jsonify({"error": "unauthorized"}), 401
+    try:
+        import push_scheduler as _ps
+        from push_fcm import FcmConfig, FcmSender
+        sender = FcmSender(FcmConfig.from_env())
+        store = _ps.DbPushTickStore(get_conn)
+        summary = _ps.push_tick(_utcnow(), store, sender)
+        # résumé sans jeton ni donnée perso
+        log_event("push_tick",
+                  due=",".join(c for c, _ in summary.get("due", [])) or "none",
+                  sent=summary.get("sent", 0),
+                  skipped=summary.get("skipped_no_device", 0),
+                  failed=summary.get("failed", 0),
+                  deduped=summary.get("deduped", 0))
+        return jsonify({
+            "status": "ok",
+            "due": [c for c, _ in summary.get("due", [])],
+            "sent": summary.get("sent", 0),
+            "skipped_no_device": summary.get("skipped_no_device", 0),
+            "failed": summary.get("failed", 0),
+            "deduped": summary.get("deduped", 0),
+        }), 200
+    except Exception as e:
+        print(f"[push_tick] erreur {type(e).__name__}: {e}")
+        return jsonify({"error": "push_tick_failed"}), 500
+
 
 # ============================================================
 # CRON DAILY
