@@ -1,0 +1,48 @@
+{
+  "_comment": "Manifeste des routes API MOBILES exposées par auryel_bot.py. Sert de contrat: le test Flutter (test/app_apis_contract_test.dart) vérifie que chaque chemin appelé par l'app existe ici, et le test backend test_api_routes_manifest.py vérifie que ce manifeste ne dérive pas des routes réellement enregistrées. Chemins avec paramètres notés en <nom>.",
+  "generated_from": "flask app.url_map (filtré /api/* + /health)",
+  "version": 1,
+  "routes": [
+    { "method": "GET",    "path": "/health" },
+
+    { "method": "POST",   "path": "/api/auth/request-code" },
+    { "method": "POST",   "path": "/api/auth/verify-code" },
+    { "method": "POST",   "path": "/api/auth/logout" },
+    { "method": "POST",   "path": "/api/app/auth/register" },
+    { "method": "POST",   "path": "/api/app/auth/login" },
+
+    { "method": "GET",    "path": "/api/account" },
+    { "method": "GET",    "path": "/api/app/profile" },
+    { "method": "PATCH",  "path": "/api/app/profile" },
+    { "method": "DELETE", "path": "/api/app/account" },
+
+    { "method": "POST",   "path": "/api/consultation/message" },
+    { "method": "GET",    "path": "/api/consultation/messages" },
+    { "method": "GET",    "path": "/api/consultation/state" },
+    { "method": "GET",    "path": "/api/consultation/list" },
+    { "method": "POST",   "path": "/api/consultation/open" },
+
+    { "method": "POST",   "path": "/api/app/ai/report" },
+
+    { "method": "GET",    "path": "/api/tirages" },
+    { "method": "POST",   "path": "/api/tirages" },
+    { "method": "GET",    "path": "/api/tirages/<tirage_id>" },
+
+    { "method": "GET",    "path": "/api/app/content/meditations" },
+    { "method": "GET",    "path": "/api/app/content/today" },
+
+    { "method": "POST",   "path": "/api/app/rewards/daily-share" },
+    { "method": "GET",    "path": "/api/app/rewards/share-progress" },
+    { "method": "GET",    "path": "/api/app/wellbeing/progress" },
+    { "method": "POST",   "path": "/api/app/wellbeing/mission" },
+    { "method": "POST",   "path": "/api/app/memory/start" },
+    { "method": "POST",   "path": "/api/app/memory/complete" },
+    { "method": "GET",    "path": "/api/app/memory/progress" },
+
+    { "method": "POST",   "path": "/api/app/push/register" },
+    { "method": "POST",   "path": "/api/app/push/unregister" },
+    { "method": "POST",   "path": "/api/app/support" },
+
+    { "method": "POST",   "path": "/api/billing/verify" }
+  ]
+}

@@ -1,0 +1,17 @@
+{
+  "_comment": "Modèle d'import des méditations vers meditation_catalog (Migration v43). Voir meditation_import_template.csv pour les contraintes de chaque champ. AUCUNE donnée réelle ici : les audios ne sont pas encore téléversés (aucune destination de stockage autorisée dans ce lot). Chaque entrée est POSTée sur /admin/content/meditation (auth admin + CSRF, _validate_media_url : HTTPS + allowlist CONTENT_MEDIA_ALLOWED_HOSTS).",
+  "version": 1,
+  "meditations": [
+    {
+      "slug": "quand-tout-devient-trop-lourd",
+      "title": "Quand tout devient trop lourd",
+      "description": "",
+      "category": "stress-calme",
+      "duration_seconds": 0,
+      "audio_url": "https://EXEMPLE-A-REMPLACER/01.mp3",
+      "image_url": null,
+      "sort_order": 1,
+      "published_at": null
+    }
+  ]
+}

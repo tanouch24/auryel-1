@@ -1,0 +1,25 @@
+# Modèle d'import des méditations vers meditation_catalog (Migration v43).
+#
+# UTILISATION (lot suivant, pas maintenant) :
+#   1. Les 50 MP3 finalisés (~/Desktop/AURYEL_70_MEDITATIONS/audios/) sont
+#      d'abord téléversés sur un stockage HTTPS autorisé (aucune destination
+#      n'est autorisée dans le lot courant -> rien n'est téléversé ici).
+#   2. On renseigne audio_url (et image_url si visuel) avec les URL obtenues.
+#   3. Chaque ligne est POSTée sur /admin/content/meditation (auth admin + CSRF)
+#      ou insérée par un script d'import qui appelle la même validation
+#      (_validate_media_url : HTTPS obligatoire, allowlist CONTENT_MEDIA_ALLOWED_HOSTS).
+#
+# COLONNES :
+#   slug              obligatoire, ^[a-z0-9][a-z0-9_-]{1,63}$, UNIQUE (clé d'upsert)
+#   title             obligatoire, <= 200 car.
+#   description       facultatif, <= 2000 car.
+#   category          facultatif, <= 80 car. (ex: "stress-calme", "confiance", "amour", "sommeil")
+#   duration_seconds  entier >= 0 (durée réelle du MP3)
+#   audio_url         obligatoire, HTTPS
+#   image_url         facultatif, HTTPS (visuel partageable)
+#   sort_order        entier >= 0 (ordre d'affichage)
+#   published_at      vide = publié maintenant ; sinon ISO 8601 (ex: 2026-09-15T08:00:00Z)
+#
+# Une ligne d'exemple (commentée) — à dupliquer/remplir, ne pas committer de données réelles ici.
+slug,title,description,category,duration_seconds,audio_url,image_url,sort_order,published_at
+# quand-tout-devient-trop-lourd,Quand tout devient trop lourd,,stress-calme,0,https://EXEMPLE-A-REMPLACER/01.mp3,,1,
