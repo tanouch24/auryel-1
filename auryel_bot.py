@@ -12921,6 +12921,109 @@ def cron_push_tick():
 
 
 # ============================================================
+# PUSH — ENVOI DE TEST CIBLÉ (compte unique), STRICTEMENT PROTÉGÉ.
+# ============================================================
+# But : vérifier de bout en bout la chaîne FCM (token enregistré -> message
+# reçu sur l'appareil) SANS attendre une fenêtre du scheduler.
+#
+# Sécurité :
+#   - AUCUN endpoint public : même secret constant-time que /cron/push-tick
+#     (PUSH_CRON_SECRET, repli DAILY_SECRET). 401 sinon.
+#   - la cible est un compte identifié par email (relu en base) ; on n'envoie
+#     qu'aux jetons ACTIFS de CE compte (active_push_tokens_for_user).
+#   - titre/corps : soit fournis (bornés), soit défauts génériques du
+#     scheduler. AUCUN contenu de consultation, aucune donnée perso, aucune URL.
+#   - `data` ne porte que `type` (allowlist), via build_message.
+#   - le jeton FCM n'est JAMAIS renvoyé ni loggé ; un jeton rejeté
+#     définitivement par FCM est désactivé (mark_push_token_invalid).
+#   - respecte PUSH_ENABLED / PUSH_DRY_RUN comme le scheduler.
+@app.route("/cron/push-test", methods=["POST"])
+def cron_push_test():
+    body = request.get_json(silent=True) or {}
+    provided = body.get("secret", "") or request.headers.get("X-Cron-Secret", "")
+    if not _PUSH_CRON_SECRET or not hmac.compare_digest(
+        str(provided), str(_PUSH_CRON_SECRET)
+    ):
+        return jsonify({"error": "unauthorized"}), 401
+
+    email_norm = _normalize_email(body.get("email"))
+    if not email_norm:
+        return jsonify({"error": "invalid_email"}), 400
+
+    category = (body.get("category") or "daily_thought").strip()
+    if category not in _PUSH_CATEGORIES:
+        return jsonify({"error": "invalid_category",
+                        "allowed": list(_PUSH_CATEGORIES)}), 400
+
+    # Titre / corps : fournis (bornés) OU défauts génériques du scheduler.
+    try:
+        import push_scheduler as _ps
+        d_title, d_body = _ps.MESSAGES.get(
+            category, ("Auryel", "Ouvre Auryel."))
+    except Exception:
+        d_title, d_body = ("Auryel", "Ouvre Auryel.")
+    title = (body.get("title") or d_title)
+    text = (body.get("body") or d_body)
+    if not isinstance(title, str) or not isinstance(text, str):
+        return jsonify({"error": "invalid_request"}), 400
+    title, text = title.strip()[:120], text.strip()[:240]
+
+    conn = get_conn()
+    try:
+        c = conn.cursor()
+        c.execute(
+            "SELECT user_id FROM accounts "
+            "WHERE email_normalized=%s AND deleted_at IS NULL",
+            (email_norm,),
+        )
+        row = c.fetchone()
+    finally:
+        conn.close()
+    if row is None:
+        return jsonify({"error": "account_not_found"}), 404
+    user_id = str(row[0])
+
+    tokens = active_push_tokens_for_user(user_id)
+    if not tokens:
+        return jsonify({"status": "no_device", "targeted_devices": 0,
+                        "sent": 0, "invalidated": 0, "failed": 0}), 200
+
+    try:
+        from push_fcm import FcmConfig, FcmSender
+        sender = FcmSender(FcmConfig.from_env())
+    except Exception as e:
+        print(f"[push_test] init sender KO: {type(e).__name__}")
+        return jsonify({"error": "push_unavailable"}), 500
+
+    sent = invalidated = failed = 0
+    outcomes = []
+    for tok in tokens:
+        res = sender.send(tok, category, title, text)
+        outcomes.append(res.outcome)
+        if res.outcome in ("sent", "dry_run"):
+            sent += 1
+        elif res.outcome == "invalid_token":
+            mark_push_token_invalid(tok)
+            invalidated += 1
+        else:
+            failed += 1
+
+    log_event("push_test",
+              user_hash=_user_hash(user_id), category=category,
+              targeted=len(tokens), sent=sent, invalidated=invalidated,
+              failed=failed)
+    return jsonify({
+        "status": "ok",
+        "category": category,
+        "targeted_devices": len(tokens),
+        "sent": sent,
+        "invalidated": invalidated,
+        "failed": failed,
+        "outcomes": outcomes,          # ex. ["sent"] / ["dry_run"] / ["config_error"]
+    }), 200
+
+
+# ============================================================
 # CRON — RE-VÉRIFICATION PÉRIODIQUE DES ABONNEMENTS GOOGLE PLAY
 # ============================================================
 # SÉPARÉ du push (secret dédié BILLING_REVERIFY_SECRET). Re-vérifie auprès de
