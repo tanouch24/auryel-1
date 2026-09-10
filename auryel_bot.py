@@ -2006,6 +2006,62 @@ def init_db():
     """)
     conn.commit()
 
+    # Migration v45 — VIDÉOS APAISANTES DISTANTES (ambiance visuelle des
+    # méditations). PUREMENT ADDITIF : 1 table neuve + 1 index. Aucune colonne
+    # existante ALTER-ée, aucun backfill, aucun DROP / TRUNCATE / DELETE, aucune
+    # FK vers accounts (contenu GLOBAL, identique pour tous, donc absent de
+    # _ACCOUNT_DELETE_CHILD_TABLES). Miroir lisible :
+    # migrations/019_relaxation_videos.sql.
+    #
+    #   relaxation_video_catalog
+    #     Catalogue distant des vidéos d'ambiance jouées EN FOND (muettes) d'une
+    #     méditation. Même philosophie que meditation_catalog (v43) :
+    #       slug           clé stable UNIQUE (upsert admin)
+    #       video_url      URL HTTPS bornée + validée (_validate_media_url) ;
+    #       thumbnail_url  idem, facultative. AUCUN upload binaire dans ce lot :
+    #                      l'admin colle une URL déjà hébergée ailleurs.
+    #       category       TEXTE LIBRE (ocean, rain, forest, night, calm, …),
+    #                      jamais un enum fermé. Défaut 'calm' (= générique).
+    #       tags           TEXT[] libre (mots-clés d'ambiance).
+    #       is_active      interrupteur (masque sans supprimer)
+    #       published_at   NULL = publié ; futur = programmé
+    #       sort_order     réordonnancement -> tri déterministe
+    #       version        incrémentée à chaque édition -> invalidation du
+    #                      cache client (ETag / catalog_version).
+    #     La compatibilité méditation <-> vidéo est calculée à la lecture par
+    #     _MEDITATION_VIDEO_COMPATIBILITY (config backend), pas stockée ici :
+    #     changer le mapping ne nécessite aucune migration.
+    #     Endpoint : GET /api/app/content/relaxation-videos (ETag / 304).
+    #     Système conçu pour fonctionner AVEC ZÉRO vidéo (l'app retombe sur un
+    #     fond statique).
+    try:
+        c.execute("""
+            CREATE TABLE IF NOT EXISTS relaxation_video_catalog (
+                id               UUID         PRIMARY KEY,
+                slug             TEXT         NOT NULL UNIQUE,
+                title            TEXT         NOT NULL,
+                description      TEXT,
+                video_url        TEXT         NOT NULL,
+                thumbnail_url    TEXT,
+                category         TEXT         NOT NULL DEFAULT 'calm',
+                tags             TEXT[]       NOT NULL DEFAULT '{}',
+                sort_order       INTEGER      NOT NULL DEFAULT 0,
+                is_active        BOOLEAN      NOT NULL DEFAULT TRUE,
+                published_at     TIMESTAMPTZ,
+                created_at       TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
+                updated_at       TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
+                version          INTEGER      NOT NULL DEFAULT 1
+            )
+        """)
+        c.execute("""
+            CREATE INDEX IF NOT EXISTS idx_relaxation_video_catalog_active
+            ON relaxation_video_catalog (is_active, sort_order, id)
+        """)
+        conn.commit()
+    except Exception as e:
+        conn.rollback()
+        print(f"Migration v45 (relaxation videos): {e}")
+
     conn.close()
 
 def reset_db():
@@ -6911,6 +6967,121 @@ def api_content_meditations():
         "version": _CONTENT_API_VERSION,
         "catalog_version": tag,
         "meditations": meditations,
+    })
+    resp.headers["ETag"] = f'"{tag}"'
+    resp.headers["Cache-Control"] = "no-cache"
+    return resp, 200
+
+
+# --- Vidéos apaisantes distantes (ambiance visuelle muette des méditations) ---
+#
+# Compatibilité méditation <-> vidéo : CONFIG BACKEND (pas une table, pas de
+# migration pour l'ajuster). Clé = catégorie éditoriale de méditation ; valeur =
+# catégories / tags de vidéos jugés cohérents. Le mapping est indicatif : une
+# vidéo qui ne correspond à RIEN (ou dont la catégorie est la catégorie
+# générique) est marquée `is_generic` et reste utilisable pour TOUTES les
+# méditations. Le système fonctionne donc même sans aucun mapping et même sans
+# aucune vidéo.
+_RELAXATION_GENERIC_CATEGORY = "calm"
+_MEDITATION_VIDEO_COMPATIBILITY = {
+    "stress-calme":   ["ocean", "forest", "clouds", "rain", "nature"],
+    "sommeil":        ["night", "rain", "ocean", "clouds", "stars"],
+    "confiance":      ["mountains", "forest", "sunrise", "nature", "space"],
+    "amour":          ["sunset", "ocean", "nature", "clouds"],
+    "rupture-manque": ["rain", "ocean", "night", "clouds"],
+    "motivation":     ["mountains", "sunrise", "forest", "space"],
+    "lacher-prise":   ["ocean", "clouds", "forest", "river"],
+}
+
+
+def _relaxation_video_compat(category, tags):
+    """(compatible_meditation_categories: list[str], is_generic: bool) pour une
+    vidéo. Une vidéo est GÉNÉRIQUE si sa catégorie est la catégorie générique,
+    ou si elle ne matche aucune entrée du mapping (repli : utilisable partout)."""
+    haystack = {(category or "").strip().lower()}
+    haystack |= {str(t).strip().lower() for t in (tags or []) if str(t).strip()}
+    haystack.discard("")
+    compatible = sorted(
+        med_cat for med_cat, vid_cats in _MEDITATION_VIDEO_COMPATIBILITY.items()
+        if haystack & set(vid_cats)
+    )
+    is_generic = (
+        (category or "").strip().lower() == _RELAXATION_GENERIC_CATEGORY
+        or not compatible
+    )
+    return compatible, is_generic
+
+
+def _relaxation_video_catalog_active_rows():
+    """Lignes du catalogue vidéos ACTIVES et PUBLIÉES (published_at NULL ou
+    <= now), triées (sort_order, id). Lecture seule. Colonnes alignées sur
+    meditation_catalog (id en [0], updated_at en [10], version en [11]) pour
+    réutiliser _catalog_version_tag."""
+    conn = get_conn()
+    try:
+        c = conn.cursor()
+        c.execute(
+            "SELECT id, slug, title, description, video_url, thumbnail_url, "
+            "       category, tags, sort_order, published_at, updated_at, "
+            "       version "
+            "FROM relaxation_video_catalog "
+            "WHERE is_active = TRUE "
+            "  AND (published_at IS NULL OR published_at <= NOW()) "
+            "ORDER BY sort_order ASC, id ASC"
+        )
+        return c.fetchall()
+    finally:
+        conn.close()
+
+
+@app.route("/api/app/content/relaxation-videos", methods=["GET"])
+@limiter.limit("60 per hour")
+@require_app_auth
+def api_content_relaxation_videos():
+    """Catalogue distant des vidéos d'ambiance — mêmes règles que les
+    méditations : entrées actives et publiées, contrat JSON versionné, ETag /
+    If-None-Match -> 304. Chaque vidéo porte `compatible_meditation_categories`
+    et `is_generic` (calculés depuis la config backend). `compatibility_map` est
+    aussi renvoyé en entier pour transparence. Réponse valide et non bloquante
+    même si le catalogue est vide (`videos: []`) — l'app retombe alors sur un
+    fond statique. Les champs supplémentaires sont ignorés par une ancienne
+    version de l'app (compatibilité montante)."""
+    rows = _relaxation_video_catalog_active_rows()
+    tag = _catalog_version_tag(rows)
+    inm = request.headers.get("If-None-Match", "").strip().strip('"')
+    if inm and inm == tag:
+        resp = jsonify({})
+        resp.headers["ETag"] = f'"{tag}"'
+        resp.headers["Cache-Control"] = "no-cache"
+        return resp, 304
+
+    videos = []
+    for r in rows:
+        category = r[6] or _RELAXATION_GENERIC_CATEGORY
+        tags = [str(t) for t in (r[7] or []) if str(t).strip()]
+        compatible, is_generic = _relaxation_video_compat(category, tags)
+        videos.append({
+            "id": str(r[0]),
+            "slug": r[1],
+            "title": r[2],
+            "description": r[3] or "",
+            "video_url": r[4],
+            "thumbnail_url": r[5] or None,
+            "category": category,
+            "tags": tags,
+            "sort_order": int(r[8] or 0),
+            "published_at": _ts_iso(r[9]) if r[9] else None,
+            "version": int(r[11] or 1),
+            "compatible_meditation_categories": compatible,
+            "is_generic": is_generic,
+        })
+
+    resp = jsonify({
+        "version": _CONTENT_API_VERSION,
+        "catalog_version": tag,
+        "generic_category": _RELAXATION_GENERIC_CATEGORY,
+        "compatibility_map": _MEDITATION_VIDEO_COMPATIBILITY,
+        "videos": videos,
     })
     resp.headers["ETag"] = f'"{tag}"'
     resp.headers["Cache-Control"] = "no-cache"
@@ -14158,6 +14329,135 @@ def admin_content_meditation_toggle():
     return jsonify({"ok": True, "id": mid, "is_active": is_active}), 200
 
 
+_RELAX_TAG_RE = re.compile(r"^[a-z0-9][a-z0-9_-]{0,39}$")
+
+
+def _sanitize_video_tags(raw):
+    """Normalise le champ `tags` reçu de l'admin (liste ou chaîne séparée par
+    des virgules) : minuscules, [a-z0-9_-], <= 40 car., <= 20 tags, sans
+    doublon, ordre conservé. Silencieux (les tags invalides sont ignorés)."""
+    if isinstance(raw, str):
+        items = raw.split(",")
+    elif isinstance(raw, (list, tuple)):
+        items = raw
+    else:
+        items = []
+    out = []
+    for it in items:
+        t = str(it).strip().lower()
+        if t and _RELAX_TAG_RE.match(t) and t not in out:
+            out.append(t)
+        if len(out) >= 20:
+            break
+    return out
+
+
+@app.route("/admin/content/relaxation-video", methods=["POST"])
+@require_csrf
+def admin_content_relaxation_video():
+    """Crée ou met à jour une vidéo apaisante (upsert par `slug`). Champs
+    obligatoires : slug, title, video_url (HTTPS). thumbnail_url facultative.
+    category : texte libre (défaut 'calm'). tags : liste ou CSV.
+    `version` est incrémentée à chaque mise à jour -> invalidation du cache
+    client. `published_at` : ISO 8601 ou vide (= publié tout de suite)."""
+    if not admin_auth():
+        return jsonify({"error": "unauthorized"}), 401
+    data = request.get_json(silent=True) or {}
+
+    slug = str(data.get("slug", "")).strip().lower()
+    if not _MEDITATION_SLUG_RE.match(slug):
+        return jsonify({"error": "invalid_slug"}), 400
+    title = str(data.get("title", "")).strip()
+    if not title or len(title) > 200:
+        return jsonify({"error": "invalid_title"}), 400
+    description = str(data.get("description", "")).strip()[:2000]
+    category = (str(data.get("category", "")).strip().lower()[:80]
+                or _RELAXATION_GENERIC_CATEGORY)
+    tags = _sanitize_video_tags(data.get("tags"))
+    sort_order = _admin_int(data.get("sort_order"), 0, lo=0, hi=100000)
+
+    video_url, err = _validate_media_url(data.get("video_url"), required=True)
+    if err is not None:
+        return jsonify({"error": f"video_{err}"}), 400
+    thumbnail_url, err = _validate_media_url(data.get("thumbnail_url"), required=False)
+    if err is not None:
+        return jsonify({"error": f"thumbnail_{err}"}), 400
+
+    published_at = None
+    raw_pub = str(data.get("published_at", "")).strip()
+    if raw_pub:
+        try:
+            published_at = datetime.fromisoformat(raw_pub.replace("Z", "+00:00"))
+        except ValueError:
+            return jsonify({"error": "invalid_published_at"}), 400
+
+    conn = get_conn()
+    try:
+        c = conn.cursor()
+        c.execute(
+            "INSERT INTO relaxation_video_catalog "
+            "(id, slug, title, description, video_url, thumbnail_url, category, "
+            " tags, sort_order, published_at, created_at, updated_at, version) "
+            "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, NOW(), NOW(), 1) "
+            "ON CONFLICT (slug) DO UPDATE SET "
+            "  title = EXCLUDED.title, description = EXCLUDED.description, "
+            "  video_url = EXCLUDED.video_url, "
+            "  thumbnail_url = EXCLUDED.thumbnail_url, "
+            "  category = EXCLUDED.category, tags = EXCLUDED.tags, "
+            "  sort_order = EXCLUDED.sort_order, "
+            "  published_at = EXCLUDED.published_at, "
+            "  updated_at = NOW(), "
+            "  version = relaxation_video_catalog.version + 1 "
+            "RETURNING id, version",
+            (str(uuid.uuid4()), slug, title, description, video_url,
+             thumbnail_url, category, tags, sort_order, published_at),
+        )
+        row = c.fetchone()
+        conn.commit()
+    except Exception as e:
+        conn.rollback()
+        print(f"[admin-content] relaxation-video upsert: {type(e).__name__}")
+        return jsonify({"error": "write_failed"}), 500
+    finally:
+        conn.close()
+
+    log_admin_action("content-relaxation-video", slug, detail=f"v{row[1]}")
+    return jsonify({"ok": True, "id": str(row[0]), "slug": slug,
+                    "version": int(row[1])}), 200
+
+
+@app.route("/admin/content/relaxation-video/toggle", methods=["POST"])
+@require_csrf
+def admin_content_relaxation_video_toggle():
+    """Active / désactive une vidéo apaisante. body : { "id", "is_active" }.
+    Incrémente `version` (le client réévalue le catalogue)."""
+    if not admin_auth():
+        return jsonify({"error": "unauthorized"}), 401
+    data = request.get_json(silent=True) or {}
+    vid = str(data.get("id", "")).strip()
+    if not _is_uuid(vid):
+        return jsonify({"error": "invalid_id"}), 400
+    is_active = bool(data.get("is_active"))
+    conn = get_conn()
+    try:
+        c = conn.cursor()
+        c.execute(
+            "UPDATE relaxation_video_catalog "
+            "SET is_active=%s, updated_at=NOW(), version=version+1 "
+            "WHERE id=%s",
+            (is_active, vid),
+        )
+        found = c.rowcount == 1
+        conn.commit()
+    finally:
+        conn.close()
+    if not found:
+        return jsonify({"error": "not_found"}), 404
+    log_admin_action("content-relaxation-video-toggle", vid,
+                     detail="on" if is_active else "off")
+    return jsonify({"ok": True, "id": vid, "is_active": is_active}), 200
+
+
 @app.route("/admin/content/daily", methods=["POST"])
 @require_csrf
 def admin_content_daily():
@@ -14276,6 +14576,12 @@ def admin_content_page():
             "ORDER BY publication_date DESC, content_type ASC LIMIT 60"
         )
         dailies = c.fetchall()
+        c.execute(
+            "SELECT id, slug, title, category, tags, video_url, thumbnail_url, "
+            "       sort_order, is_active, published_at, version "
+            "FROM relaxation_video_catalog ORDER BY sort_order ASC, slug ASC"
+        )
+        videos = c.fetchall()
     finally:
         conn.close()
 
@@ -14307,6 +14613,22 @@ def admin_content_page():
   <td><small>{esc((text or '')[:120])}</small></td>
   <td>{'✅' if is_active else '⛔️'}</td>
   <td><button onclick="toggleDaily('{esc(did)}',{str(not is_active).lower()})">{'Désactiver' if is_active else 'Activer'}</button></td>
+</tr>"""
+
+    vid_rows = ""
+    for v in videos:
+        (vid, slug, title, category, tags, video_url, thumbnail_url, sort_order,
+         is_active, published_at, version) = v
+        tag_txt = ", ".join(tags or [])
+        vid_rows += f"""<tr>
+  <td>{esc(sort_order)}</td>
+  <td><strong>{esc(title)}</strong><br><small>{esc(slug)} · v{esc(version)}</small></td>
+  <td>{esc(category)}</td>
+  <td><small>{esc(tag_txt)}</small></td>
+  <td><small>{esc(video_url)}</small></td>
+  <td>{'✅' if is_active else '⛔️'}</td>
+  <td><small>{esc(published_at) or 'publié'}</small></td>
+  <td><button onclick="toggleVid('{esc(vid)}',{str(not is_active).lower()})">{'Désactiver' if is_active else 'Activer'}</button></td>
 </tr>"""
 
     csrf = esc(session.get("csrf_token", ""))
@@ -14355,6 +14677,30 @@ def admin_content_page():
  <button onclick="saveMed()">Enregistrer la méditation</button>
 </fieldset>
 
+<h2>Vidéos apaisantes</h2>
+<p><small>Ambiance visuelle jouée EN FOND d'une méditation, toujours MUETTE. Catégorie = texte libre (ocean, rain, forest, night, calm, …). « calm » (défaut) = générique, compatible avec toutes les méditations. Le système fonctionne même sans aucune vidéo.</small></p>
+<table><thead><tr><th>#</th><th>Titre / slug</th><th>Catégorie</th><th>Tags</th><th>video_url</th><th>Actif</th><th>Publié</th><th></th></tr></thead>
+<tbody>{vid_rows or '<tr><td colspan="8"><small>Aucune vidéo.</small></td></tr>'}</tbody></table>
+
+<fieldset><legend>Ajouter / modifier une vidéo apaisante (upsert par slug)</legend>
+ <div class="row">
+  <div><label>slug *</label><input id="v_slug" placeholder="relaxation-ocean-01"></div>
+  <div><label>title *</label><input id="v_title"></div>
+ </div>
+ <div class="row">
+  <div><label>category (texte libre, défaut « calm »)</label><input id="v_category" placeholder="ocean"></div>
+  <div><label>tags (séparés par des virgules)</label><input id="v_tags" placeholder="nature, waves"></div>
+ </div>
+ <label>description (facultatif)</label><textarea id="v_description" rows="2"></textarea>
+ <label>video_url * (HTTPS)</label><input id="v_video" placeholder="https://media.auryel.app/relaxation-videos/...mp4">
+ <label>thumbnail_url (HTTPS, facultatif)</label><input id="v_thumb" placeholder="https://...">
+ <div class="row">
+  <div><label>sort_order</label><input id="v_sort" type="number" min="0" value="0"></div>
+  <div><label>published_at (ISO, vide = maintenant)</label><input id="v_pub" placeholder="2026-09-10T08:00:00Z"></div>
+ </div>
+ <button onclick="saveVid()">Enregistrer la vidéo</button>
+</fieldset>
+
 <h2>Contenu du jour</h2>
 <table><thead><tr><th>Date</th><th>Type</th><th>Titre</th><th>Texte</th><th>Actif</th><th></th></tr></thead>
 <tbody>{daily_rows or '<tr><td colspan="6"><small>Aucun contenu.</small></td></tr>'}</tbody></table>
@@ -14395,6 +14741,21 @@ async function saveMed(){{
 }}
 async function toggleMed(id, active){{
   const j = await post('/admin/content/meditation/toggle', {{id, is_active:active}});
+  if(j){{ location.reload(); }}
+}}
+async function saveVid(){{
+  const b = {{
+    slug: v_slug.value.trim(), title: v_title.value.trim(),
+    category: v_category.value.trim(), tags: v_tags.value.trim(),
+    description: v_description.value.trim(), sort_order: v_sort.value,
+    video_url: v_video.value.trim(), thumbnail_url: v_thumb.value.trim(),
+    published_at: v_pub.value.trim()
+  }};
+  const j = await post('/admin/content/relaxation-video', b);
+  if(j){{ say('Vidéo enregistrée (v'+j.version+').'); location.reload(); }}
+}}
+async function toggleVid(id, active){{
+  const j = await post('/admin/content/relaxation-video/toggle', {{id, is_active:active}});
   if(j){{ location.reload(); }}
 }}
 async function saveDaily(){{

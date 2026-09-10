@@ -29,6 +29,7 @@
     { "method": "GET",    "path": "/api/tirages/<tirage_id>" },
 
     { "method": "GET",    "path": "/api/app/content/meditations" },
+    { "method": "GET",    "path": "/api/app/content/relaxation-videos" },
     { "method": "GET",    "path": "/api/app/content/today" },
 
     { "method": "POST",   "path": "/api/app/rewards/daily-share" },

@@ -175,6 +175,10 @@ class Cur:
             self._rows = [(d["id"], d["content_type"], d["publication_date"],
                            d["title"], d["text"], d["explanation"],
                            d["image_url"], d["is_active"]) for d in DAILY]
+        elif k.startswith("SELECT id, slug, title, category, tags, video_url"):
+            # section vidéos de /admin/content — hors périmètre de ce test
+            # (couverte par test_relaxation_videos.py) : catalogue vide.
+            self._rows = []
         elif k.startswith("INSERT INTO admin_logs"):
             self.rowcount = 1
         else:
