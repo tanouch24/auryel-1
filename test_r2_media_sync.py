@@ -94,6 +94,21 @@ class Cur:
         self.rowcount = -1
         db = self.db
 
+        # Régression : les index d'unicité `uq_<catalogue>_r2_object_key` sont
+        # PARTIELS (WHERE r2_object_key IS NOT NULL). PostgreSQL n'accepte un
+        # index partiel comme arbitre d'un `ON CONFLICT` QUE si la clause
+        # reproduit ce prédicat. Ici on reproduit ce refus : un upsert
+        # `ON CONFLICT (r2_object_key)` SANS le `WHERE r2_object_key IS NOT
+        # NULL` lève, comme le vrai Postgres l'a fait en prod.
+        if ("ON CONFLICT (r2_object_key)" in s
+                and "WHERE r2_object_key IS NOT NULL DO UPDATE" not in s):
+            raise AssertionError(
+                "InvalidColumnReference: there is no unique or exclusion "
+                "constraint matching the ON CONFLICT specification "
+                "(index partiel -> il faut ON CONFLICT (r2_object_key) "
+                "WHERE r2_object_key IS NOT NULL DO UPDATE)"
+            )
+
         if s.startswith("SELECT pg_try_advisory_lock"):
             if db.lock_available and not db.lock_held:
                 db.lock_held = True
@@ -480,6 +495,106 @@ out = buf.getvalue()
 check("topsecret" not in out.lower() and "secret_access_key" not in out
       and "aws_secret" not in out.lower(),
       "14 run() n'imprime aucun secret")
+
+# ===========================================================================
+# 15. RÉGRESSION — ON CONFLICT compatible avec l'index UNIQUE PARTIEL
+#     (bug prod : « there is no unique or exclusion constraint matching the
+#      ON CONFLICT specification »). Le faux curseur REFUSE désormais un
+#      upsert dont l'arbitre ne reproduit pas le prédicat partiel.
+# ===========================================================================
+
+# 15a — le SQL réellement émis par le module porte le bon arbitre partiel.
+class _SqlSpy(Cur):
+    seen = []
+
+    def execute(self, sql, params=()):
+        _SqlSpy.seen.append(" ".join(sql.split()))
+        return super().execute(sql, params)
+
+
+class _SpyConn(Conn):
+    def cursor(self):
+        return _SqlSpy(self.db)
+
+
+_SqlSpy.seen = []
+_spy_db = FakeDB()
+R.R2MediaCatalogSync(
+    lambda: _SpyConn(_spy_db),
+    FakeR2({R.AUDIO_PREFIX: [("méditations/60-toute-neuve-seance.mp3", 4096)],
+            R.VIDEO_PREFIX: [("relaxation-videos/16318782-hd_1080_1920_60fps.mp4",
+                              5000)]}),
+    public_base_url=BASE, now_fn=lambda: NOW,
+).run(dry_run=False)
+_med_ins = [q for q in _SqlSpy.seen if q.startswith("INSERT INTO meditation_catalog")]
+_vid_ins = [q for q in _SqlSpy.seen if q.startswith("INSERT INTO relaxation_video_catalog")]
+check(_med_ins and "ON CONFLICT (r2_object_key) WHERE r2_object_key IS NOT NULL DO UPDATE"
+      in _med_ins[0],
+      "15a upsert meditation_catalog : ON CONFLICT (r2_object_key) WHERE "
+      "r2_object_key IS NOT NULL DO UPDATE")
+check(_vid_ins and "ON CONFLICT (r2_object_key) WHERE r2_object_key IS NOT NULL DO UPDATE"
+      in _vid_ins[0],
+      "15b upsert relaxation_video_catalog : même arbitre partiel")
+check(len(_spy_db.meds) == 1 and len(_spy_db.vids) == 1
+      and _spy_db.meds[0]["r2_object_key"] == "méditations/60-toute-neuve-seance.mp3"
+      and _spy_db.vids[0]["r2_object_key"]
+      == "relaxation-videos/16318782-hd_1080_1920_60fps.mp4",
+      "15c avec le bon arbitre : 1 méditation + 1 vidéo créées (INSERT accepté)")
+
+# 15d — le faux curseur REFUSE un ON CONFLICT sans prédicat (= comportement
+#       PostgreSQL sur index partiel) : c'est ce qui aurait attrapé le bug.
+_bad = Cur(FakeDB())
+try:
+    _bad.execute(
+        "INSERT INTO relaxation_video_catalog (id, r2_object_key) "
+        "VALUES (%s, %s) ON CONFLICT (r2_object_key) DO UPDATE "
+        "SET r2_last_seen_at = EXCLUDED.r2_last_seen_at", ("x", "k"))
+    _rejected = False
+except AssertionError as e:
+    _rejected = "no unique or exclusion constraint" in str(e)
+check(_rejected,
+      "15d un ON CONFLICT (r2_object_key) SANS prédicat partiel est rejeté "
+      "(reproduit l'erreur prod)")
+
+# 15e — l'index de migration v46 crée bien le prédicat partiel correspondant
+#       (lecture texte de auryel_bot.py — pas d'import du monolithe).
+import os as _os
+_bot = _os.path.join(_os.path.dirname(_os.path.abspath(__file__)), "auryel_bot.py")
+_src = open(_bot, encoding="utf-8").read()
+_i46 = _src.find("Migration v46")
+_seg = " ".join(_src[_i46:_i46 + 3000].split())
+check(_i46 != -1
+      and "CREATE UNIQUE INDEX IF NOT EXISTS uq_" in _seg
+      and "(r2_object_key) WHERE r2_object_key IS NOT NULL" in _seg,
+      "15e migration v46 : index UNIQUE PARTIEL (WHERE r2_object_key IS NOT "
+      "NULL) — cohérent avec l'arbitre de l'upsert")
+
+# 15f — adoption + création + 2e passage idempotent + aucun doublon, via le
+#       faux curseur STRICT (rejette tout upsert au mauvais arbitre).
+_db = FakeDB()
+_db.meds.append(dict(
+    id="m-1", slug="revenir-au-calme", title="Revenir au calme", description="",
+    category="stress-calme", duration_seconds=0,
+    audio_url=R.public_url(BASE, "méditations/02-revenir-au-calme.mp3"),
+    image_url=None, sort_order=2, is_active=True, published_at=None,
+    r2_object_key=None, r2_last_seen_at=None, version=4))
+_r2 = FakeR2({
+    R.AUDIO_PREFIX: [("méditations/02-revenir-au-calme.mp3", 4096)],
+    R.VIDEO_PREFIX: [("relaxation-videos/ocean.mp4", 5000)],
+})
+_p1 = run_sync(_db, _r2)
+check(_p1["status"] == "success" and _p1["errors"] == 0
+      and _p1["adopted_audio"] == 1 and _p1["new_videos"] == 1
+      and _db.meds[0]["r2_object_key"] == "méditations/02-revenir-au-calme.mp3"
+      and _db.meds[0]["version"] == 4  # métadonnées éditoriales intactes
+      and len(_db.vids) == 1,
+      "15f 1er passage : média existant adopté + 1 vidéo créée, 0 erreur")
+_p2 = run_sync(_db, _r2)
+check(_p2["status"] == "success" and _p2["errors"] == 0
+      and _p2["adopted_audio"] == 0 and _p2["new_videos"] == 0
+      and _p2["updated_audio"] == 1 and _p2["updated_videos"] == 1
+      and len(_db.meds) == 1 and len(_db.vids) == 1,
+      "15g 2e passage : idempotent, aucune création, aucun doublon")
 
 # ===========================================================================
 print("-" * 64)

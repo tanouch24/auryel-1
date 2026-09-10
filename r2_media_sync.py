@@ -468,7 +468,8 @@ class R2MediaCatalogSync:
                         " r2_last_seen_at, created_at, updated_at, version) "
                         "VALUES (%s, %s, %s, %s, %s, %s, %s, NULL, %s, TRUE, "
                         "        NULL, %s, %s, NOW(), NOW(), 1) "
-                        "ON CONFLICT (r2_object_key) DO UPDATE "
+                        "ON CONFLICT (r2_object_key) "
+                        "  WHERE r2_object_key IS NOT NULL DO UPDATE "
                         "  SET r2_last_seen_at = EXCLUDED.r2_last_seen_at "
                         "RETURNING id",
                         (new_id, slug, row["title"], row["description"],
@@ -484,7 +485,8 @@ class R2MediaCatalogSync:
                         " created_at, updated_at, version) "
                         "VALUES (%s, %s, %s, %s, %s, NULL, %s, '{}', %s, TRUE, "
                         "        NULL, %s, %s, NOW(), NOW(), 1) "
-                        "ON CONFLICT (r2_object_key) DO UPDATE "
+                        "ON CONFLICT (r2_object_key) "
+                        "  WHERE r2_object_key IS NOT NULL DO UPDATE "
                         "  SET r2_last_seen_at = EXCLUDED.r2_last_seen_at "
                         "RETURNING id",
                         (new_id, slug, row["title"], row["description"],
