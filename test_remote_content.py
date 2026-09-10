@@ -441,6 +441,107 @@ check(r.status_code == 200 and b"Contenu distant" in r.data
       "6 GET /admin/content -> page HTML avec jeton CSRF")
 
 # ===========================================================================
+# 8. CATALOGUE 100 % DISTANT & EXTENSIBLE — aucune dépendance à une version
+#    d'app : une nouvelle ligne backend apparaît dans le catalogue mobile,
+#    l'ETag change, l'app se resynchronise sans release.
+# ===========================================================================
+
+# 8a — catalogue VIDE : 200, meditations == [], catalog_version stable.
+_reset()
+r = client.get("/api/app/content/meditations", headers=H)
+j = r.get_json()
+check(r.status_code == 200 and j["meditations"] == []
+      and isinstance(j["catalog_version"], str) and j["catalog_version"],
+      "8a catalogue vide -> 200, meditations: [], catalog_version présent")
+empty_tag = j["catalog_version"]
+check(client.get("/api/app/content/meditations", headers=H).get_json()["catalog_version"]
+      == empty_tag, "8b catalog_version d'un catalogue vide est stable")
+
+# 8c — 50 méditations seedées, puis AJOUT d'une 51e via l'admin :
+#      elle apparaît dans le catalogue mobile + ETag différent, SANS toucher
+#      quoi que ce soit côté Flutter.
+_reset()
+for i in range(1, 51):
+    _seed_med(f"meditation-{i:02d}", sort_order=i)
+r = client.get("/api/app/content/meditations", headers=H)
+j50 = r.get_json()
+tag50 = j50["catalog_version"]
+etag50_header = r.headers.get("ETag")
+check(len(j50["meditations"]) == 50, "8c 50 méditations servies")
+check(etag50_header and etag50_header.strip('"') == tag50, "8c' ETag == catalog_version")
+
+with client.session_transaction() as s:
+    s["admin_logged"] = True
+    s["csrf_token"] = "tok-abc"
+HC8 = {"X-CSRF-Token": "tok-abc"}
+r = client.post("/admin/content/meditation", headers=HC8, json={
+    "slug": "meditation-51-nouvelle",
+    "title": "Méditation 51 — ajoutée sans release",
+    "audio_url": "https://cdn.auryel.app/51.mp3",
+    "category": "lacher-prise", "duration_seconds": 300, "sort_order": 51,
+})
+check(r.status_code == 200 and r.get_json()["ok"] and r.get_json()["version"] == 1,
+      "8d 51e méditation créée via /admin/content/meditation")
+
+r = client.get("/api/app/content/meditations", headers=H)
+j51 = r.get_json()
+slugs51 = [m["slug"] for m in j51["meditations"]]
+check(len(j51["meditations"]) == 51 and "meditation-51-nouvelle" in slugs51,
+      "8e la 51e apparaît AUTOMATIQUEMENT dans le catalogue mobile (aucun code Flutter)")
+check(slugs51 == sorted(slugs51, key=lambda s: int(s.split("-")[1]) if s.split("-")[1].isdigit() else 999)
+      or slugs51[-1] == "meditation-51-nouvelle",
+      "8e' triée en dernier (sort_order 51)")
+check(j51["catalog_version"] != tag50
+      and r.headers.get("ETag").strip('"') != tag50,
+      "8f ETag / catalog_version CHANGENT après l'ajout")
+check(client.get("/api/app/content/meditations",
+                 headers={**H, "If-None-Match": tag50}).status_code == 200,
+      "8g l'ancien ETag ne renvoie plus 304 (l'app retélécharge la nouvelle liste)")
+check(client.get("/api/app/content/meditations",
+                 headers={**H, "If-None-Match": j51["catalog_version"]}).status_code == 304,
+      "8h le nouvel ETag renvoie 304 (plus de retéléchargement inutile)")
+
+# 8i — RÉORDONNANCEMENT via l'admin : reflété dans l'ordre mobile + ETag change.
+_reset()
+_seed_med("zeta", sort_order=5)
+_seed_med("alpha", sort_order=1)
+before = client.get("/api/app/content/meditations", headers=H).get_json()
+check([m["slug"] for m in before["meditations"]] == ["alpha", "zeta"],
+      "8i ordre initial = sort_order ASC")
+with client.session_transaction() as s:
+    s["admin_logged"] = True
+    s["csrf_token"] = "tok-abc"
+client.post("/admin/content/meditation", headers=HC8, json={
+    "slug": "zeta", "title": "Zeta", "audio_url": "https://cdn.auryel.app/z.mp3",
+    "sort_order": 0,
+})
+after = client.get("/api/app/content/meditations", headers=H).get_json()
+check([m["slug"] for m in after["meditations"]] == ["zeta", "alpha"],
+      "8j changement de sort_order via l'admin -> nouvel ordre servi au mobile")
+check(after["catalog_version"] != before["catalog_version"],
+      "8k le réordonnancement change aussi l'ETag")
+
+# 8l — CONTRAT MOBILE STABLE + montée compatible : chaque entrée porte EXACTEMENT
+#      les clés documentées (id/title/audio_url = str non vides). Un nouveau
+#      champ backend serait OPTIONNEL — le parseur Flutter ignore les clés
+#      inconnues (cf. docs/meditations_catalog_contract.md).
+_reset()
+_seed_med("contrat", sort_order=1)
+m0 = client.get("/api/app/content/meditations", headers=H).get_json()["meditations"][0]
+check(set(m0.keys()) == {
+    "id", "slug", "title", "description", "category", "duration_seconds",
+    "audio_url", "image_url", "sort_order", "published_at", "version",
+}, "8l contrat par méditation = jeu de clés stable et documenté")
+check(isinstance(m0["id"], str) and m0["id"]
+      and isinstance(m0["title"], str) and m0["title"]
+      and isinstance(m0["audio_url"], str) and m0["audio_url"].startswith("https://")
+      and isinstance(m0["slug"], str) and m0["slug"],
+      "8m id / title / slug / audio_url toujours renseignés (str)")
+check(m0["image_url"] is None and isinstance(m0["duration_seconds"], int),
+      "8n image_url nullable, duration_seconds entier (0 accepté)")
+
+
+# ===========================================================================
 # 7. Migration v43 — additive (inspection de source)
 # ===========================================================================
 _init = inspect.getsource(A.init_db)
