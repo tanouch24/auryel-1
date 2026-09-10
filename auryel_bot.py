@@ -2062,6 +2062,60 @@ def init_db():
         conn.rollback()
         print(f"Migration v45 (relaxation videos): {e}")
 
+    # Migration v46 — SYNCHRONISATION AUTOMATIQUE CLOUDFLARE R2. PUREMENT
+    # ADDITIF : 2 colonnes techniques par catalogue média + 1 table d'état.
+    # Aucune colonne existante ALTER-ée en place, aucun backfill, aucun DROP /
+    # TRUNCATE / DELETE, aucune FK vers accounts. Miroir lisible :
+    # migrations/020_r2_media_sync.sql.
+    #
+    #   <catalogue>.r2_object_key   clé S3 de l'objet R2 source
+    #     (ex. "méditations/51-....mp3"). NULLABLE : les lignes créées à la main
+    #     via l'admin restent NULL. Index UNIQUE PARTIEL (WHERE ... IS NOT NULL)
+    #     -> garantie DB anti-doublon : un même fichier R2 ne peut produire
+    #     qu'UNE ligne, même si deux exécutions du cron se chevauchent.
+    #   <catalogue>.r2_last_seen_at  horodatage de la dernière exécution du sync
+    #     ayant vu cet objet dans R2. Un objet retiré de R2 n'est JAMAIS
+    #     supprimé : il devient simplement "manquant" (last_seen ancien).
+    #   r2_sync_state  ligne unique (id = 1) : résumé du dernier passage
+    #     (compteurs non sensibles) pour GET /admin/content/r2-sync-status.
+    try:
+        for _tbl in ("meditation_catalog", "relaxation_video_catalog"):
+            c.execute(
+                f"ALTER TABLE {_tbl} ADD COLUMN IF NOT EXISTS r2_object_key TEXT"
+            )
+            c.execute(
+                f"ALTER TABLE {_tbl} "
+                "ADD COLUMN IF NOT EXISTS r2_last_seen_at TIMESTAMPTZ"
+            )
+            c.execute(
+                f"CREATE UNIQUE INDEX IF NOT EXISTS uq_{_tbl}_r2_object_key "
+                f"ON {_tbl} (r2_object_key) WHERE r2_object_key IS NOT NULL"
+            )
+        c.execute("""
+            CREATE TABLE IF NOT EXISTS r2_sync_state (
+                id              INTEGER      PRIMARY KEY DEFAULT 1,
+                last_run_at     TIMESTAMPTZ,
+                status          TEXT,
+                audio_objects   INTEGER      NOT NULL DEFAULT 0,
+                video_objects   INTEGER      NOT NULL DEFAULT 0,
+                new_audio       INTEGER      NOT NULL DEFAULT 0,
+                new_videos      INTEGER      NOT NULL DEFAULT 0,
+                adopted_audio   INTEGER      NOT NULL DEFAULT 0,
+                adopted_videos  INTEGER      NOT NULL DEFAULT 0,
+                updated_audio   INTEGER      NOT NULL DEFAULT 0,
+                updated_videos  INTEGER      NOT NULL DEFAULT 0,
+                missing_objects INTEGER      NOT NULL DEFAULT 0,
+                invalid_objects INTEGER      NOT NULL DEFAULT 0,
+                errors          INTEGER      NOT NULL DEFAULT 0,
+                detail          TEXT,
+                CONSTRAINT r2_sync_state_singleton CHECK (id = 1)
+            )
+        """)
+        conn.commit()
+    except Exception as e:
+        conn.rollback()
+        print(f"Migration v46 (r2 media sync): {e}")
+
     conn.close()
 
 def reset_db():
@@ -13263,6 +13317,77 @@ def _billing_reverify_revoke(user_id, sub_id, status_label, now):
         conn.close()
 
 
+# ============================================================
+# CRON — SYNCHRONISATION AUTOMATIQUE CLOUDFLARE R2 -> catalogues média.
+# ============================================================
+# Toutes les ~15 min : liste méditations/*.mp3 et relaxation-videos/*.mp4 dans
+# R2 (API S3, paginée), crée UNE ligne de catalogue par NOUVEL objet, adopte
+# sans doublon les lignes déjà importées. Additif : rien n'est jamais supprimé.
+# Auth : secret constant-time (R2_SYNC_CRON_SECRET, repli PUSH_CRON_SECRET /
+# DAILY_SECRET). Credentials R2 absents -> 200 {"status":"disabled"} (le cron
+# ne spamme pas d'erreurs tant que R2 n'est pas configuré). Aucun secret n'est
+# jamais loggé ni renvoyé. Détail : r2_media_sync.py + docs/R2_MEDIA_SYNC.md.
+_R2_SYNC_CRON_SECRET = (
+    os.environ.get("R2_SYNC_CRON_SECRET") or _PUSH_CRON_SECRET
+)
+
+
+@app.route("/cron/r2-media-sync", methods=["POST"])
+@limiter.limit("12 per hour")
+def cron_r2_media_sync():
+    body = request.get_json(silent=True) or {}
+    provided = body.get("secret", "") or request.headers.get("X-Cron-Secret", "")
+    if not _R2_SYNC_CRON_SECRET or not hmac.compare_digest(
+        str(provided), str(_R2_SYNC_CRON_SECRET)
+    ):
+        return jsonify({"error": "unauthorized"}), 401
+
+    dry_run = bool(body.get("dry_run"))
+    try:
+        import r2_media_sync as _rs
+        cfg = _rs.R2Config.from_env()
+        if not cfg.configured:
+            return jsonify({
+                "status": "disabled",
+                "reason": "r2_not_configured",
+                "config": cfg.masked(),
+            }), 200
+        sync = _rs.R2MediaCatalogSync(get_conn, _rs.R2Client(cfg))
+        result = sync.run(dry_run=dry_run)
+    except Exception as e:
+        print(f"[r2-media-sync] erreur {type(e).__name__}")
+        return jsonify({"error": "r2_media_sync_failed"}), 500
+
+    log_event("r2_media_sync",
+              dry_run=int(bool(dry_run)),
+              status=result.get("status"),
+              audio=result.get("audio_objects", 0),
+              video=result.get("video_objects", 0),
+              new_a=result.get("new_audio", 0),
+              new_v=result.get("new_videos", 0),
+              adopt_a=result.get("adopted_audio", 0),
+              adopt_v=result.get("adopted_videos", 0),
+              missing=result.get("missing_objects", 0),
+              errors=result.get("errors", 0))
+    # Réponse : compteurs seulement, jamais de credential ni de clé S3 brute
+    # au-delà du strict nécessaire de diagnostic.
+    return jsonify({
+        "status": result.get("status"),
+        "dry_run": bool(dry_run),
+        "audio_objects": result.get("audio_objects", 0),
+        "video_objects": result.get("video_objects", 0),
+        "new_audio": result.get("new_audio", 0),
+        "new_videos": result.get("new_videos", 0),
+        "adopted_audio": result.get("adopted_audio", 0),
+        "adopted_videos": result.get("adopted_videos", 0),
+        "updated_audio": result.get("updated_audio", 0),
+        "updated_videos": result.get("updated_videos", 0),
+        "invalid_objects": result.get("invalid_objects", 0),
+        "missing_objects": result.get("missing_objects", 0),
+        "errors": result.get("errors", 0),
+    }), 200
+
+
 @app.route("/cron/billing-reverify", methods=["POST"])
 @limiter.limit("6 per hour")
 def cron_billing_reverify():
@@ -14456,6 +14581,24 @@ def admin_content_relaxation_video_toggle():
     log_admin_action("content-relaxation-video-toggle", vid,
                      detail="on" if is_active else "off")
     return jsonify({"ok": True, "id": vid, "is_active": is_active}), 200
+
+
+@app.route("/admin/content/r2-sync-status", methods=["GET"])
+def admin_content_r2_sync_status():
+    """État du dernier passage de la synchro R2 (compteurs non sensibles).
+    ADMIN uniquement (session). Ne renvoie JAMAIS de credential R2 ni de clé
+    S3 brute. `state: null` tant qu'aucun sync réel n'a tourné."""
+    if not admin_auth():
+        return jsonify({"error": "unauthorized"}), 401
+    try:
+        import r2_media_sync as _rs
+        state = _rs.read_sync_state(get_conn)
+        cfg = _rs.R2Config.from_env().masked()
+    except Exception as e:
+        print(f"[r2-sync-status] {type(e).__name__}")
+        return jsonify({"error": "read_failed"}), 500
+    return jsonify({"configured": cfg.get("configured", False),
+                    "config": cfg, "state": state}), 200
 
 
 @app.route("/admin/content/daily", methods=["POST"])
