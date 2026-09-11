@@ -13276,8 +13276,28 @@ try:
 except ValueError:
     _BILLING_REVERIFY_MIN_AGE_HOURS = 24
 
-# Statuts considérés « droit actif » à re-contrôler.
-_BILLING_ACTIVE_STATUSES = ("active", "billing_retry", "grace_period", "paused")
+# Statuts Google à re-contrôler périodiquement (BUG CORRIGÉ — voir audit
+# abonnement : ce filtre comparait autrefois `mobile_subscriptions.status` à
+# un vocabulaire inventé ("active", "billing_retry", "grace_period",
+# "paused") qui ne correspond à AUCUNE valeur réellement écrite en base. Pour
+# 'google_play', `status` est TOUJOURS le `subscriptionState` brut renvoyé
+# par Google (`_google_normalize`, ex. "SUBSCRIPTION_STATE_ACTIVE") : le
+# filtre précédent ne sélectionnait donc jamais aucune ligne réelle — le cron
+# tournait à vide en production (`checked: 0` systématique).
+#
+# Correction (Option 1 — le cron reconnaît les vraies valeurs Google) :
+# on réutilise directement _GP_ENTITLING_STATES (déjà la référence pour
+# _google_entitled — ACTIVE / IN_GRACE_PERIOD / CANCELED-tant-que-
+# expires_at>now), auquel on ajoute ON_HOLD et PAUSED : ces deux états ne
+# donnent PAS droit à Premium mais peuvent encore ÉVOLUER côté Google
+# (reprise de paiement, reprise après pause) sans qu'aucune notification ne
+# nous prévienne — ils méritent donc d'être revérifiés. EXPIRED / PENDING /
+# UNSPECIFIED sont terminaux ou pas-encore-entitled : rien à revérifier tant
+# qu'un client ne relance pas un verify lui-même.
+_BILLING_REVERIFY_STATUSES = _GP_ENTITLING_STATES | frozenset({
+    "SUBSCRIPTION_STATE_ON_HOLD",
+    "SUBSCRIPTION_STATE_PAUSED",
+})
 
 
 def _billing_reverify_revoke(user_id, sub_id, status_label, now):
@@ -13412,7 +13432,7 @@ def cron_billing_reverify():
             "  AND (last_verified_at IS NULL OR last_verified_at < %s) "
             "ORDER BY last_verified_at ASC NULLS FIRST "
             "LIMIT %s",
-            (list(_BILLING_ACTIVE_STATUSES), cutoff, _BILLING_REVERIFY_BATCH),
+            (list(_BILLING_REVERIFY_STATUSES), cutoff, _BILLING_REVERIFY_BATCH),
         )
         rows = c.fetchall()
     finally:
