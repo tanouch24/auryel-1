@@ -423,6 +423,81 @@ def get_conn():
     except Exception:
         return psycopg2.connect(DATABASE_URL)
 
+# ---------------------------------------------------------------------------
+# RÉVEIL AURYEL — 60 phrases du matin (Migration v47). Aucun prénom, aucune
+# voyance/prédiction/promesse, ton calme/positif/adulte, jamais infantilisant.
+# Texte = source de vérité (PostgreSQL) ; l'audio MP3 pré-généré (Cloudflare
+# R2) est référencé par `audio_url`, NULLABLE tant qu'il n'est pas produit —
+# l'app utilise alors un repli TextToSpeech local (voir CLAUDE.md / rapport
+# du lot « feed méditation + réveil vocal »). Définie AVANT `init_db()` (et
+# non à côté de l'endpoint plus bas) : `init_db()` est appelée dès l'import du
+# module (cf. plus bas `try: init_db()`), avant que le reste du fichier ne
+# soit exécuté — le nom doit donc déjà exister à ce moment-là.
+# ---------------------------------------------------------------------------
+_WAKE_MESSAGES_SEED = (
+    "Respire doucement avant de te lever. Ce moment n'appartient qu'à toi.",
+    "Prends le temps de te réveiller vraiment, sans te presser.",
+    "Cette journée n'a pas besoin d'être parfaite pour être bonne.",
+    "Commence doucement. Le reste suivra à son heure.",
+    "Un peu de calme le matin change souvent toute une journée.",
+    "Tu n'as pas à tout faire tout de suite. Choisis une seule chose et commence par elle.",
+    "Laisse la nuit derrière toi et accueille ce nouveau jour tel qu'il vient.",
+    "Ta journée peut commencer simplement, sans pression ni attente.",
+    "Offre-toi quelques minutes avant de courir vers le reste du monde.",
+    "Ce que tu ressens ce matin a le droit d'exister, sans jugement.",
+    "Avance doucement. La constance compte plus que la vitesse.",
+    "Aujourd'hui, sois un peu plus indulgent avec toi-même.",
+    "Une journée se construit geste après geste, pas d'un seul coup.",
+    "Tu peux commencer petit. Ce sera déjà suffisant.",
+    "Le calme du matin t'appartient, personne ne peut te le prendre.",
+    "Prends une grande respiration. Tu as le temps de bien démarrer.",
+    "Rien ne t'oblige à foncer dès les premières minutes du jour.",
+    "Fais de la place pour un peu de douceur avant d'attaquer ta journée.",
+    "Chaque matin est une occasion simple de recommencer autrement.",
+    "Tu peux avancer sans te comparer à hier ou à demain.",
+    "Aujourd'hui, écoute un peu plus ce dont tu as vraiment besoin.",
+    "Un bon départ ne demande pas grand-chose : juste un peu de présence.",
+    "Laisse ton corps se réveiller à son propre rythme.",
+    "Tu n'as rien à prouver ce matin, seulement à commencer.",
+    "Cette journée t'appartient. Tu peux la façonner à ta mesure.",
+    "Accorde-toi le droit de démarrer lentement si c'est ce dont tu as besoin.",
+    "Un geste calme le matin peut apaiser toute une journée.",
+    "Avance avec ce que tu as aujourd'hui, ça suffit amplement.",
+    "Ce matin, choisis la douceur plutôt que la précipitation.",
+    "Tu peux traverser cette journée sans te mettre de pression inutile.",
+    "Prends un instant pour toi avant que la journée ne s'accélère.",
+    "Le silence du matin est un bon endroit pour se retrouver.",
+    "Une journée qui commence calmement laisse plus de place à l'essentiel.",
+    "Tu as le droit de prendre ton temps, même un lundi.",
+    "Ce jour t'offre une page neuve. Écris-la à ton allure.",
+    "Reste simple ce matin. Le reste peut attendre quelques minutes.",
+    "Un réveil tranquille est déjà une bonne façon de commencer.",
+    "Tu n'as pas à être au meilleur de toi-même dès le réveil.",
+    "Laisse-toi le temps d'ouvrir les yeux avant d'ouvrir les pensées.",
+    "Aujourd'hui, avance pas à pas plutôt que tout d'un bloc.",
+    "Un matin calme prépare souvent une journée plus légère.",
+    "Tu peux commencer doucement et accélérer seulement si tu en as envie.",
+    "Ce réveil est une occasion simple de repartir sur une base saine.",
+    "Prends soin de toi avant de prendre soin du reste.",
+    "Rien ne presse encore. Profite de ce moment tranquille.",
+    "Une respiration lente peut suffire à changer la couleur du matin.",
+    "Tu peux avancer avec constance, sans te brusquer.",
+    "Ce matin t'appartient encore un peu avant que la journée ne commence vraiment.",
+    "Accueille cette journée comme elle vient, sans l'exiger parfaite.",
+    "Un pas tranquille aujourd'hui vaut mieux qu'une course dès le réveil.",
+    "Tu as le droit de démarrer doucement, même si d'autres foncent déjà.",
+    "Ce moment de calme est un bon carburant pour la suite.",
+    "Laisse la journée se dérouler sans vouloir tout contrôler d'avance.",
+    "Un réveil paisible peut suffire à donner le ton du jour.",
+    "Avance avec ce que tu ressens maintenant, pas avec ce que tu devrais ressentir.",
+    "Ce matin, une seule intention simple peut suffire à bien commencer.",
+    "Tu peux poser les choses une à une, sans précipitation.",
+    "Une journée posée commence souvent par un réveil sans urgence.",
+    "Fais de ce moment un point d'appui calme pour toute la journée.",
+    "Aujourd'hui encore, tu as le droit d'avancer à ta manière.",
+)
+
+
 def init_db():
     conn = get_conn()
     c = conn.cursor()
@@ -2115,6 +2190,41 @@ def init_db():
     except Exception as e:
         conn.rollback()
         print(f"Migration v46 (r2 media sync): {e}")
+
+    # Migration v47 — RÉVEIL AURYEL : messages du matin. PUREMENT ADDITIF :
+    # 1 table neuve + 1 index + seed idempotent de 60 phrases. Aucune colonne
+    # existante ALTER-ée, aucun DROP / TRUNCATE / DELETE, aucune FK vers
+    # accounts (contenu GLOBAL, comme meditation_catalog / relaxation_video_
+    # catalog). Miroir lisible : migrations/021_wake_messages.sql.
+    try:
+        c.execute("""
+            CREATE TABLE IF NOT EXISTS wake_messages (
+                id           UUID         PRIMARY KEY,
+                text         TEXT         NOT NULL UNIQUE,
+                is_active    BOOLEAN      NOT NULL DEFAULT TRUE,
+                audio_url    TEXT,
+                created_at   TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
+                updated_at   TIMESTAMPTZ  NOT NULL DEFAULT NOW()
+            )
+        """)
+        c.execute("""
+            CREATE INDEX IF NOT EXISTS idx_wake_messages_active
+            ON wake_messages (is_active, id)
+        """)
+        # Seed idempotent : UNIQUE(text) + ON CONFLICT DO NOTHING -> rejouable
+        # sans jamais dupliquer une phrase, même si le texte est ajusté ici
+        # dans une future version (une phrase déjà en base n'est pas éditée
+        # par le seed, uniquement par l'admin).
+        for _msg in _WAKE_MESSAGES_SEED:
+            c.execute(
+                "INSERT INTO wake_messages (id, text) VALUES (%s, %s) "
+                "ON CONFLICT (text) DO NOTHING",
+                (str(uuid.uuid4()), _msg),
+            )
+        conn.commit()
+    except Exception as e:
+        conn.rollback()
+        print(f"Migration v47 (wake messages): {e}")
 
     conn.close()
 
@@ -7136,6 +7246,60 @@ def api_content_relaxation_videos():
         "generic_category": _RELAXATION_GENERIC_CATEGORY,
         "compatibility_map": _MEDITATION_VIDEO_COMPATIBILITY,
         "videos": videos,
+    })
+    resp.headers["ETag"] = f'"{tag}"'
+    resp.headers["Cache-Control"] = "no-cache"
+    return resp, 200
+
+
+def _wake_messages_active_rows():
+    """Lignes ACTIVES, triées (id) — lecture seule. Colonnes alignées pour
+    calculer une empreinte ETag simple (pas de `version`/`sort_order` : la
+    sélection côté client est aléatoire, pas séquentielle)."""
+    conn = get_conn()
+    try:
+        c = conn.cursor()
+        c.execute(
+            "SELECT id, text, audio_url, updated_at "
+            "FROM wake_messages WHERE is_active = TRUE ORDER BY id ASC"
+        )
+        return c.fetchall()
+    finally:
+        conn.close()
+
+
+@app.route("/api/app/content/wake-messages", methods=["GET"])
+@limiter.limit("60 per hour")
+@require_app_auth
+def api_content_wake_messages():
+    """Messages actifs du Réveil Auryel — lecture seule, même contrat que les
+    autres endpoints de contenu (ETag / If-None-Match -> 304). Réponse valide
+    et non bloquante même si la table est vide (`messages: []`) : l'app garde
+    alors son dernier cache local. `audio_url` peut être `null` (MP3 pas
+    encore généré) -> l'app utilise son repli TextToSpeech local, jamais un
+    appel TTS payant au moment où le réveil sonne."""
+    rows = _wake_messages_active_rows()
+    basis = "|".join(
+        f"{r[0]}:{r[3].isoformat() if r[3] else ''}" for r in rows
+    )
+    tag = hashlib.sha256(basis.encode("utf-8")).hexdigest()[:32]
+    inm = request.headers.get("If-None-Match", "").strip().strip('"')
+    if inm and inm == tag:
+        resp = jsonify({})
+        resp.headers["ETag"] = f'"{tag}"'
+        resp.headers["Cache-Control"] = "no-cache"
+        return resp, 304
+
+    messages = [{
+        "id": str(r[0]),
+        "text": r[1],
+        "audio_url": r[2] or None,
+    } for r in rows]
+
+    resp = jsonify({
+        "version": _CONTENT_API_VERSION,
+        "catalog_version": tag,
+        "messages": messages,
     })
     resp.headers["ETag"] = f'"{tag}"'
     resp.headers["Cache-Control"] = "no-cache"
