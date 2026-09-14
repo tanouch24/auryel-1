@@ -269,7 +269,7 @@ print("Constantes / contrat")
 # GROS CHANTIER ÉCONOMIQUE (Prompt 1/5) — bienvenue alignée sur 20 min
 # (1200 s), au lieu d'1 h : voir Migration v48.
 check(A.FIRST_FREE_SECONDS == 1200, "FIRST_FREE_SECONDS = 1200")
-check(A.PREMIUM_MONTHLY_SECONDS == 28800, "PREMIUM_MONTHLY_SECONDS = 28800")
+check(A.PREMIUM_MONTHLY_SECONDS == 14400, "PREMIUM_MONTHLY_SECONDS = 14400")
 check(A.ACTIVITY_GRACE_SECONDS == 300, "ACTIVITY_GRACE_SECONDS = 300")
 
 print("-" * 64)

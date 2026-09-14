@@ -2759,6 +2759,29 @@ def init_db():
         conn.rollback()
         print(f"Migration v51 (nouveaux paliers express_products): {e}")
 
+    # Migration v52 — cohérence produit : cadeau de bienvenue 20 min et
+    # quota Premium 4 h/mois. Ne touche ni aux secondes gagnées/achetées ni
+    # aux secondes Premium consommées. Les anciennes allowances au défaut
+    # historique 28 800 s sont réalignées à 14 400 s, idempotemment.
+    try:
+        c.execute(
+            "ALTER TABLE accounts "
+            "ALTER COLUMN first_free_seconds_remaining SET DEFAULT 1200"
+        )
+        c.execute(
+            "ALTER TABLE consultation_allowance "
+            "ALTER COLUMN monthly_allowance_seconds SET DEFAULT 14400"
+        )
+        c.execute(
+            "UPDATE consultation_allowance "
+            "SET monthly_allowance_seconds=14400 "
+            "WHERE monthly_allowance_seconds=28800"
+        )
+        conn.commit()
+    except Exception as e:
+        conn.rollback()
+        print(f"Migration v52 (product coherence): {e}")
+
     conn.close()
 
 def reset_db():
@@ -4928,7 +4951,7 @@ def _quota_json(quota):
 # GET /api/consultation/messages NI resync_premium_entitlement (câblage = A.3c).
 # ------------------------------------------------------------
 
-_QUOTA_SHIM_MONTHLY_LIMIT_HOURS = 8   # 8 h Premium / période (affichage UI)
+_QUOTA_SHIM_MONTHLY_LIMIT_HOURS = 4   # 4 h Premium / période (affichage UI)
 
 
 def _state_with_time_settle(user_id, now=None):
@@ -5077,7 +5100,7 @@ def _quota_shim_json(st):
 
     ⚠️ APPROXIMATION UI UNIQUEMENT. Ce bloc n'est JAMAIS relu par le moteur
     pour débiter — la SOURCE DE VÉRITÉ des secondes est le bloc `time`.
-      monthly_limit        : 8 (heures Premium / période, constante d'affichage)
+      monthly_limit        : 4 (heures Premium / période, constante d'affichage)
       monthly_remaining    : ceil(premium_remaining_seconds / 3600)
       monthly_used         : max(0, 8 - monthly_remaining)
       first_free_available : first_free_remaining_seconds > 0  (dérivé du TEMPS)
@@ -11343,7 +11366,7 @@ def _open_time_consultation_flow_tx(user_id, preferred_advisor_id, tirage_id, no
 # produit en vigueur pour tout code qui voudrait s'y référer. Voir
 # Migration v48 pour le détail de la migration des comptes existants.
 FIRST_FREE_SECONDS = 1200
-PREMIUM_MONTHLY_SECONDS = 28800
+PREMIUM_MONTHLY_SECONDS = 14400
 ACTIVITY_GRACE_SECONDS = 300
 
 
