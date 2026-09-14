@@ -6262,7 +6262,8 @@ _REWARDS_CLIENT_CLAIMABLE_ACTIONS = frozenset({"wake_completed"})
 @require_app_auth
 def api_rewards_wallet():
     """Wallet Étoiles complet de l'utilisateur authentifié. LECTURE SEULE.
-    Contrat : {"stars_balance", "rules": [{"rule_key","stars_amount"}, ...]
+    Contrat : {"stars_balance", "rules": [{"rule_key","stars_amount",
+    "daily_limit" (int|null)}, ...]
     (UNIQUEMENT les règles enabled=TRUE — jamais une action future inactive),
     "streak": {"current_streak","best_streak","next_reward_in_days"},
     "recent_transactions": [{"delta_stars","balance_after","reason",
@@ -6295,11 +6296,22 @@ def api_rewards_wallet():
         best_streak = int(row[2]) if row and row[2] is not None else 0
 
         c.execute(
-            "SELECT rule_key, stars_amount FROM reward_rules "
+            "SELECT rule_key, stars_amount, daily_limit FROM reward_rules "
             "WHERE enabled=TRUE ORDER BY rule_key",
         )
-        rules = [{"rule_key": r[0], "stars_amount": int(r[1])}
-                 for r in c.fetchall()]
+        # CORRECTIF PRODUIT — expose `daily_limit` (déjà en base depuis la
+        # migration v49, jamais renvoyé jusqu'ici) : l'appli affichait « Mes
+        # Étoiles » sans jamais pouvoir montrer la limite réelle d'une règle,
+        # au risque de l'inventer côté Flutter. Purement additif, aucune
+        # requête existante modifiée par ailleurs.
+        rules = [
+            {
+                "rule_key": r[0],
+                "stars_amount": int(r[1]),
+                "daily_limit": (int(r[2]) if r[2] is not None else None),
+            }
+            for r in c.fetchall()
+        ]
 
         c.execute(
             "SELECT delta_stars, balance_after, reason, created_at "

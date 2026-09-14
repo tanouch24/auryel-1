@@ -139,10 +139,10 @@ class FakeCursor:
                  w["last_active_reward_date"]) if w else None
             )
 
-        elif "SELECT rule_key, stars_amount FROM reward_rules" in s:
+        elif "SELECT rule_key, stars_amount, daily_limit FROM reward_rules" in s:
             self._rows = sorted(
-                [(k, v["stars_amount"]) for k, v in DB["reward_rules"].items()
-                 if v["enabled"]],
+                [(k, v["stars_amount"], v["daily_limit"])
+                 for k, v in DB["reward_rules"].items() if v["enabled"]],
                 key=lambda t: t[0],
             )
             self._r = None
@@ -325,6 +325,13 @@ check(amounts["wake_completed"] == 5 and amounts["daily_card_completed"] == 10
       and amounts["share_completed"] == 15 and amounts["streak_7_days"] == 50
       and amounts["mini_game_completed"] == 15,
       "2c montants exacts du rapport")
+limits = {r["rule_key"]: r["daily_limit"] for r in body["rules"]}
+check(limits["wake_completed"] == 1 and limits["daily_card_completed"] == 1
+      and limits["tarot_completed"] == 1 and limits["meditation_completed"] == 1
+      and limits["share_completed"] == 1 and limits["mini_game_completed"] == 1
+      and limits["streak_7_days"] is None,
+      f"2c bis daily_limit exposé tel quel depuis reward_rules, jamais "
+      f"inventé côté Flutter ({limits})")
 check(
     body["express_products"] == [
         {"product_key": "express_consultation_10min", "stars_cost": 500,
