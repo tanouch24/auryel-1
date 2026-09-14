@@ -2226,6 +2226,67 @@ def init_db():
         conn.rollback()
         print(f"Migration v47 (wake messages): {e}")
 
+    # Migration v48 — GROS CHANTIER ÉCONOMIQUE (Prompt 1/5) : bienvenue
+    # 20 min (au lieu d'1 h), + idempotency_key sur time_ledger pour le futur
+    # moteur de bonus. PUREMENT ADDITIF : 1 ALTER COLUMN (SET DEFAULT, ne
+    # touche aucune ligne existante), 1 UPDATE ciblé et NON DESTRUCTEUR
+    # (uniquement les comptes n'ayant JAMAIS consommé la bienvenue et encore
+    # à l'ancienne valeur exacte 3600), 1 colonne nullable + 1 index UNIQUE
+    # PARTIEL. Aucun DROP / TRUNCATE / DELETE, aucune autre table touchée.
+    #
+    #   accounts.first_free_seconds_remaining
+    #     Nouveau standard produit : 20 min (1200 s) au lieu d'1 h (3600 s),
+    #     décision documentée dans le rapport du lot. `SET DEFAULT 1200`
+    #     -> tout NOUVEAU compte (INSERT omettant la colonne) reçoit 1200
+    #     désormais. Comptes EXISTANTS :
+    #       - JAMAIS consommée (first_consultation_used_at IS NULL) ET encore
+    #         EXACTEMENT à l'ancienne valeur par défaut (3600, donc jamais
+    #         touchée par un ajustement admin ou un débit partiel) -> ramenée
+    #         à 1200. Choix documenté : la bienvenue n'a par définition RIEN
+    #         coûté à ce compte (aucune seconde consommée) ; aligner sur le
+    #         nouveau standard n'enlève aucun bénéfice déjà exercé. Aucun
+    #         double cadeau : ce n'est jamais un AJOUT, seulement un
+    #         RÉALIGNEMENT d'un solde encore vierge.
+    #       - déjà partiellement/totalement consommée (first_consultation_
+    #         used_at renseigné) OU à une valeur custom (admin) -> JAMAIS
+    #         touchée : stratégie la plus conservatrice face à l'ambiguïté
+    #         (cf. règle explicite du lot : « si ambigu, la plus
+    #         conservatrice »).
+    #     Idempotent : au rejeu, plus aucune ligne ne vaut exactement 3600
+    #     avec used_at NULL (déjà ramenée à 1200 la 1re fois) -> 0 ligne
+    #     modifiée.
+    #
+    #   time_ledger.idempotency_key
+    #     Nouvelle colonne nullable + index UNIQUE PARTIEL
+    #     (user_id, idempotency_key) WHERE idempotency_key IS NOT NULL.
+    #     Sert UNIQUEMENT au futur crédit générique `credit_bonus_time` (voir
+    #     plus bas) : les lignes historiques (débits de consultation, seed
+    #     backfill v42…) gardent idempotency_key NULL, jamais concernées par
+    #     l'index (partiel). Aucune ligne existante modifiée.
+    try:
+        c.execute(
+            "ALTER TABLE accounts "
+            "ALTER COLUMN first_free_seconds_remaining SET DEFAULT 1200"
+        )
+        c.execute(
+            "UPDATE accounts SET first_free_seconds_remaining = 1200 "
+            "WHERE first_consultation_used_at IS NULL "
+            "AND first_free_seconds_remaining = 3600"
+        )
+        c.execute(
+            "ALTER TABLE time_ledger "
+            "ADD COLUMN IF NOT EXISTS idempotency_key TEXT"
+        )
+        c.execute("""
+            CREATE UNIQUE INDEX IF NOT EXISTS uq_time_ledger_user_idempotency
+            ON time_ledger (user_id, idempotency_key)
+            WHERE idempotency_key IS NOT NULL
+        """)
+        conn.commit()
+    except Exception as e:
+        conn.rollback()
+        print(f"Migration v48 (welcome 20 min + bonus idempotency): {e}")
+
     conn.close()
 
 def reset_db():
@@ -10433,7 +10494,14 @@ def _open_time_consultation_flow_tx(user_id, preferred_advisor_id, tirage_id, no
 #   reste déterministe.
 # ============================================================
 
-FIRST_FREE_SECONDS = 3600
+# GROS CHANTIER ÉCONOMIQUE (Prompt 1/5) — bienvenue alignée sur le nouveau
+# standard produit : 20 min (1200 s), plus 1 h. Cette constante N'EST PAS
+# actuellement lue par le moteur de débit (la valeur réellement créditée à
+# un compte vient du DEFAULT posé en base par la migration v48/v34 sur
+# `accounts.first_free_seconds_remaining`) : elle documente le standard
+# produit en vigueur pour tout code qui voudrait s'y référer. Voir
+# Migration v48 pour le détail de la migration des comptes existants.
+FIRST_FREE_SECONDS = 1200
 PREMIUM_MONTHLY_SECONDS = 28800
 ACTIVITY_GRACE_SECONDS = 300
 
@@ -10662,6 +10730,122 @@ def _debit_consultation_seconds_tx(cursor, user_id, seconds, now, ref_id=None):
     totals["unbilled_seconds"] = unbilled
     totals["exhausted"] = totals["total_remaining_seconds"] == 0
     return totals
+
+
+# ============================================================
+# GROS CHANTIER ÉCONOMIQUE (Prompt 1/5) — primitive GÉNÉRIQUE de crédit du
+# bucket `bonus` (colonne `accounts.earned_seconds_remaining`, bucket
+# ledger 'earned'). PAS encore d'appelant dans ce lot (aucune route,
+# aucun mini-jeu, aucune Étoile) : sert de FONDATION pour les prochains
+# chantiers (récompenses, parcours 30 jours, consultations express...).
+#
+# SÉCURITÉ — jamais exposée en HTTP : un endpoint qui accepterait un delta
+# choisi par le client permettrait de s'auto-créditer du temps. Seul du
+# code SERVEUR de confiance (règles produit, validation store, événements
+# internes) peut appeler cette fonction, avec un `seconds` qu'IL décide.
+#
+# IDEMPOTENCE — repose sur `time_ledger.idempotency_key` (migration v48,
+# index UNIQUE PARTIEL (user_id, idempotency_key) WHERE idempotency_key IS
+# NOT NULL) : la ligne de ledger est insérée AVANT toute mutation de solde
+# (`INSERT ... ON CONFLICT ... DO NOTHING`) ; si la clé existe déjà pour cet
+# utilisateur, 0 ligne insérée -> AUCUNE mutation de `earned_seconds_
+# remaining` (le solde n'est donc jamais recrédité deux fois pour la même
+# clé). C'est la SEULE primitive du fichier où le ledger est relu comme
+# condition de décision (jamais comme source du MONTANT du solde, qui reste
+# `accounts.earned_seconds_remaining`).
+# ============================================================
+
+
+def _credit_bonus_time_tx(cursor, user_id, seconds, reason, idempotency_key, now):
+    """Crédite `seconds` (> 0) dans `earned_seconds_remaining`, IDEMPOTENT sur
+    `idempotency_key`, sur un curseur DÉJÀ ouvert. `accounts` DOIT déjà être
+    verrouillé FOR UPDATE par l'appelant (même convention que
+    `_debit_consultation_seconds_tx` / `_resync_premium_entitlement_tx`).
+    Ni commit ni rollback ici.
+
+    Retour : {"credited": bool, "earned_remaining_seconds": int}.
+    `credited=False` -> `idempotency_key` déjà appliquée pour CET
+    utilisateur : solde inchangé, renvoie le solde ACTUEL (pas recalculé)."""
+    uid = str(user_id)
+    amount = _as_seconds(seconds)
+    if amount <= 0:
+        raise ValueError("credit_bonus_time: seconds must be > 0")
+    if not idempotency_key:
+        raise ValueError("credit_bonus_time: idempotency_key is required")
+
+    cursor.execute(
+        "INSERT INTO time_ledger "
+        "(id, user_id, bucket, delta_seconds, reason, ref_id, "
+        " idempotency_key, created_at) "
+        "VALUES (%s, %s, 'earned', %s, %s, NULL, %s, %s) "
+        "ON CONFLICT (user_id, idempotency_key) "
+        "WHERE idempotency_key IS NOT NULL DO NOTHING "
+        "RETURNING id",
+        (str(uuid.uuid4()), uid, amount, reason, str(idempotency_key), now),
+    )
+    inserted = cursor.fetchone() is not None
+
+    if not inserted:
+        cursor.execute(
+            "SELECT COALESCE(earned_seconds_remaining, 0) "
+            "FROM accounts WHERE user_id=%s",
+            (uid,),
+        )
+        row = cursor.fetchone()
+        return {
+            "credited": False,
+            "earned_remaining_seconds": int(row[0]) if row else 0,
+        }
+
+    cursor.execute(
+        "UPDATE accounts SET earned_seconds_remaining = "
+        "COALESCE(earned_seconds_remaining, 0) + %s "
+        "WHERE user_id=%s "
+        "RETURNING earned_seconds_remaining",
+        (amount, uid),
+    )
+    row = cursor.fetchone()
+    return {
+        "credited": True,
+        "earned_remaining_seconds": int(row[0]) if row else amount,
+    }
+
+
+def credit_bonus_time(user_id, seconds, reason, idempotency_key, now=None):
+    """Wrapper public de `_credit_bonus_time_tx` : UNE connexion, UNE
+    transaction, UN commit. Verrouille `accounts` FOR UPDATE (mutex par
+    utilisateur, compte absent/supprimé -> rollback + {"credited": False,
+    "reason": "unknown_account"}), délègue, commit, ferme sa connexion.
+
+    `reason` : étiquette libre pour l'audit (ex. 'share_reward',
+    'wellbeing_cycle', 'memory_game', futur 'stars_conversion'...).
+    `idempotency_key` : clé STABLE et UNIQUE PAR ÉVÉNEMENT métier (ex.
+    'share_reward:<user_id>:<jour>', 'memory_game:<session_id>') — c'est
+    l'APPELANT qui garantit qu'un même événement produit toujours la MÊME
+    clé, jamais une nouvelle."""
+    if now is None:
+        now = _utcnow()
+    uid = str(user_id)
+    conn = get_conn()
+    try:
+        c = conn.cursor()
+        c.execute(
+            "SELECT user_id FROM accounts "
+            "WHERE user_id=%s AND deleted_at IS NULL FOR UPDATE",
+            (uid,),
+        )
+        if c.fetchone() is None:
+            conn.rollback()
+            return {"credited": False, "reason": "unknown_account",
+                    "earned_remaining_seconds": 0}
+        result = _credit_bonus_time_tx(c, uid, seconds, reason, idempotency_key, now)
+        conn.commit()
+        return result
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        conn.close()
 
 
 def _consultation_time_row(cursor, consultation_id):
