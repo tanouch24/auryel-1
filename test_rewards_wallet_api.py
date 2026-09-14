@@ -106,6 +106,10 @@ class FakeCursor:
         self._r = None
         self._rows = []
 
+        if "COALESCE(SUM(seconds_granted), 0) FROM express_consultations" in s:
+            self._r = (0,)
+            return
+
         if "FROM accounts WHERE user_id=%s AND deleted_at IS NULL FOR UPDATE" in s:
             row = DB["accounts"].get(p[0])
             self._r = (row["user_id"],) if row and row["deleted_at"] is None else None
@@ -313,6 +317,10 @@ check(body["stars_balance"] == 0, "1b stars_balance = 0 (nouveau compte)")
 check(body["streak"]["current_streak"] == 0 and body["streak"]["best_streak"] == 0,
       "1c streak à 0")
 check(body["recent_transactions"] == [], "1d historique vide")
+check(body["minutes_converted_this_month"] == 0
+      and body["monthly_minutes_limit"] == 30
+      and body["monthly_minutes_remaining"] == 30,
+      "1e progression mensuelle des conversions Étoiles exposée")
 
 # ===========================================================================
 # 2. Wallet — seules les règles ACTIVES apparaissent

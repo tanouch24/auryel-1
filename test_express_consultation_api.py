@@ -82,7 +82,11 @@ class _Cur:
         p = params or ()
         self._r = None
 
-        if "FROM accounts WHERE user_id=%s AND deleted_at IS NULL FOR UPDATE" in s:
+        if "COALESCE(SUM(seconds_granted), 0) FROM express_consultations" in s:
+            self._r = (sum(
+                e["seconds_granted"] for e in _EXPRESS if e["user_id"] == p[0]
+            ),)
+        elif "FROM accounts WHERE user_id=%s AND deleted_at IS NULL FOR UPDATE" in s:
             acc = _ACCOUNTS.get(p[0])
             self._r = (p[0],) if acc and acc["deleted_at"] is None else None
         elif "stars_spent, seconds_granted, status FROM express_consultations" in s:

@@ -101,6 +101,13 @@ class FakeCursor:
         self.rowcount = -1
         self._r = None
 
+        if "COALESCE(SUM(seconds_granted), 0) FROM express_consultations" in s:
+            self._r = (sum(
+                e["seconds_granted"] for e in DB["express_consultations"]
+                if e["user_id"] == p[0] and e["status"] == "completed"
+            ),)
+            return
+
         if "FROM accounts WHERE user_id=%s AND deleted_at IS NULL FOR UPDATE" in s:
             row = DB["accounts"].get(p[0])
             self._r = (p[0],) if row and row["deleted_at"] is None else None
@@ -542,25 +549,44 @@ reset_db()
 seed_full_catalog()
 seed_account(UID, stars=1230)
 r45 = A.purchase_express_consultation(UID, "express_consultation_45min", "e13:h2")
-check(r45["success"] is False and r45["reason"] == "insufficient_balance",
-      "13o 1230 ⭐ -> 45 min (1500) INACCESSIBLE")
+check(r45["success"] is False and r45["reason"] == "monthly_conversion_limit_reached",
+      "13o 1230 ⭐ -> 45 min bloqué par le plafond mensuel")
 
 # 1500 / 2000 ⭐ : paliers 45 min / 60 min, coût exact.
 reset_db()
 seed_full_catalog()
 seed_account(UID, stars=1500)
 r = A.purchase_express_consultation(UID, "express_consultation_45min", "e13:i")
-check(r["success"] is True and r["seconds_granted"] == 2700
-      and r["stars_balance"] == 0,
-      "13p 1500 ⭐ -> 45 min (2700 s), reliquat 0 ⭐")
+check(r["success"] is False
+      and r["reason"] == "monthly_conversion_limit_reached"
+      and r["stars_balance"] == 1500,
+      "13p 1500 ⭐ -> 45 min refusé, Étoiles intactes")
 
 reset_db()
 seed_full_catalog()
 seed_account(UID, stars=2000)
 r = A.purchase_express_consultation(UID, "express_consultation_60min", "e13:j")
-check(r["success"] is True and r["seconds_granted"] == 3600
-      and r["stars_balance"] == 0,
-      "13q 2000 ⭐ -> 60 min (3600 s), reliquat 0 ⭐")
+check(r["success"] is False
+      and r["reason"] == "monthly_conversion_limit_reached"
+      and r["stars_balance"] == 2000,
+      "13q 2000 ⭐ -> 60 min refusé, Étoiles intactes")
+
+# Le plafond porte sur le mois courant, conserve le reliquat d'Étoiles et
+# laisse une nouvelle capacité au mois suivant.
+reset_db()
+seed_full_catalog()
+seed_account(UID, stars=2000)
+first = A.purchase_express_consultation(UID, "express_consultation_10min", "e13:cap1")
+second = A.purchase_express_consultation(UID, "express_consultation_15min", "e13:cap2")
+third = A.purchase_express_consultation(UID, "express_consultation_10min", "e13:cap3")
+check(first["success"] and second["success"] and not third["success"],
+      "13r plafond : 10 + 15 min autorisés, 10 min supplémentaire refusé")
+check(third["reason"] == "monthly_conversion_limit_reached"
+      and third["stars_balance"] == 1100,
+      "13s refus du plafond sans nouveau débit d'Étoiles")
+check(third["minutes_converted_this_month"] == 25
+      and third["monthly_minutes_remaining"] == 5,
+      "13t progression mensuelle 25/30 et reliquat 5 min")
 
 # Double achat idempotent sur un nouveau palier (rejeu de la MÊME clé).
 reset_db()

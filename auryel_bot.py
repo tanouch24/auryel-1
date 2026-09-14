@@ -2782,6 +2782,30 @@ def init_db():
         conn.rollback()
         print(f"Migration v52 (product coherence): {e}")
 
+    # Migration v53 — économie Étoiles v3 : barème final et plafond mensuel
+    # des conversions Étoiles -> temps. PUREMENT additive : les wallets,
+    # ledgers et temps existants ne sont ni supprimés ni réinitialisés.
+    try:
+        now53 = datetime.utcnow()
+        c.executemany(
+            "UPDATE reward_rules SET stars_amount=%s, enabled=TRUE, "
+            "daily_limit=%s, updated_at=%s WHERE rule_key=%s",
+            [
+                (6, 5, now53, "rewarded_ad_completed"),
+                (1, 1, now53, "meditation_completed"),
+                (1, 1, now53, "mini_game_completed"),
+                (1, 1, now53, "daily_card_completed"),
+                (1, 1, now53, "tarot_completed"),
+                (1, 1, now53, "wake_completed"),
+                (1, 1, now53, "share_completed"),
+                (5, None, now53, "streak_7_days"),
+            ],
+        )
+        conn.commit()
+    except Exception as e:
+        conn.rollback()
+        print(f"Migration v53 (stars economy): {e}")
+
     conn.close()
 
 def reset_db():
@@ -6435,6 +6459,7 @@ def api_rewards_wallet():
         balance = int(row[0]) if row and row[0] is not None else 0
         streak = int(row[1]) if row and row[1] is not None else 0
         best_streak = int(row[2]) if row and row[2] is not None else 0
+        monthly_conversion = _stars_conversion_snapshot(c, user_id, _utcnow())
 
         c.execute(
             "SELECT rule_key, stars_amount, daily_limit FROM reward_rules "
@@ -6479,6 +6504,7 @@ def api_rewards_wallet():
         next_in = _STREAK_MILESTONE_DAYS - (streak % _STREAK_MILESTONE_DAYS)
         return _auth_json({
             "stars_balance": balance,
+            **monthly_conversion,
             "rules": rules,
             "streak": {
                 "current_streak": streak,
@@ -11761,6 +11787,57 @@ def _wallet_balance_readonly(cursor, user_id):
     return int(row[0]) if row else 0
 
 
+STARS_MONTHLY_CONVERSION_LIMIT_MINUTES = 30
+STARS_MONTHLY_CONVERSION_LIMIT_SECONDS = (
+    STARS_MONTHLY_CONVERSION_LIMIT_MINUTES * 60
+)
+
+
+def _stars_conversion_month_bounds(now):
+    """Retourne les bornes UTC du mois calendaire de ``now``."""
+    if now.tzinfo is None:
+        now = now.replace(tzinfo=timezone.utc)
+    start = now.astimezone(timezone.utc).replace(
+        day=1, hour=0, minute=0, second=0, microsecond=0,
+    )
+    if start.month == 12:
+        end = start.replace(year=start.year + 1, month=1)
+    else:
+        end = start.replace(month=start.month + 1)
+    return start, end
+
+
+def _stars_converted_seconds_this_month_tx(cursor, user_id, now):
+    """Lit le temps déjà obtenu par conversions Étoiles ce mois-ci.
+
+    ``express_consultations`` est le ledger append-only des conversions
+    réussies. La requête est faite dans la transaction de l'achat, après le
+    verrou du compte, afin que le contrôle et le débit restent sérialisés.
+    """
+    month_start, next_month = _stars_conversion_month_bounds(now)
+    cursor.execute(
+        "SELECT COALESCE(SUM(seconds_granted), 0) "
+        "FROM express_consultations "
+        "WHERE user_id=%s AND status='completed' "
+        "AND created_at >= %s AND created_at < %s",
+        (str(user_id), month_start, next_month),
+    )
+    row = cursor.fetchone()
+    return int(row[0]) if row and row[0] is not None else 0
+
+
+def _stars_conversion_snapshot(cursor, user_id, now):
+    used_seconds = _stars_converted_seconds_this_month_tx(cursor, user_id, now)
+    remaining_seconds = max(
+        0, STARS_MONTHLY_CONVERSION_LIMIT_SECONDS - used_seconds,
+    )
+    return {
+        "minutes_converted_this_month": used_seconds // 60,
+        "monthly_minutes_limit": STARS_MONTHLY_CONVERSION_LIMIT_MINUTES,
+        "monthly_minutes_remaining": remaining_seconds // 60,
+    }
+
+
 def _bump_streak_tx(cursor, user_id, today, now):
     """Incrémente le streak de jours actifs consécutifs (jour Europe/Paris,
     `_wellbeing_day`) — appelée UNIQUEMENT depuis `_award_stars_tx` après un
@@ -12153,26 +12230,43 @@ def _purchase_express_consultation_tx(cursor, user_id, product_key,
                 "stars_spent": int(stars_spent),
                 "stars_balance": _wallet_balance_readonly(cursor, uid),
                 "seconds_granted": int(seconds_granted),
+                **_stars_conversion_snapshot(cursor, uid, now),
                 "balances": _get_time_snapshot_tx(cursor, uid, now),
             }
         # Statut non 'completed' inattendu (ne devrait jamais arriver : cette
         # ligne n'est insérée qu'une fois tout réussi) — filet de sécurité.
         return {"success": False, "reason": "previous_attempt_incomplete",
                 "stars_spent": 0, "stars_balance": _wallet_balance_readonly(cursor, uid),
-                "seconds_granted": 0, "balances": None}
+                "seconds_granted": 0, **_stars_conversion_snapshot(cursor, uid, now),
+                "balances": None}
 
     product = _express_product_public(cursor, product_key)
     if product is None:
         return {"success": False, "reason": "unknown_product",
                 "stars_spent": 0, "stars_balance": _wallet_balance_readonly(cursor, uid),
-                "seconds_granted": 0, "balances": None}
+                "seconds_granted": 0, **_stars_conversion_snapshot(cursor, uid, now),
+                "balances": None}
     stars_cost, seconds_granted, enabled = product
     stars_cost = int(stars_cost)
     seconds_granted = int(seconds_granted)
     if not enabled:
         return {"success": False, "reason": "product_disabled",
                 "stars_spent": 0, "stars_balance": _wallet_balance_readonly(cursor, uid),
-                "seconds_granted": 0, "balances": None}
+                "seconds_granted": 0, **_stars_conversion_snapshot(cursor, uid, now),
+                "balances": None}
+
+    monthly_conversion = _stars_conversion_snapshot(cursor, uid, now)
+    remaining_seconds = monthly_conversion["monthly_minutes_remaining"] * 60
+    if seconds_granted > remaining_seconds:
+        return {
+            "success": False,
+            "reason": "monthly_conversion_limit_reached",
+            "stars_spent": 0,
+            "stars_balance": _wallet_balance_readonly(cursor, uid),
+            "seconds_granted": 0,
+            **monthly_conversion,
+            "balances": None,
+        }
 
     debit = _debit_stars_tx(
         cursor, uid, stars_cost, "express_consultation_stars",
@@ -12181,7 +12275,8 @@ def _purchase_express_consultation_tx(cursor, user_id, product_key,
     if not debit["debited"]:
         return {"success": False, "reason": debit["reason"],
                 "stars_spent": 0, "stars_balance": debit["new_balance"],
-                "seconds_granted": 0, "balances": None}
+                "seconds_granted": 0, **monthly_conversion,
+                "balances": None}
 
     credit = _credit_bonus_time_tx(
         cursor, uid, seconds_granted, "express_consultation_stars",
@@ -12205,6 +12300,18 @@ def _purchase_express_consultation_tx(cursor, user_id, product_key,
         "stars_spent": stars_cost,
         "stars_balance": debit["new_balance"],
         "seconds_granted": seconds_granted,
+        **{
+            **monthly_conversion,
+            "minutes_converted_this_month": (
+                monthly_conversion["minutes_converted_this_month"]
+                + seconds_granted // 60
+            ),
+            "monthly_minutes_remaining": max(
+                0,
+                monthly_conversion["monthly_minutes_remaining"]
+                - seconds_granted // 60,
+            ),
+        },
         "balances": _get_time_snapshot_tx(cursor, uid, now),
     }
 
