@@ -35,6 +35,8 @@
 
     { "method": "POST",   "path": "/api/app/rewards/daily-share" },
     { "method": "GET",    "path": "/api/app/rewards/share-progress" },
+    { "method": "GET",    "path": "/api/app/rewards/wallet" },
+    { "method": "POST",   "path": "/api/app/rewards/claim" },
     { "method": "GET",    "path": "/api/app/wellbeing/progress" },
     { "method": "POST",   "path": "/api/app/wellbeing/mission" },
     { "method": "POST",   "path": "/api/app/memory/start" },

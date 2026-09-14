@@ -2287,6 +2287,200 @@ def init_db():
         conn.rollback()
         print(f"Migration v48 (welcome 20 min + bonus idempotency): {e}")
 
+    # Migration v49 — GROS CHANTIER AURYEL (Prompt 2/5) : ÉTOILES AURYEL,
+    # monnaie interne virtuelle (non transférable, sans valeur monétaire, non
+    # remboursable). PUREMENT ADDITIF : 4 tables neuves + 3 FK idempotentes +
+    # un seed idempotent de règles. Aucune colonne existante ALTER-ée, aucun
+    # backfill, aucun DROP / TRUNCATE / DELETE, aucune donnée existante
+    # modifiée. NE RÉUTILISE PAS le moteur temps (accounts.*_seconds_remaining,
+    # time_ledger) : les Étoiles sont une monnaie DISTINCTE, avec son propre
+    # wallet/journal/règles — cf. audit du rapport de ce lot (share_reward_days
+    # / wellbeing_mission_days / memory_rewards existants créditent tous du
+    # TEMPS, jamais une monnaie de points ; aucune architecture de points
+    # préexistante à réutiliser).
+    #
+    #   reward_wallet
+    #     UNE ligne par utilisateur. `stars_balance` = solde ACTUEL (source de
+    #     vérité affichée). `current_streak` / `best_streak` /
+    #     `last_active_reward_date` : streak de jours actifs consécutifs (jour
+    #     Europe/Paris, même convention que `_wellbeing_day` /
+    #     `_reward_share_date` — pas une 3e fonction de jour). Créée
+    #     paresseusement (`INSERT ... ON CONFLICT DO NOTHING`) au premier
+    #     `award_stars` : un compte qui ne gagne jamais d'Étoile n'a pas besoin
+    #     de ligne.
+    #
+    #   reward_rules
+    #     Configuration SERVEUR des montants (jamais codés en dur dans
+    #     Flutter). `daily_limit` : NULL = pas de plafond quotidien dédié (ex.
+    #     `streak_7_days`, jalon et non action quotidienne) ; 1 = la seule
+    #     valeur exploitée dans ce lot (toutes les actions quotidiennes),
+    #     appliquée via l'UNIQUE de `daily_action_claims` (pas encore de
+    #     support N>1/jour — non nécessaire aujourd'hui, cf. rapport).
+    #     `cooldown_seconds` : NULL = non utilisé pour l'instant (colonne
+    #     prête pour une future règle à cooldown). Seed idempotent (`ON
+    #     CONFLICT (rule_key) DO NOTHING`) : un montant ajusté ensuite en base
+    #     par un opérateur n'est JAMAIS écrasé par un rejeu de migration.
+    #     `mini_game_completed` / `rewarded_ad_completed` : clés FUTURES
+    #     prévues mais `enabled=FALSE` — pas d'appelant dans ce lot (interdit :
+    #     mini-jeux, AdMob).
+    #
+    #   daily_action_claims
+    #     Anti-farming EN BASE (pas seulement applicatif) : UNIQUE
+    #     (user_id, action_key, claim_date) — fermer/réouvrir l'app, logout/
+    #     login, spam bouton, retry réseau, multi-device ne peuvent jamais
+    #     produire une 2e ligne pour le même (utilisateur, action, jour). Sert
+    #     aussi de base à la détection de streak (`_bump_streak_tx` dans
+    #     `award_stars`).
+    #
+    #   reward_transactions
+    #     Journal APPEND-ONLY (aucun UPDATE destructif d'historique). `type` :
+    #     'earn' (seul type produit dans ce lot) ou 'spend' (fondation pour un
+    #     futur débit — `_debit_stars_tx` existe déjà, non exposé en HTTP).
+    #     `idempotency_key` + index UNIQUE PARTIEL (user_id, idempotency_key)
+    #     WHERE idempotency_key IS NOT NULL : MÊME idiome que
+    #     `time_ledger.idempotency_key` (migration v48) — protection
+    #     supplémentaire au-delà de `daily_action_claims`, notamment pour les
+    #     jalons non quotidiens (`streak_7_days`).
+    #
+    # FK ... -> accounts(user_id) SANS ON DELETE CASCADE (idiome v27 : blocs
+    # DO $$ n'attrapant que duplicate_object) : DELETE /api/app/account purge
+    # explicitement reward_wallet / reward_transactions / daily_action_claims
+    # (cf. _ACCOUNT_DELETE_CHILD_TABLES, mis à jour). `reward_rules` est une
+    # table de configuration GLOBALE (comme wake_messages) : aucune FK
+    # utilisateur, absente de _ACCOUNT_DELETE_CHILD_TABLES.
+    # Miroir lisible : migrations/023_reward_stars.sql.
+    try:
+        c.execute("""
+            CREATE TABLE IF NOT EXISTS reward_wallet (
+                user_id                  UUID         PRIMARY KEY,
+                stars_balance            BIGINT       NOT NULL DEFAULT 0,
+                current_streak           INTEGER      NOT NULL DEFAULT 0,
+                best_streak              INTEGER      NOT NULL DEFAULT 0,
+                last_active_reward_date  DATE,
+                updated_at               TIMESTAMPTZ  NOT NULL DEFAULT NOW()
+            )
+        """)
+        c.execute("""
+            CREATE TABLE IF NOT EXISTS reward_rules (
+                rule_key         TEXT         PRIMARY KEY,
+                stars_amount     INTEGER      NOT NULL,
+                enabled          BOOLEAN      NOT NULL DEFAULT TRUE,
+                daily_limit      INTEGER,
+                cooldown_seconds INTEGER,
+                metadata         JSONB,
+                created_at       TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
+                updated_at       TIMESTAMPTZ  NOT NULL DEFAULT NOW()
+            )
+        """)
+        c.execute("""
+            CREATE TABLE IF NOT EXISTS daily_action_claims (
+                id             UUID         PRIMARY KEY,
+                user_id        UUID         NOT NULL,
+                action_key     TEXT         NOT NULL,
+                claim_date     DATE         NOT NULL,
+                source_id      TEXT,
+                stars_awarded  INTEGER      NOT NULL,
+                created_at     TIMESTAMPTZ  NOT NULL DEFAULT NOW()
+            )
+        """)
+        c.execute("""
+            CREATE UNIQUE INDEX IF NOT EXISTS uq_daily_action_claims_user_action_date
+            ON daily_action_claims (user_id, action_key, claim_date)
+        """)
+        c.execute("""
+            CREATE TABLE IF NOT EXISTS reward_transactions (
+                id               UUID         PRIMARY KEY,
+                user_id          UUID         NOT NULL,
+                delta_stars      INTEGER      NOT NULL,
+                balance_after    BIGINT       NOT NULL,
+                type             TEXT         NOT NULL,
+                reason           TEXT         NOT NULL,
+                source_type      TEXT,
+                source_id        TEXT,
+                idempotency_key  TEXT,
+                metadata         JSONB,
+                created_at       TIMESTAMPTZ  NOT NULL DEFAULT NOW()
+            )
+        """)
+        c.execute("""
+            CREATE UNIQUE INDEX IF NOT EXISTS uq_reward_transactions_user_idempotency
+            ON reward_transactions (user_id, idempotency_key)
+            WHERE idempotency_key IS NOT NULL
+        """)
+        c.execute("""
+            CREATE INDEX IF NOT EXISTS idx_reward_transactions_user_created
+            ON reward_transactions (user_id, created_at DESC)
+        """)
+        conn.commit()
+    except Exception as e:
+        conn.rollback()
+        print(f"Migration v49 (reward_wallet/rules/claims/transactions): {e}")
+
+    try:
+        c.execute("""
+            DO $$
+            BEGIN
+                ALTER TABLE reward_wallet
+                    ADD CONSTRAINT fk_reward_wallet_account
+                    FOREIGN KEY (user_id) REFERENCES accounts(user_id);
+            EXCEPTION
+                WHEN duplicate_object THEN NULL;
+            END
+            $$;
+        """)
+        c.execute("""
+            DO $$
+            BEGIN
+                ALTER TABLE daily_action_claims
+                    ADD CONSTRAINT fk_daily_action_claims_account
+                    FOREIGN KEY (user_id) REFERENCES accounts(user_id);
+            EXCEPTION
+                WHEN duplicate_object THEN NULL;
+            END
+            $$;
+        """)
+        c.execute("""
+            DO $$
+            BEGIN
+                ALTER TABLE reward_transactions
+                    ADD CONSTRAINT fk_reward_transactions_account
+                    FOREIGN KEY (user_id) REFERENCES accounts(user_id);
+            EXCEPTION
+                WHEN duplicate_object THEN NULL;
+            END
+            $$;
+        """)
+        conn.commit()
+    except Exception as e:
+        conn.rollback()
+        print(f"Migration v49 (reward FKs): {e}")
+
+    try:
+        # Seed idempotent : n'écrase JAMAIS un montant déjà ajusté en base
+        # (ON CONFLICT DO NOTHING, jamais DO UPDATE). Montants du rapport
+        # Prompt 2/5 §3. `mini_game_completed` / `rewarded_ad_completed` :
+        # clés réservées, désactivées (aucun appelant dans ce lot).
+        c.executemany(
+            "INSERT INTO reward_rules "
+            "(rule_key, stars_amount, enabled, daily_limit, cooldown_seconds) "
+            "VALUES (%s, %s, %s, %s, %s) "
+            "ON CONFLICT (rule_key) DO NOTHING",
+            [
+                ("wake_completed",       5,  True,  1,    None),
+                ("daily_card_completed", 10, True,  1,    None),
+                ("tarot_completed",      10, True,  1,    None),
+                ("meditation_completed", 10, True,  1,    None),
+                ("share_completed",      15, True,  1,    None),
+                ("streak_7_days",        50, True,  None, None),
+                ("mini_game_completed",  0,  False, None, None),
+                ("rewarded_ad_completed", 0, False, None, None),
+            ],
+        )
+        conn.commit()
+    except Exception as e:
+        conn.rollback()
+        print(f"Migration v49 (reward_rules seed): {e}")
+
     conn.close()
 
 def reset_db():
@@ -5637,6 +5831,26 @@ def api_tirages_create():
     # réconcilie la progression et on crédite la récompense de cycle si due.
     # Transaction courte dédiée, JAMAIS bloquante pour le 201.
     _reconcile_wellbeing_progress(user_id)
+    # GROS CHANTIER AURYEL (Prompt 2/5) — ÉTOILES : `tarot_completed`. Signal
+    # SERVEUR dérivé (ce tirage vient d'être sauvegardé, `row["id"]` = preuve),
+    # encore plus fiable qu'une déclaration client — `daily_action_claims`
+    # plafonne à 1/jour même si l'utilisatrice enchaîne plusieurs tirages.
+    # Fire-and-forget, jamais bloquant pour le 201.
+    now = _utcnow()
+    try:
+        sres = award_stars(
+            user_id, "tarot_completed", source_id=row.get("id"),
+            idempotency_key=f"tarot_completed:{user_id}:{_wellbeing_day(now)}",
+            now=now,
+        )
+        log_event(
+            "stars_awarded" if sres.get("awarded") else "reward_claim_denied",
+            user_hash=_user_hash(user_id), rule_key="tarot_completed",
+            reason=sres.get("reason"),
+        )
+    except Exception as e:
+        print(f"[rewards] award_stars(tarot_completed) erreur "
+              f"{_user_hash(user_id)}: {type(e).__name__}")
     return _auth_json(_tirage_public(row), 201)
 
 
@@ -5761,6 +5975,12 @@ def api_rewards_daily_share():
             "ON CONFLICT (user_id, share_date) DO NOTHING",
             (user_id, share_date, now),
         )
+        # GROS CHANTIER AURYEL (Prompt 2/5) — ÉTOILES : capturé ICI (avant que
+        # le prochain SELECT n'écrase rowcount) — vrai UNIQUEMENT si CETTE
+        # requête vient d'enregistrer un NOUVEAU jour de partage (jamais un
+        # rejeu/spam/multi-device le même jour, garanti par l'UNIQUE
+        # (user_id, share_date) ci-dessus).
+        new_share_day = (c.rowcount == 1)
 
         c.execute(
             "SELECT COUNT(*) FROM share_reward_days WHERE user_id=%s",
@@ -5790,6 +6010,26 @@ def api_rewards_daily_share():
         conn.commit()
         if credited:
             log_event("share_reward_credited", user_hash=_user_hash(user_id))
+        # ÉTOILES `share_completed` — APRÈS le commit ci-dessus (le verrou
+        # `accounts` de CETTE transaction doit être relâché avant qu'`award_
+        # stars` n'ouvre sa PROPRE connexion et reverrouille la même ligne :
+        # appelée AVANT le commit, elle bloquerait indéfiniment sur elle-même).
+        # Fire-and-forget, jamais bloquant pour la réponse ShareProgress.
+        if new_share_day:
+            try:
+                sres = award_stars(
+                    user_id, "share_completed", source_id=None,
+                    idempotency_key=f"share_completed:{user_id}:{share_date}",
+                    now=now,
+                )
+                log_event(
+                    "stars_awarded" if sres.get("awarded") else "reward_claim_denied",
+                    user_hash=_user_hash(user_id), rule_key="share_completed",
+                    reason=sres.get("reason"),
+                )
+            except Exception as e:
+                print(f"[rewards] award_stars(share_completed) erreur "
+                      f"{_user_hash(user_id)}: {type(e).__name__}")
         return _auth_json({
             "count": count,
             "target": _SHARE_REWARD_TARGET_DAYS,
@@ -5834,6 +6074,134 @@ def api_rewards_share_progress():
         }, 200)
     finally:
         conn.close()
+
+
+# ============================================================
+# GROS CHANTIER AURYEL (Prompt 2/5) — ÉTOILES AURYEL
+#   GET  /api/app/rewards/wallet   — solde + règles actives + streak + historique
+#   POST /api/app/rewards/claim    — réclame une action SANS preuve serveur
+#                                     indépendante (whitelist stricte)
+# ============================================================
+# Le SERVEUR est l'unique source de vérité (`award_stars` / `reward_rules`).
+# AUCUN endpoint n'accepte de montant, de delta ou de solde depuis Flutter.
+#
+# `POST /claim` : whitelist ULTRA STRICTE de `action_key` — aujourd'hui
+# UNIQUEMENT `wake_completed` (aucune trace serveur possible pour une alarme
+# native locale ; le client ne déclare QUE le fait que l'alarme a réellement
+# sonné et a été RÉELLEMENT ÉTEINTE, cf. WakeRingingScreen._turnOff — jamais
+# à l'ouverture de l'onglet Réveil ni à la simple configuration d'une alarme,
+# qui n'appellent jamais cette route). Les 4 autres règles quotidiennes
+# (`daily_card_completed`, `tarot_completed`, `meditation_completed`,
+# `share_completed`) sont créditées depuis des points d'action serveur
+# EXISTANTS (wellbeing/mission, /api/tirages, rewards/daily-share) — jamais
+# depuis cette route générique.
+_REWARDS_CLIENT_CLAIMABLE_ACTIONS = frozenset({"wake_completed"})
+
+
+@app.route("/api/app/rewards/wallet", methods=["GET"])
+@require_app_auth
+def api_rewards_wallet():
+    """Wallet Étoiles complet de l'utilisateur authentifié. LECTURE SEULE.
+    Contrat : {"stars_balance", "rules": [{"rule_key","stars_amount"}, ...]
+    (UNIQUEMENT les règles enabled=TRUE — jamais une action future inactive),
+    "streak": {"current_streak","best_streak","next_reward_in_days"},
+    "recent_transactions": [{"delta_stars","balance_after","reason",
+    "created_at"}, ...] (20 plus récentes)}."""
+    user_id = g.app_account["user_id"]
+    conn = get_conn()
+    try:
+        c = conn.cursor()
+        c.execute(
+            "SELECT user_id FROM accounts "
+            "WHERE user_id=%s AND deleted_at IS NULL",
+            (user_id,),
+        )
+        if c.fetchone() is None:
+            return _auth_json({"error": "unauthorized"}, 401)
+
+        c.execute(
+            "SELECT stars_balance, current_streak, best_streak, "
+            "       last_active_reward_date "
+            "FROM reward_wallet WHERE user_id=%s",
+            (user_id,),
+        )
+        row = c.fetchone()
+        balance = int(row[0]) if row and row[0] is not None else 0
+        streak = int(row[1]) if row and row[1] is not None else 0
+        best_streak = int(row[2]) if row and row[2] is not None else 0
+
+        c.execute(
+            "SELECT rule_key, stars_amount FROM reward_rules "
+            "WHERE enabled=TRUE ORDER BY rule_key",
+        )
+        rules = [{"rule_key": r[0], "stars_amount": int(r[1])}
+                 for r in c.fetchall()]
+
+        c.execute(
+            "SELECT delta_stars, balance_after, reason, created_at "
+            "FROM reward_transactions WHERE user_id=%s "
+            "ORDER BY created_at DESC LIMIT 20",
+            (user_id,),
+        )
+        recent = [
+            {"delta_stars": int(t[0]), "balance_after": int(t[1]),
+             "reason": t[2], "created_at": t[3].isoformat()}
+            for t in c.fetchall()
+        ]
+
+        next_in = _STREAK_MILESTONE_DAYS - (streak % _STREAK_MILESTONE_DAYS)
+        return _auth_json({
+            "stars_balance": balance,
+            "rules": rules,
+            "streak": {
+                "current_streak": streak,
+                "best_streak": best_streak,
+                "next_reward_in_days": next_in,
+            },
+            "recent_transactions": recent,
+        }, 200)
+    finally:
+        conn.close()
+
+
+@app.route("/api/app/rewards/claim", methods=["POST"])
+@limiter.limit("30 per hour")
+@require_app_auth
+def api_rewards_claim():
+    """Réclame une récompense Étoiles pour une action DÉCLARÉE PAR LE CLIENT
+    (aucune preuve serveur indépendante possible). Identité = jeton Bearer.
+      body : { "action_key": "wake_completed" }
+    `action_key` hors whitelist -> 400. Montant TOUJOURS résolu côté serveur
+    (`reward_rules` via `award_stars`) : le body ne peut JAMAIS fournir de
+    montant. Idempotent (clé dérivée de (action_key, user_id, jour) —
+    fermer/réouvrir l'app, spam bouton, retry réseau, multi-device ne créditent
+    jamais deux fois)."""
+    user_id = g.app_account["user_id"]
+    data = request.get_json(silent=True) or {}
+    action_key = data.get("action_key")
+    if action_key not in _REWARDS_CLIENT_CLAIMABLE_ACTIONS:
+        return _auth_json({"error": "invalid_action"}, 400)
+
+    now = _utcnow()
+    today = _wellbeing_day(now)
+    try:
+        result = award_stars(
+            user_id, action_key, source_id=None,
+            idempotency_key=f"{action_key}:{user_id}:{today}", now=now,
+        )
+    except Exception as e:
+        print(f"[rewards] claim({action_key}) erreur {_user_hash(user_id)}: "
+              f"{type(e).__name__}")
+        return _auth_json({"error": "temporarily_unavailable"}, 503)
+
+    if not result.get("awarded") and result.get("reason") == "unknown_account":
+        return _auth_json({"error": "unauthorized"}, 401)
+    log_event(
+        "stars_awarded" if result.get("awarded") else "reward_claim_denied",
+        user_hash=_user_hash(user_id), rule_key=action_key,
+        reason=result.get("reason"),
+    )
+    return _auth_json(result, 200)
 
 
 # ============================================================
@@ -5882,6 +6250,16 @@ def api_rewards_share_progress():
 _WELLBEING_MISSIONS        = ("pensee", "tirage", "consultation", "moment")
 # missions SANS trace serveur propre -> enregistrées explicitement, 1x/jour.
 _WELLBEING_LOCAL_MISSIONS  = ("pensee", "moment")
+# GROS CHANTIER AURYEL (Prompt 2/5) — ÉTOILES : réutilise TEL QUEL le signal
+# de mission bien-être existant (aucune nouvelle logique de détection créée)
+# pour créditer `daily_card_completed` / `meditation_completed`. `tirage`
+# n'est pas ici : sa règle Étoiles (`tarot_completed`) est créditée depuis
+# POST /api/tirages (signal serveur DÉRIVÉ, encore plus fiable qu'une
+# déclaration mission). `consultation` n'a pas de règle Étoiles dans ce lot.
+_STARS_RULE_FOR_MISSION = {
+    "pensee": "daily_card_completed",
+    "moment": "meditation_completed",
+}
 _WELLBEING_CYCLE_DAYS      = 30
 _WELLBEING_REWARD_SECONDS  = 900
 _WELLBEING_LEVELS = (
@@ -6172,6 +6550,7 @@ def api_wellbeing_mission():
             conn.rollback()
             return _auth_json({"error": "unauthorized"}, 401)
 
+        newly_recorded = False
         if mission_id in _WELLBEING_LOCAL_MISSIONS:
             c.execute(
                 "INSERT INTO wellbeing_mission_days "
@@ -6180,6 +6559,7 @@ def api_wellbeing_mission():
                 "ON CONFLICT (user_id, day_date, mission_id) DO NOTHING",
                 (user_id, today, mission_id, now),
             )
+            newly_recorded = (c.rowcount == 1)
         else:
             per_mission = _wellbeing_mission_dates(c, user_id)
             if today not in per_mission[mission_id]:
@@ -6196,6 +6576,32 @@ def api_wellbeing_mission():
         return _auth_json({"error": "temporarily_unavailable"}, 503)
     finally:
         conn.close()
+
+    # GROS CHANTIER AURYEL (Prompt 2/5) — ÉTOILES : `pensee` = signal existant
+    # « Carte du jour consultée » (aucun signal plus solide n'existe : ouvrir
+    # la feuille EST déjà la définition produit établie de cette mission,
+    # cf. audit du rapport) ; `moment` = signal existant « séance Méditation
+    # aboutie » (déclenché par MeditationScreen._markMomentDone à >= 90 % de
+    # lecture, JAMAIS au tap/lancement/swipe — code non touché dans ce lot).
+    # Fire-and-forget, non bloquant : `_STARS_RULE_FOR_MISSION.get(...)`
+    # renvoie None pour `tirage`/`consultation` (pas de règle Étoiles ici,
+    # gérées ailleurs : /api/tirages et pas du tout pour `consultation`).
+    if newly_recorded:
+        stars_rule = _STARS_RULE_FOR_MISSION.get(mission_id)
+        if stars_rule is not None:
+            try:
+                sres = award_stars(
+                    user_id, stars_rule, source_id=None,
+                    idempotency_key=f"{stars_rule}:{user_id}:{today}", now=now,
+                )
+                log_event(
+                    "stars_awarded" if sres.get("awarded") else "reward_claim_denied",
+                    user_hash=_user_hash(user_id), rule_key=stars_rule,
+                    reason=sres.get("reason"),
+                )
+            except Exception as e:
+                print(f"[rewards] award_stars({stars_rule}) erreur "
+                      f"{_user_hash(user_id)}: {type(e).__name__}")
 
     # 2) Réconciliation + crédit éventuel — SEULE voie de crédit (helper unique).
     rec = _reconcile_wellbeing_progress(user_id, now)
@@ -7454,6 +7860,9 @@ _ACCOUNT_DELETE_CHILD_TABLES = (
     "wellbeing_cycle_rewards",
     "memory_games",
     "memory_rewards",
+    "daily_action_claims",
+    "reward_transactions",
+    "reward_wallet",
     "notification_sends",
     "push_devices",
     "app_sessions",
@@ -10839,6 +11248,354 @@ def credit_bonus_time(user_id, seconds, reason, idempotency_key, now=None):
             return {"credited": False, "reason": "unknown_account",
                     "earned_remaining_seconds": 0}
         result = _credit_bonus_time_tx(c, uid, seconds, reason, idempotency_key, now)
+        conn.commit()
+        return result
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        conn.close()
+
+
+# ============================================================
+# GROS CHANTIER AURYEL (Prompt 2/5) — ÉTOILES AURYEL : primitive centrale
+# `award_stars`. Monnaie interne virtuelle DISTINCTE du moteur temps
+# (accounts.*_seconds_remaining) : wallet, journal et règles propres
+# (migration v49). AUCUN endpoint HTTP n'accepte de montant : le SEUL
+# paramètre qui détermine combien d'Étoiles sont créditées est `rule_key`,
+# résolu contre `reward_rules` À L'INTÉRIEUR de `_award_stars_tx` — jamais
+# repassé par un appelant qui l'aurait lu lui-même.
+#
+# Verrouillage : même convention que le reste du fichier —
+#     accounts       FOR UPDATE   (mutex par utilisateur, pris par `award_stars`)
+# ->  reward_wallet  FOR UPDATE   (créée paresseusement, dans `_award_stars_tx`)
+# Anti-farming EN BASE (pas seulement applicatif), DEUX protections
+# indépendantes :
+#   1. `daily_action_claims` UNIQUE (user_id, action_key, claim_date) — pour
+#      toute règle avec `daily_limit` non NULL (les 5 actions quotidiennes de
+#      ce lot ont toutes daily_limit=1 ; le support d'un daily_limit > 1
+#      n'est pas nécessaire aujourd'hui et n'est donc pas implémenté — cf.
+#      rapport).
+#   2. `reward_transactions.idempotency_key` UNIQUE PARTIEL (même idiome que
+#      `time_ledger.idempotency_key`, migration v48) — protection
+#      supplémentaire, ESSENTIELLE pour les règles non quotidiennes (le jalon
+#      `streak_7_days`, jamais gardé par `daily_action_claims` puisque
+#      `daily_limit` y est NULL).
+# `award_stars` EXIGE un `idempotency_key` (comme `credit_bonus_time`) :
+# c'est TOUJOURS le serveur qui le construit de façon déterministe
+# (ex. f"{rule_key}:{user_id}:{jour}"), jamais un client.
+# ============================================================
+
+_STREAK_ELIGIBLE_RULE_KEYS = frozenset({
+    "wake_completed", "daily_card_completed", "tarot_completed",
+    "meditation_completed", "share_completed",
+})
+_STREAK_MILESTONE_DAYS = 7
+_STREAK_MILESTONE_RULE_KEY = "streak_7_days"
+
+
+def _wallet_balance_readonly(cursor, user_id):
+    """Solde actuel SANS verrou (utilisé uniquement pour les réponses
+    `awarded=False` où rien n'est modifié — ne jamais utiliser cette valeur
+    pour décider d'un crédit)."""
+    cursor.execute(
+        "SELECT stars_balance FROM reward_wallet WHERE user_id=%s",
+        (str(user_id),),
+    )
+    row = cursor.fetchone()
+    return int(row[0]) if row else 0
+
+
+def _bump_streak_tx(cursor, user_id, today, now):
+    """Incrémente le streak de jours actifs consécutifs (jour Europe/Paris,
+    `_wellbeing_day`) — appelée UNIQUEMENT depuis `_award_stars_tx` après un
+    crédit RÉEL (nouveau) sur une règle éligible, `reward_wallet` déjà
+    verrouillé FOR UPDATE par l'appelant dans la MÊME transaction.
+
+    Un jour est actif dès qu'UNE SEULE action quotidienne éligible est
+    créditée (pas besoin des 5) : si `last_active_reward_date` est déjà
+    aujourd'hui, une 2e action le même jour n'incrémente PAS une 2e fois.
+    Trou d'un jour (ou plus) -> reset à 1 (le jour courant compte comme jour
+    1 du nouveau streak, jamais 0). Au multiple de 7 : crédite
+    `streak_7_days` via `_award_stars_tx` récursif (clé `streak_7_days` PAS
+    dans `_STREAK_ELIGIBLE_RULE_KEYS` -> pas de réentrance)."""
+    cursor.execute(
+        "SELECT current_streak, best_streak, last_active_reward_date "
+        "FROM reward_wallet WHERE user_id=%s",
+        (str(user_id),),
+    )
+    row = cursor.fetchone()
+    current_streak = int(row[0]) if row and row[0] is not None else 0
+    best_streak = int(row[1]) if row and row[1] is not None else 0
+    last_date = row[2] if row else None
+
+    if last_date == today:
+        return  # une action éligible a DÉJÀ compté aujourd'hui.
+    if last_date is not None and (today - last_date).days == 1:
+        new_streak = current_streak + 1
+    else:
+        new_streak = 1  # 1er jour, ou trou -> reset (aujourd'hui = jour 1).
+    new_best = max(best_streak, new_streak)
+
+    cursor.execute(
+        "UPDATE reward_wallet SET current_streak=%s, best_streak=%s, "
+        "last_active_reward_date=%s WHERE user_id=%s",
+        (new_streak, new_best, today, str(user_id)),
+    )
+    log_event("streak_incremented", user_hash=_user_hash(user_id),
+              current_streak=new_streak)
+
+    if new_streak > 0 and new_streak % _STREAK_MILESTONE_DAYS == 0:
+        milestone = new_streak // _STREAK_MILESTONE_DAYS
+        milestone_result = _award_stars_tx(
+            cursor, user_id, _STREAK_MILESTONE_RULE_KEY, None,
+            f"{_STREAK_MILESTONE_RULE_KEY}:{user_id}:{milestone}", now,
+        )
+        if milestone_result.get("awarded"):
+            log_event("streak_reward_awarded", user_hash=_user_hash(user_id),
+                       streak=new_streak)
+
+
+def _award_stars_tx(cursor, user_id, rule_key, source_id, idempotency_key, now):
+    """Crédite les Étoiles d'UNE règle, sur un curseur DÉJÀ ouvert. `accounts`
+    DOIT déjà être verrouillé FOR UPDATE par l'appelant (`award_stars`). Ni
+    commit ni rollback ici.
+
+    Retour : {"awarded": bool, "reason": str|None, "stars_awarded": int,
+    "new_balance": int}. `awarded=False` -> solde JAMAIS modifié ; `reason`
+    ∈ {"unknown_rule", "rule_disabled", "cooldown_active",
+    "daily_limit_reached", "idempotency_conflict"}."""
+    uid = str(user_id)
+    if not idempotency_key:
+        raise ValueError("award_stars: idempotency_key is required")
+    today = _wellbeing_day(now)  # même convention de jour que tout le fichier.
+
+    cursor.execute(
+        "SELECT stars_amount, enabled, daily_limit, cooldown_seconds "
+        "FROM reward_rules WHERE rule_key=%s",
+        (rule_key,),
+    )
+    rule = cursor.fetchone()
+    if rule is None:
+        return {"awarded": False, "reason": "unknown_rule", "stars_awarded": 0,
+                "new_balance": _wallet_balance_readonly(cursor, uid)}
+    stars_amount, enabled, daily_limit, cooldown_seconds = rule
+    stars_amount = int(stars_amount)
+    if not enabled:
+        return {"awarded": False, "reason": "rule_disabled", "stars_awarded": 0,
+                "new_balance": _wallet_balance_readonly(cursor, uid)}
+
+    if cooldown_seconds:
+        cursor.execute(
+            "SELECT MAX(created_at) FROM daily_action_claims "
+            "WHERE user_id=%s AND action_key=%s",
+            (uid, rule_key),
+        )
+        last = cursor.fetchone()[0]
+        if last is not None and (now - last).total_seconds() < cooldown_seconds:
+            return {"awarded": False, "reason": "cooldown_active",
+                    "stars_awarded": 0,
+                    "new_balance": _wallet_balance_readonly(cursor, uid)}
+
+    # Wallet créé paresseusement, puis verrouillé -> lecture du solde COURANT
+    # sous verrou (jamais avant).
+    cursor.execute(
+        "INSERT INTO reward_wallet (user_id, stars_balance, updated_at) "
+        "VALUES (%s, 0, %s) ON CONFLICT (user_id) DO NOTHING",
+        (uid, now),
+    )
+    cursor.execute(
+        "SELECT stars_balance FROM reward_wallet WHERE user_id=%s FOR UPDATE",
+        (uid,),
+    )
+    current_balance = int(cursor.fetchone()[0])
+
+    if daily_limit is not None:
+        cursor.execute(
+            "INSERT INTO daily_action_claims "
+            "(id, user_id, action_key, claim_date, source_id, stars_awarded, "
+            " created_at) "
+            "VALUES (%s, %s, %s, %s, %s, %s, %s) "
+            "ON CONFLICT (user_id, action_key, claim_date) DO NOTHING "
+            "RETURNING id",
+            (str(uuid.uuid4()), uid, rule_key, today,
+             str(source_id) if source_id is not None else None,
+             stars_amount, now),
+        )
+        if cursor.fetchone() is None:
+            return {"awarded": False, "reason": "daily_limit_reached",
+                    "stars_awarded": 0, "new_balance": current_balance}
+
+    new_balance = current_balance + stars_amount
+    metadata_json = None  # colonne réservée pour un futur métadonnées riche.
+    cursor.execute(
+        "INSERT INTO reward_transactions "
+        "(id, user_id, delta_stars, balance_after, type, reason, source_type, "
+        " source_id, idempotency_key, metadata, created_at) "
+        "VALUES (%s, %s, %s, %s, 'earn', %s, %s, %s, %s, %s, %s) "
+        "ON CONFLICT (user_id, idempotency_key) WHERE idempotency_key IS NOT NULL "
+        "DO NOTHING RETURNING id",
+        (str(uuid.uuid4()), uid, stars_amount, new_balance, rule_key,
+         "reward_rule", str(source_id) if source_id is not None else None,
+         str(idempotency_key), metadata_json, now),
+    )
+    if cursor.fetchone() is None:
+        # `idempotency_key` déjà utilisée : NE JAMAIS créditer deux fois. Ne
+        # devrait jamais arriver avec les appelants internes de ce fichier
+        # (clé toujours dérivée de (rule_key, user_id, jour) ou d'un jalon de
+        # streak unique) — filet de sécurité, pas un chemin normal.
+        return {"awarded": False, "reason": "idempotency_conflict",
+                "stars_awarded": 0, "new_balance": current_balance}
+
+    cursor.execute(
+        "UPDATE reward_wallet SET stars_balance=%s, updated_at=%s "
+        "WHERE user_id=%s",
+        (new_balance, now, uid),
+    )
+
+    if daily_limit is not None and rule_key in _STREAK_ELIGIBLE_RULE_KEYS:
+        _bump_streak_tx(cursor, uid, today, now)
+
+    return {"awarded": True, "reason": None, "stars_awarded": stars_amount,
+            "new_balance": new_balance}
+
+
+def award_stars(user_id, rule_key, source_id=None, idempotency_key=None,
+                 now=None):
+    """Wrapper public de `_award_stars_tx` : UNE connexion, UNE transaction,
+    UN commit. Verrouille `accounts` FOR UPDATE (mutex par utilisateur,
+    compte absent/supprimé -> rollback + {"awarded": False,
+    "reason": "unknown_account"}), délègue, commit, ferme sa connexion.
+
+    SEULE fonction du fichier qui doit créditer des Étoiles — jamais un
+    endpoint qui écrirait directement dans `reward_wallet`."""
+    if now is None:
+        now = _utcnow()
+    uid = str(user_id)
+    conn = get_conn()
+    try:
+        c = conn.cursor()
+        c.execute(
+            "SELECT user_id FROM accounts "
+            "WHERE user_id=%s AND deleted_at IS NULL FOR UPDATE",
+            (uid,),
+        )
+        if c.fetchone() is None:
+            conn.rollback()
+            return {"awarded": False, "reason": "unknown_account",
+                    "stars_awarded": 0, "new_balance": 0}
+        result = _award_stars_tx(c, uid, rule_key, source_id, idempotency_key, now)
+        conn.commit()
+        return result
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        conn.close()
+
+
+# ------------------------------------------------------------
+# Fondation pour un futur chantier (dépense d'Étoiles, ex. consultation
+# express — Prompt 3/5) : symétrique de `award_stars`, PAS exposée en HTTP
+# dans ce lot ("prévoir la fonction, ne pas encore l'exposer" — §8). Refuse
+# tout débit qui ferait passer le solde sous 0 (jamais négatif).
+# ------------------------------------------------------------
+
+
+def _debit_stars_tx(cursor, user_id, stars_amount, reason, idempotency_key, now):
+    """Débite `stars_amount` (> 0), IDEMPOTENT sur `idempotency_key`, sur un
+    curseur DÉJÀ ouvert. `accounts` DOIT déjà être verrouillé FOR UPDATE par
+    l'appelant. Ni commit ni rollback ici.
+
+    Retour : {"debited": bool, "reason": str|None, "new_balance": int}.
+    `reason="insufficient_balance"` si le solde est insuffisant (jamais de
+    solde négatif)."""
+    uid = str(user_id)
+    amount = int(stars_amount or 0)
+    if amount <= 0:
+        raise ValueError("_debit_stars_tx: stars_amount must be > 0")
+    if not idempotency_key:
+        raise ValueError("_debit_stars_tx: idempotency_key is required")
+
+    cursor.execute(
+        "INSERT INTO reward_wallet (user_id, stars_balance, updated_at) "
+        "VALUES (%s, 0, %s) ON CONFLICT (user_id) DO NOTHING",
+        (uid, now),
+    )
+    cursor.execute(
+        "SELECT stars_balance FROM reward_wallet WHERE user_id=%s FOR UPDATE",
+        (uid,),
+    )
+    current_balance = int(cursor.fetchone()[0])
+
+    # Rejeu d'un débit DÉJÀ appliqué (retry réseau, double tap...) : la clé
+    # d'idempotence existe déjà -> renvoyer le résultat ORIGINAL (succès,
+    # solde déjà débité), JAMAIS "insufficient_balance" — sinon un simple
+    # rejeu d'un débit qui a RÉUSSI la 1re fois pourrait se voir répondre à
+    # tort "solde insuffisant" une fois le solde déjà diminué. Vérifiée AVANT
+    # le contrôle de solde, pas seulement via l'INSERT ... ON CONFLICT
+    # ci-dessous (qui, lui, protège uniquement contre le double DÉBIT réel).
+    cursor.execute(
+        "SELECT balance_after FROM reward_transactions "
+        "WHERE user_id=%s AND idempotency_key=%s",
+        (uid, str(idempotency_key)),
+    )
+    already = cursor.fetchone()
+    if already is not None:
+        return {"debited": True, "reason": None,
+                "new_balance": int(already[0])}
+
+    if current_balance < amount:
+        return {"debited": False, "reason": "insufficient_balance",
+                "new_balance": current_balance}
+
+    new_balance = current_balance - amount
+    cursor.execute(
+        "INSERT INTO reward_transactions "
+        "(id, user_id, delta_stars, balance_after, type, reason, source_type, "
+        " source_id, idempotency_key, metadata, created_at) "
+        "VALUES (%s, %s, %s, %s, 'spend', %s, NULL, NULL, %s, NULL, %s) "
+        "ON CONFLICT (user_id, idempotency_key) WHERE idempotency_key IS NOT NULL "
+        "DO NOTHING RETURNING id",
+        (str(uuid.uuid4()), uid, -amount, new_balance, reason,
+         str(idempotency_key), now),
+    )
+    if cursor.fetchone() is None:
+        # Course concurrente extrêmement rare entre le SELECT ci-dessus et cet
+        # INSERT (2 requêtes simultanées avec la MÊME clé) : `accounts` déjà
+        # verrouillé FOR UPDATE par l'appelant sérialise normalement ce cas —
+        # filet de sécurité, jamais un double débit.
+        return {"debited": False, "reason": "idempotency_conflict",
+                "new_balance": current_balance}
+
+    cursor.execute(
+        "UPDATE reward_wallet SET stars_balance=%s, updated_at=%s "
+        "WHERE user_id=%s",
+        (new_balance, now, uid),
+    )
+    return {"debited": True, "reason": None, "new_balance": new_balance}
+
+
+def debit_stars(user_id, stars_amount, reason, idempotency_key, now=None):
+    """Wrapper public de `_debit_stars_tx` — même convention que
+    `award_stars`. PAS appelée depuis ce lot (aucune dépense d'Étoiles
+    n'existe encore) : fondation pour le Prompt 3/5."""
+    if now is None:
+        now = _utcnow()
+    uid = str(user_id)
+    conn = get_conn()
+    try:
+        c = conn.cursor()
+        c.execute(
+            "SELECT user_id FROM accounts "
+            "WHERE user_id=%s AND deleted_at IS NULL FOR UPDATE",
+            (uid,),
+        )
+        if c.fetchone() is None:
+            conn.rollback()
+            return {"debited": False, "reason": "unknown_account",
+                    "new_balance": 0}
+        result = _debit_stars_tx(c, uid, stars_amount, reason, idempotency_key, now)
         conn.commit()
         return result
     except Exception:
