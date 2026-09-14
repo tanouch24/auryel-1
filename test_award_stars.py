@@ -84,6 +84,8 @@ def seed_all_rules():
     seed_rule("meditation_completed", 10)
     seed_rule("share_completed", 15)
     seed_rule("streak_7_days", 50, daily_limit=None)
+    # CORRECTIF ÉCONOMIE v2 (Prompt technique 1) — activée, daily_limit=5.
+    seed_rule("rewarded_ad_completed", 10, daily_limit=5)
 
 
 class FakeCursor:
@@ -129,11 +131,23 @@ class FakeCursor:
             w = DB["reward_wallet"].setdefault(uid, _default_wallet())
             self._r = (w["stars_balance"],)
 
+        # CORRECTIF ÉCONOMIE v2 — compte AVANT d'insérer (support d'un
+        # daily_limit > 1, ex. rewarded_ad_completed = 5/jour).
+        elif "SELECT COUNT(*) FROM daily_action_claims" in s:
+            uid, action_key, claim_date = p
+            count = sum(
+                1 for c in DB["daily_action_claims"]
+                if c["user_id"] == uid and c["action_key"] == action_key
+                and c["claim_date"] == claim_date
+            )
+            self._r = (count,)
+
         elif "INSERT INTO daily_action_claims" in s:
-            (cid, uid, action_key, claim_date, source_id, stars_awarded, created_at) = p
+            (cid, uid, action_key, claim_date, claim_seq, source_id,
+             stars_awarded, created_at) = p
             conflict = any(
                 c["user_id"] == uid and c["action_key"] == action_key
-                and c["claim_date"] == claim_date
+                and c["claim_date"] == claim_date and c["claim_seq"] == claim_seq
                 for c in DB["daily_action_claims"]
             )
             if conflict:
@@ -141,7 +155,8 @@ class FakeCursor:
             else:
                 DB["daily_action_claims"].append(dict(
                     id=cid, user_id=uid, action_key=action_key, claim_date=claim_date,
-                    source_id=source_id, stars_awarded=stars_awarded, created_at=created_at,
+                    claim_seq=claim_seq, source_id=source_id,
+                    stars_awarded=stars_awarded, created_at=created_at,
                 ))
                 self._r = (cid,)
 
@@ -528,6 +543,95 @@ check(
     sum(1 for t in DB["reward_transactions"] if t["type"] == "spend") == 1,
     "13d UNE seule transaction 'spend' malgré le rejeu",
 )
+
+# ---------------------------------------------------------------------------
+# 14. CORRECTIF ÉCONOMIE v2 (Prompt technique 1) — plafond quotidien
+#     MULTI-CLAIMS (rewarded_ad_completed, daily_limit=5)
+# ---------------------------------------------------------------------------
+print("-" * 64)
+print("14. Plafond quotidien multi-claims (daily_limit=5)")
+print("=" * 64)
+
+reset_db()
+seed_account(UID)
+seed_all_rules()
+
+for i in range(1, 6):
+    r = A.award_stars(
+        UID, "rewarded_ad_completed",
+        idempotency_key=f"rewarded_ad_completed:u1:2026-09-09:{i}",
+    )
+    check(r["awarded"] is True and r["stars_awarded"] == 10,
+          f"14.{i} réclamation {i}/5 acceptée (+10 ⭐)")
+
+check(DB["reward_wallet"][UID]["stars_balance"] == 50,
+      "14f solde = 5 x 10 = 50 après les 5 réclamations du jour")
+check(len(DB["daily_action_claims"]) == 5,
+      "14g exactement 5 lignes daily_action_claims (claim_seq 1..5)")
+check(sorted(c["claim_seq"] for c in DB["daily_action_claims"]) == [1, 2, 3, 4, 5],
+      "14h claim_seq numérotées 1 à 5, sans trou ni doublon")
+
+r6 = A.award_stars(
+    UID, "rewarded_ad_completed",
+    idempotency_key="rewarded_ad_completed:u1:2026-09-09:6",
+)
+check(r6["awarded"] is False and r6["reason"] == "daily_limit_reached",
+      "14i 6e réclamation du jour -> refusée (daily_limit_reached)")
+check(DB["reward_wallet"][UID]["stars_balance"] == 50,
+      "14j solde inchangé (toujours 50, pas 60)")
+check(len(DB["daily_action_claims"]) == 5,
+      "14k aucune 6e ligne daily_action_claims créée")
+
+# Rejeu de la clé de la 3e réclamation (déjà acquise) une fois le plafond du
+# jour atteint : même sémantique que daily_limit=1 (cf. test 5b/5d) —
+# awarded=False, jamais un crédit supplémentaire, jamais une exception.
+r_retry = A.award_stars(
+    UID, "rewarded_ad_completed",
+    idempotency_key="rewarded_ad_completed:u1:2026-09-09:3",
+)
+check(r_retry["awarded"] is False and r_retry["reason"] == "daily_limit_reached",
+      "14l rejeu d'une clé déjà acquise, plafond atteint -> awarded=False, "
+      "jamais un crédit en trop")
+check(DB["reward_wallet"][UID]["stars_balance"] == 50, "14m solde toujours 50")
+
+# Lendemain -> le plafond redevient disponible (5 nouvelles réclamations).
+TOMORROW2 = NOW + timedelta(days=1)
+A._utcnow = lambda: TOMORROW2
+r_next_day = A.award_stars(
+    UID, "rewarded_ad_completed",
+    idempotency_key="rewarded_ad_completed:u1:2026-09-10:1",
+    now=TOMORROW2,
+)
+check(r_next_day["awarded"] is True,
+      "14n changement de jour -> le plafond quotidien est réautorisé")
+check(DB["reward_wallet"][UID]["stars_balance"] == 60,
+      "14o solde = 50 + 10 = 60 après la 1re réclamation du nouveau jour")
+A._utcnow = lambda: NOW  # remise à l'heure pour la suite
+
+# Une règle daily_limit=1 (ex. wake_completed) n'est PAS affectée par le
+# nouveau mécanisme de comptage : toujours exactement 1 crédit par jour.
+r_w1 = A.award_stars(UID, "wake_completed", idempotency_key="wake_completed:u1:mc1")
+check(r_w1["awarded"] is True, "14p wake_completed (daily_limit=1) : 1re réclamation OK")
+r_w2 = A.award_stars(UID, "wake_completed", idempotency_key="wake_completed:u1:mc2")
+check(r_w2["awarded"] is False and r_w2["reason"] == "daily_limit_reached",
+      "14q wake_completed (daily_limit=1) : 2e réclamation refusée, comme avant")
+
+# Concurrence : deux comptes distincts sur la MÊME règle daily_limit=5 ne se
+# gênent jamais (comptage scopé par user_id, cf. section 8).
+reset_db()
+seed_account(UID)
+seed_account(UID2)
+seed_all_rules()
+for i in range(1, 6):
+    A.award_stars(UID, "rewarded_ad_completed",
+                  idempotency_key=f"rewarded_ad_completed:uA:{i}")
+r_other = A.award_stars(UID2, "rewarded_ad_completed",
+                         idempotency_key="rewarded_ad_completed:uB:1")
+check(r_other["awarded"] is True,
+      "14r compte A au plafond (5/5) n'affecte JAMAIS le plafond du compte B")
+check(DB["reward_wallet"][UID]["stars_balance"] == 50
+      and DB["reward_wallet"][UID2]["stars_balance"] == 10,
+      "14s soldes isolés par compte (A=50, B=10)")
 
 print("-" * 64)
 total = _STATE["pass"] + _STATE["fail"]

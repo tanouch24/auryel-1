@@ -51,7 +51,12 @@ assert _m50.start() > _m49.start(), "v50 doit venir APRES v49"
 _tail = SRC[_m50.start():]
 _close = _tail.find("conn.close()")
 assert _close != -1, "conn.close() final introuvable apres le bloc v50"
-V50 = _tail[:_close + len("conn.close()")]
+# CORRECTIF — borner à conn.close() capturait aussi toute migration future
+# ajoutée ENTRE v50 et la fin de init_db() (ex. v51). On borne désormais au
+# DÉBUT du prochain bloc "Migration vNN", s'il existe.
+_next = re.search(r"#\s*Migration v\d+\b", _tail[1:])
+_end = (_next.start() + 1) if _next else (_close + len("conn.close()"))
+V50 = _tail[:_end]
 
 
 def _nocomment(block):

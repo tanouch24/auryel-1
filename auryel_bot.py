@@ -2641,6 +2641,124 @@ def init_db():
         conn.rollback()
         print(f"Migration v50 (activation mini_game_completed): {e}")
 
+    # ============================================================
+    # Migration v51 — GROS CHANTIER AURYEL (Prompt technique 1) : ÉCONOMIE
+    # ÉTOILES v2. PUREMENT ADDITIF côté schéma (1 colonne + 1 index remplacé,
+    # jamais une table détruite) + des UPDATE GARDÉS (jamais un écrasement
+    # d'un réglage déjà personnalisé en prod) + 4 nouveaux produits express.
+    #
+    #   daily_action_claims.claim_seq (colonne ADDITIVE, DEFAULT 1)
+    #     Jusqu'ici l'unicité (user_id, action_key, claim_date) plafonnait
+    #     TOUTE règle à 1 crédit/jour EN PRATIQUE, quelle que soit la valeur
+    #     de reward_rules.daily_limit — `rewarded_ad_completed` a besoin de 5.
+    #     `claim_seq` numérote les réclamations du jour (1, 2, 3…) ; l'unicité
+    #     devient (user_id, action_key, claim_date, claim_seq). Un
+    #     daily_limit=1 se comporte EXACTEMENT comme avant (`_award_stars_tx`
+    #     compte AVANT d'insérer : 0 claim -> autorisé avec claim_seq=1, puis
+    #     1 claim -> refusé) ; un daily_limit=N autorise N lignes distinctes.
+    #     L'ancien index est supprimé puis remplacé (jamais les deux actifs
+    #     en même temps, ce qui replafonnerait tout le monde à 1). Aucune
+    #     donnée n'est perdue : DROP INDEX ne touche qu'une contrainte, pas
+    #     les lignes déjà écrites (`claim_seq` DEFAULT 1 les rend valides
+    #     sous le nouvel index sans réécriture).
+    #
+    #   reward_rules — nouveau barème (Prompt technique 1)
+    #     wake_completed / share_completed / mini_game_completed : montants
+    #     ajustés (voir rapport). `rewarded_ad_completed` : ACTIVÉE (créée
+    #     désactivée en v49, réservée depuis). meditation_completed,
+    #     daily_card_completed, tarot_completed, streak_7_days : montants
+    #     INCHANGÉS (aucune cible fournie pour les 2 premières ; logique
+    #     streak jugée saine, conservée telle quelle). Chaque UPDATE est
+    #     GARDÉ par l'ancienne valeur/état : un opérateur ayant déjà
+    #     personnalisé une règle n'est jamais écrasé par un rejeu.
+    #
+    #   express_products — nouveaux paliers Étoiles -> temps
+    #     `express_consultation_10min` : 500 -> 400 ⭐ (durée inchangée,
+    #     10 min). 4 produits ADDITIFS (jamais un remplacement) : 15/30/45/60
+    #     minutes, au ratio produit annoncé (500 ⭐ = 15 min, puis linéaire).
+    #     Choix DISCRETS comme avant (aucun calcul serveur nouveau requis) :
+    #     `purchase_express_consultation` / l'endpoint HTTP restent
+    #     INCHANGÉS, la table suffit — le serveur reste seul décisionnaire
+    #     du coût/durée, jamais une valeur fournie par le client.
+    #
+    # Miroir lisible : migrations/025_stars_economy_v2.sql.
+    # ============================================================
+    try:
+        c.execute(
+            "ALTER TABLE daily_action_claims "
+            "ADD COLUMN IF NOT EXISTS claim_seq INTEGER NOT NULL DEFAULT 1"
+        )
+        c.execute(
+            "DROP INDEX IF EXISTS uq_daily_action_claims_user_action_date"
+        )
+        c.execute("""
+            CREATE UNIQUE INDEX IF NOT EXISTS
+                uq_daily_action_claims_user_action_date_seq
+            ON daily_action_claims (user_id, action_key, claim_date, claim_seq)
+        """)
+        conn.commit()
+    except Exception as e:
+        conn.rollback()
+        print(f"Migration v51 (daily_action_claims multi-claims): {e}")
+
+    try:
+        now51 = datetime.utcnow()
+        # GARDÉ par l'ANCIEN montant : un opérateur ayant déjà ajusté une de
+        # ces règles en base n'est jamais écrasé par ce rejeu.
+        c.executemany(
+            "UPDATE reward_rules SET stars_amount=%s, updated_at=%s "
+            "WHERE rule_key=%s AND stars_amount=%s",
+            [
+                (10, now51, "wake_completed", 5),
+                (20, now51, "share_completed", 15),
+                (20, now51, "mini_game_completed", 15),
+            ],
+        )
+        conn.commit()
+    except Exception as e:
+        conn.rollback()
+        print(f"Migration v51 (barème mis à jour): {e}")
+
+    try:
+        # Active la règle `rewarded_ad_completed` (créée DÉSACTIVÉE en v49,
+        # amount=0, daily_limit=NULL, réservée pour ce lot). Gardé par
+        # `AND enabled=FALSE` : même idiome que l'activation de
+        # `mini_game_completed` en v50.
+        c.execute(
+            "UPDATE reward_rules SET stars_amount=10, enabled=TRUE, "
+            "daily_limit=5, updated_at=%s "
+            "WHERE rule_key='rewarded_ad_completed' AND enabled=FALSE",
+            (datetime.utcnow(),),
+        )
+        conn.commit()
+    except Exception as e:
+        conn.rollback()
+        print(f"Migration v51 (activation rewarded_ad_completed): {e}")
+
+    try:
+        # GARDÉ par l'ANCIEN coût (500) : un opérateur ayant déjà ajusté ce
+        # produit n'est jamais écrasé par ce rejeu.
+        c.execute(
+            "UPDATE express_products SET stars_cost=400 "
+            "WHERE product_key='express_consultation_10min' AND stars_cost=500"
+        )
+        c.executemany(
+            "INSERT INTO express_products "
+            "(product_key, stars_cost, seconds_granted, enabled) "
+            "VALUES (%s, %s, %s, %s) "
+            "ON CONFLICT (product_key) DO NOTHING",
+            [
+                ("express_consultation_15min", 500, 900, True),
+                ("express_consultation_30min", 1000, 1800, True),
+                ("express_consultation_45min", 1500, 2700, True),
+                ("express_consultation_60min", 2000, 3600, True),
+            ],
+        )
+        conn.commit()
+    except Exception as e:
+        conn.rollback()
+        print(f"Migration v51 (nouveaux paliers express_products): {e}")
+
     conn.close()
 
 def reset_db():
@@ -11725,14 +11843,34 @@ def _award_stars_tx(cursor, user_id, rule_key, source_id, idempotency_key, now):
     current_balance = int(cursor.fetchone()[0])
 
     if daily_limit is not None:
+        # CORRECTIF ÉCONOMIE v2 (Prompt technique 1) — compte les
+        # réclamations DÉJÀ posées aujourd'hui pour cette règle AVANT
+        # d'insérer : un daily_limit=1 se comporte EXACTEMENT comme avant
+        # (0 claim -> autorisé, 1 claim -> refusé) ; un daily_limit=N (ex.
+        # `rewarded_ad_completed`=5) autorise N lignes distinctes par jour.
+        # Sûr sans verrou supplémentaire : `accounts` est déjà verrouillé
+        # FOR UPDATE par l'appelant (`award_stars`), donc tous les appels
+        # concurrents pour CE même utilisateur sont sérialisés — aucune
+        # course possible sur `claim_seq`. L'index UNIQUE
+        # (user_id, action_key, claim_date, claim_seq) reste un filet de
+        # sécurité en base, pas le seul rempart.
+        cursor.execute(
+            "SELECT COUNT(*) FROM daily_action_claims "
+            "WHERE user_id=%s AND action_key=%s AND claim_date=%s",
+            (uid, rule_key, today),
+        )
+        claims_today = int(cursor.fetchone()[0])
+        if claims_today >= daily_limit:
+            return {"awarded": False, "reason": "daily_limit_reached",
+                    "stars_awarded": 0, "new_balance": current_balance}
         cursor.execute(
             "INSERT INTO daily_action_claims "
-            "(id, user_id, action_key, claim_date, source_id, stars_awarded, "
-            " created_at) "
-            "VALUES (%s, %s, %s, %s, %s, %s, %s) "
-            "ON CONFLICT (user_id, action_key, claim_date) DO NOTHING "
-            "RETURNING id",
-            (str(uuid.uuid4()), uid, rule_key, today,
+            "(id, user_id, action_key, claim_date, claim_seq, source_id, "
+            " stars_awarded, created_at) "
+            "VALUES (%s, %s, %s, %s, %s, %s, %s, %s) "
+            "ON CONFLICT (user_id, action_key, claim_date, claim_seq) "
+            "DO NOTHING RETURNING id",
+            (str(uuid.uuid4()), uid, rule_key, today, claims_today + 1,
              str(source_id) if source_id is not None else None,
              stars_amount, now),
         )

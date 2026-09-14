@@ -221,11 +221,21 @@ class _Cur:
             w = DB["reward_wallet"].setdefault(uid, _default_wallet())
             self._r = (w["stars_balance"],)
 
+        elif "SELECT COUNT(*) FROM daily_action_claims" in s:
+            uid, action_key, claim_date = p
+            count = sum(
+                1 for c in DB["daily_action_claims"]
+                if c["user_id"] == uid and c["action_key"] == action_key
+                and c["claim_date"] == claim_date
+            )
+            self._r = (count,)
+
         elif "INSERT INTO daily_action_claims" in s:
-            (cid, uid, action_key, claim_date, source_id, stars_awarded, created_at) = p
+            (cid, uid, action_key, claim_date, claim_seq, source_id,
+             stars_awarded, created_at) = p
             conflict = any(
                 c["user_id"] == uid and c["action_key"] == action_key
-                and c["claim_date"] == claim_date
+                and c["claim_date"] == claim_date and c["claim_seq"] == claim_seq
                 for c in DB["daily_action_claims"]
             )
             if conflict:
@@ -233,7 +243,8 @@ class _Cur:
             else:
                 DB["daily_action_claims"].append(dict(
                     id=cid, user_id=uid, action_key=action_key, claim_date=claim_date,
-                    source_id=source_id, stars_awarded=stars_awarded, created_at=created_at,
+                    claim_seq=claim_seq, source_id=source_id,
+                    stars_awarded=stars_awarded, created_at=created_at,
                 ))
                 self._r = (cid,)
 

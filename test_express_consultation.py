@@ -431,6 +431,164 @@ check(not ({"stars_cost", "seconds_granted", "amount", "duration"} & _params),
       f"12a purchase_express_consultation() n'accepte NI coût NI durée "
       f"(paramètres réels : {sorted(_params)})")
 
+# ---------------------------------------------------------------------------
+# 13. CORRECTIF ÉCONOMIE v2 (Prompt technique 1) — nouveaux paliers
+#     Étoiles -> temps : 400=10min, 500=15min, 1000=30min, 1500=45min,
+#     2000=60min. Choix DISCRETS (produits), chacun testé au centime près.
+# ---------------------------------------------------------------------------
+print("=" * 64)
+print("13. Nouveaux paliers Étoiles -> temps (400/500/1000/1500/2000)")
+print("=" * 64)
+
+
+def seed_full_catalog():
+    """Catalogue COMPLET de la nouvelle économie (5 produits discrets)."""
+    DB["express_products"]["express_consultation_10min"] = {
+        "stars_cost": 400, "seconds_granted": 600, "enabled": True,
+    }
+    DB["express_products"]["express_consultation_15min"] = {
+        "stars_cost": 500, "seconds_granted": 900, "enabled": True,
+    }
+    DB["express_products"]["express_consultation_30min"] = {
+        "stars_cost": 1000, "seconds_granted": 1800, "enabled": True,
+    }
+    DB["express_products"]["express_consultation_45min"] = {
+        "stars_cost": 1500, "seconds_granted": 2700, "enabled": True,
+    }
+    DB["express_products"]["express_consultation_60min"] = {
+        "stars_cost": 2000, "seconds_granted": 3600, "enabled": True,
+    }
+
+
+# 399 ⭐ : le palier 10 min (400) reste hors de portée.
+reset_db()
+seed_full_catalog()
+seed_account(UID, stars=399)
+r = A.purchase_express_consultation(UID, "express_consultation_10min", "e13:a")
+check(r["success"] is False and r["reason"] == "insufficient_balance",
+      "13a 399 ⭐ -> PAS de 10 min (insufficient_balance)")
+check(DB["reward_wallet"][UID]["stars_balance"] == 399,
+      "13b solde intact (399, aucun débit partiel)")
+
+# 400 ⭐ : exactement le prix des 10 min -> solde 0 ensuite.
+reset_db()
+seed_full_catalog()
+seed_account(UID, stars=400)
+r = A.purchase_express_consultation(UID, "express_consultation_10min", "e13:b")
+check(r["success"] is True and r["seconds_granted"] == 600
+      and r["stars_spent"] == 400,
+      "13c 400 ⭐ -> 10 min (600 s), coût exact 400 ⭐")
+check(r["stars_balance"] == 0, "13d reliquat 0 ⭐ après un achat pile au prix")
+
+# 430 ⭐ : achat possible de 10 min, reliquat 30 ⭐ (exemple du rapport).
+reset_db()
+seed_full_catalog()
+seed_account(UID, stars=430)
+r = A.purchase_express_consultation(UID, "express_consultation_10min", "e13:c")
+check(r["success"] is True and r["seconds_granted"] == 600,
+      "13e 430 ⭐ -> achat 10 min possible")
+check(r["stars_balance"] == 30, "13f reliquat 30 ⭐ (430 - 400)")
+
+# 499 ⭐ : SEULEMENT le palier 10 min (400) est accessible, pas 15 min (500).
+reset_db()
+seed_full_catalog()
+seed_account(UID, stars=499)
+r10 = A.purchase_express_consultation(UID, "express_consultation_10min", "e13:d1")
+check(r10["success"] is True, "13g 499 ⭐ -> option 10 min (400) accessible")
+reset_db()
+seed_full_catalog()
+seed_account(UID, stars=499)
+r15 = A.purchase_express_consultation(UID, "express_consultation_15min", "e13:d2")
+check(r15["success"] is False and r15["reason"] == "insufficient_balance",
+      "13h 499 ⭐ -> option 15 min (500) INACCESSIBLE (il manque 1 ⭐)")
+
+# 500 ⭐ : exactement le prix des 15 min.
+reset_db()
+seed_full_catalog()
+seed_account(UID, stars=500)
+r = A.purchase_express_consultation(UID, "express_consultation_15min", "e13:e")
+check(r["success"] is True and r["seconds_granted"] == 900
+      and r["stars_spent"] == 500,
+      "13i 500 ⭐ -> 15 min (900 s), coût exact 500 ⭐")
+check(r["stars_balance"] == 0, "13j reliquat 0 ⭐")
+
+# 520 ⭐ : achat possible de 15 min, reliquat 20 ⭐ (exemple du rapport).
+reset_db()
+seed_full_catalog()
+seed_account(UID, stars=520)
+r = A.purchase_express_consultation(UID, "express_consultation_15min", "e13:f")
+check(r["success"] is True and r["stars_balance"] == 20,
+      "13k 520 ⭐ -> 15 min, reliquat 20 ⭐ (520 - 500)")
+
+# 1000 ⭐ : exactement le prix des 30 min.
+reset_db()
+seed_full_catalog()
+seed_account(UID, stars=1000)
+r = A.purchase_express_consultation(UID, "express_consultation_30min", "e13:g")
+check(r["success"] is True and r["seconds_granted"] == 1800
+      and r["stars_spent"] == 1000,
+      "13l 1000 ⭐ -> 30 min (1800 s), coût exact 1000 ⭐")
+check(r["stars_balance"] == 0, "13m reliquat 0 ⭐")
+
+# 1230 ⭐ : achat possible de 30 min, reliquat 230 ⭐ (exemple du rapport) —
+# le palier 45 min (1500) reste hors de portée.
+reset_db()
+seed_full_catalog()
+seed_account(UID, stars=1230)
+r30 = A.purchase_express_consultation(UID, "express_consultation_30min", "e13:h1")
+check(r30["success"] is True and r30["stars_balance"] == 230,
+      "13n 1230 ⭐ -> 30 min possible, reliquat 230 ⭐ (1230 - 1000)")
+reset_db()
+seed_full_catalog()
+seed_account(UID, stars=1230)
+r45 = A.purchase_express_consultation(UID, "express_consultation_45min", "e13:h2")
+check(r45["success"] is False and r45["reason"] == "insufficient_balance",
+      "13o 1230 ⭐ -> 45 min (1500) INACCESSIBLE")
+
+# 1500 / 2000 ⭐ : paliers 45 min / 60 min, coût exact.
+reset_db()
+seed_full_catalog()
+seed_account(UID, stars=1500)
+r = A.purchase_express_consultation(UID, "express_consultation_45min", "e13:i")
+check(r["success"] is True and r["seconds_granted"] == 2700
+      and r["stars_balance"] == 0,
+      "13p 1500 ⭐ -> 45 min (2700 s), reliquat 0 ⭐")
+
+reset_db()
+seed_full_catalog()
+seed_account(UID, stars=2000)
+r = A.purchase_express_consultation(UID, "express_consultation_60min", "e13:j")
+check(r["success"] is True and r["seconds_granted"] == 3600
+      and r["stars_balance"] == 0,
+      "13q 2000 ⭐ -> 60 min (3600 s), reliquat 0 ⭐")
+
+# Double achat idempotent sur un nouveau palier (rejeu de la MÊME clé).
+reset_db()
+seed_full_catalog()
+seed_account(UID, stars=1000)
+first = A.purchase_express_consultation(UID, "express_consultation_30min", "e13:k")
+second = A.purchase_express_consultation(UID, "express_consultation_30min", "e13:k")
+check(first["success"] is True and second["success"] is True
+      and second["stars_spent"] == 1000 and second["stars_balance"] == 0,
+      "13r rejeu de la MÊME clé -> renvoie le résultat ORIGINAL (succès), "
+      "jamais un 2e débit")
+check(len(DB["express_consultations"]) == 1,
+      "13s UNE seule ligne express_consultations malgré le rejeu")
+
+# Isolation stricte entre comptes sur le nouveau catalogue.
+reset_db()
+seed_full_catalog()
+seed_account(UID, stars=1000)
+seed_account(UID2, stars=50)
+A.purchase_express_consultation(UID, "express_consultation_30min", "e13:l")
+r_b = A.purchase_express_consultation(UID2, "express_consultation_30min", "e13:l")
+check(r_b["success"] is False and r_b["reason"] == "insufficient_balance",
+      "13t compte B (50 ⭐) ne bénéficie JAMAIS de l'achat du compte A "
+      "(même idempotency_key littérale, scopée par user_id)")
+check(DB["reward_wallet"][UID]["stars_balance"] == 0
+      and DB["reward_wallet"][UID2]["stars_balance"] == 50,
+      "13u soldes isolés par compte (A=0 débité, B=50 intact)")
+
 print("-" * 64)
 total = _STATE["pass"] + _STATE["fail"]
 print(f"RESULTAT : {_STATE['pass']} ok / {_STATE['fail']} ko (sur {total})")
