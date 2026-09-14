@@ -65,9 +65,14 @@ def _reset_db():
     DB["reward_wallet"].clear()
     DB["daily_action_claims"].clear()
     DB["reward_transactions"].clear()
+    DB["express_products"] = {
+        "express_consultation_10min": {"stars_cost": 500, "seconds_granted": 600,
+                                       "enabled": True},
+    }
     for uid in (UID1, UID2):
         DB["accounts"][uid] = {"user_id": uid, "deleted_at": None}
-    # Seed EXACT du rapport (§3) — reflète la migration v49.
+    # Seed EXACT du rapport (§3) — reflète la migration v49 (mini_game_completed
+    # est activée par la migration v50, Prompt 3/5).
     DB["reward_rules"].update({
         "wake_completed":       {"stars_amount": 5,  "enabled": True,  "daily_limit": 1,    "cooldown_seconds": None},
         "daily_card_completed": {"stars_amount": 10, "enabled": True,  "daily_limit": 1,    "cooldown_seconds": None},
@@ -75,7 +80,7 @@ def _reset_db():
         "meditation_completed": {"stars_amount": 10, "enabled": True,  "daily_limit": 1,    "cooldown_seconds": None},
         "share_completed":      {"stars_amount": 15, "enabled": True,  "daily_limit": 1,    "cooldown_seconds": None},
         "streak_7_days":        {"stars_amount": 50, "enabled": True,  "daily_limit": None, "cooldown_seconds": None},
-        "mini_game_completed":  {"stars_amount": 0,  "enabled": False, "daily_limit": None, "cooldown_seconds": None},
+        "mini_game_completed":  {"stars_amount": 15, "enabled": True,  "daily_limit": 1,    "cooldown_seconds": None},
         "rewarded_ad_completed": {"stars_amount": 0, "enabled": False, "daily_limit": None, "cooldown_seconds": None},
     })
 
@@ -139,6 +144,14 @@ class FakeCursor:
                 [(k, v["stars_amount"]) for k, v in DB["reward_rules"].items()
                  if v["enabled"]],
                 key=lambda t: t[0],
+            )
+            self._r = None
+
+        elif "SELECT product_key, stars_cost, seconds_granted FROM express_products" in s:
+            self._rows = sorted(
+                [(k, v["stars_cost"], v["seconds_granted"])
+                 for k, v in DB["express_products"].items() if v["enabled"]],
+                key=lambda t: t[1],
             )
             self._r = None
 
@@ -301,14 +314,25 @@ rule_keys = {r["rule_key"] for r in body["rules"]}
 check(rule_keys == {
     "wake_completed", "daily_card_completed", "tarot_completed",
     "meditation_completed", "share_completed", "streak_7_days",
-}, f"2a exactement les 6 règles actives, aucune future désactivée ({rule_keys})")
-check("mini_game_completed" not in rule_keys and "rewarded_ad_completed" not in rule_keys,
-      "2b mini_game_completed / rewarded_ad_completed JAMAIS exposées (enabled=False)")
+    "mini_game_completed",
+}, f"2a exactement les 7 règles actives (mini_game_completed activée par la "
+   f"migration v50, Prompt 3/5), aucune future désactivée ({rule_keys})")
+check("rewarded_ad_completed" not in rule_keys,
+      "2b rewarded_ad_completed JAMAIS exposée (enabled=False)")
 amounts = {r["rule_key"]: r["stars_amount"] for r in body["rules"]}
 check(amounts["wake_completed"] == 5 and amounts["daily_card_completed"] == 10
       and amounts["tarot_completed"] == 10 and amounts["meditation_completed"] == 10
-      and amounts["share_completed"] == 15 and amounts["streak_7_days"] == 50,
+      and amounts["share_completed"] == 15 and amounts["streak_7_days"] == 50
+      and amounts["mini_game_completed"] == 15,
       "2c montants exacts du rapport")
+check(
+    body["express_products"] == [
+        {"product_key": "express_consultation_10min", "stars_cost": 500,
+         "seconds_granted": 600}
+    ],
+    f"2d express_products expose UNIQUEMENT le catalogue actif, coût/durée "
+    f"résolus serveur ({body['express_products']})",
+)
 
 # ===========================================================================
 # 3. Wallet — modification serveur du montant reflétée SANS nouvelle app

@@ -2481,6 +2481,166 @@ def init_db():
         conn.rollback()
         print(f"Migration v49 (reward_rules seed): {e}")
 
+    # Migration v50 — GROS CHANTIER AURYEL (Prompt 3/5) : CONSULTATION EXPRESS
+    # (dépenser des Étoiles contre du temps) + MINI-JEUX (session serveur
+    # générique, réutilisée par les 3 jeux). PUREMENT ADDITIF : 3 tables
+    # neuves + 2 FK idempotentes + 1 UPDATE ciblé et GARDÉ (active la règle
+    # `mini_game_completed`, déjà présente désactivée depuis v49 — jamais un
+    # INSERT en double, jamais un écrasement d'un réglage déjà personnalisé).
+    # Aucune colonne existante ALTER-ée, aucun DROP / TRUNCATE / DELETE.
+    #
+    #   express_products
+    #     Configuration SERVEUR (comme reward_rules) du catalogue "temps
+    #     contre Étoiles" — `stars_cost` / `seconds_granted` / `enabled`
+    #     jamais codés en dur côté Flutter. Seed idempotent (ON CONFLICT DO
+    #     NOTHING) : `express_consultation_10min` (500 Étoiles -> 600 s).
+    #
+    #   express_consultations
+    #     Trace d'audit APPEND-ONLY d'un achat réussi (Étoiles dépensées <->
+    #     temps accordé). UNIQUE (user_id, idempotency_key) : sert de PREMIER
+    #     gardien d'idempotence (avant même `_debit_stars_tx` /
+    #     `_credit_bonus_time_tx`) — un rejeu de la MÊME clé renvoie le
+    #     résultat déjà enregistré, ne rejoue jamais le débit/crédit.
+    #
+    #   mini_game_sessions
+    #     Session de jeu SERVEUR générique, partagée par les 2 NOUVEAUX
+    #     mini-jeux (Suite intuitive / Carte cachée) — même idiome que
+    #     `memory_games` (déjà existante, RÉUTILISÉE telle quelle pour le
+    #     Memory) : `start` crée une session imprévisible, `finish` la ferme
+    #     EXACTLY-ONCE (`UPDATE ... WHERE status='active'` + rowcount) et
+    #     empêche l'appel trivial `finish` répété. `game_key` ∈
+    #     ('sequence_recall', 'hidden_card').
+    #
+    # RÉCOMPENSE MINI-JEUX — UNIFIÉE : Memory (table existante, logique de
+    # difficulté/seuil/plausibilité inchangée) ET les 2 nouveaux jeux
+    # (mini_game_sessions) créditent tous la MÊME règle `mini_game_completed`
+    # via `award_stars`, dont le plafond quotidien (`daily_action_claims`,
+    # partagé par CLÉ DE RÈGLE, pas par jeu) garantit NATURELLEMENT "maximum
+    # UNE récompense mini-jeu par jour pour l'ensemble de la catégorie" sans
+    # code supplémentaire. Memory NE CRÉDITE PLUS `earned_seconds_remaining`
+    # pour les NOUVELLES parties (cf. modification de api_memory_complete) —
+    # `memory_rewards` cesse de recevoir de nouvelles lignes (son historique
+    # existant, lui, n'est pas touché) : plus jamais de double récompense
+    # temps + Étoiles pour une même partie.
+    #
+    # FK ... -> accounts(user_id) SANS ON DELETE CASCADE (idiome v27) : DELETE
+    # /api/app/account purge explicitement express_consultations /
+    # mini_game_sessions (cf. _ACCOUNT_DELETE_CHILD_TABLES, mis à jour).
+    # `express_products` est une config GLOBALE (comme reward_rules) : aucune
+    # FK utilisateur.
+    # Miroir lisible : migrations/024_express_and_minigames.sql.
+    try:
+        c.execute("""
+            CREATE TABLE IF NOT EXISTS express_products (
+                product_key      TEXT         PRIMARY KEY,
+                stars_cost       INTEGER      NOT NULL,
+                seconds_granted  INTEGER      NOT NULL,
+                enabled          BOOLEAN      NOT NULL DEFAULT TRUE,
+                created_at       TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
+                updated_at       TIMESTAMPTZ  NOT NULL DEFAULT NOW()
+            )
+        """)
+        c.execute("""
+            CREATE TABLE IF NOT EXISTS express_consultations (
+                id               UUID         PRIMARY KEY,
+                user_id          UUID         NOT NULL,
+                stars_spent      INTEGER      NOT NULL,
+                seconds_granted  INTEGER      NOT NULL,
+                status           TEXT         NOT NULL DEFAULT 'completed',
+                idempotency_key  TEXT         NOT NULL,
+                created_at       TIMESTAMPTZ  NOT NULL DEFAULT NOW()
+            )
+        """)
+        c.execute("""
+            CREATE UNIQUE INDEX IF NOT EXISTS uq_express_consultations_user_idempotency
+            ON express_consultations (user_id, idempotency_key)
+        """)
+        c.execute("""
+            CREATE TABLE IF NOT EXISTS mini_game_sessions (
+                id            UUID         PRIMARY KEY,
+                user_id       UUID         NOT NULL,
+                game_key      TEXT         NOT NULL,
+                started_at    TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
+                status        TEXT         NOT NULL DEFAULT 'active',
+                completed_at  TIMESTAMPTZ,
+                created_at    TIMESTAMPTZ  NOT NULL DEFAULT NOW()
+            )
+        """)
+        c.execute("""
+            CREATE INDEX IF NOT EXISTS idx_mini_game_sessions_user_status
+            ON mini_game_sessions (user_id, status)
+        """)
+        # memory_games.reward_seconds (v39, NOT NULL DEFAULT 0) documentait le
+        # nombre de secondes credités — Memory ne crédite plus de temps (voir
+        # ci-dessus) : la colonne reste (jamais supprimée), toujours écrite à
+        # 0 pour les NOUVELLES parties. `stars_awarded` est la colonne
+        # ADDITIVE qui porte désormais la vraie récompense.
+        c.execute(
+            "ALTER TABLE memory_games "
+            "ADD COLUMN IF NOT EXISTS stars_awarded INTEGER NOT NULL DEFAULT 0"
+        )
+        conn.commit()
+    except Exception as e:
+        conn.rollback()
+        print(f"Migration v50 (express_products/express_consultations/mini_game_sessions): {e}")
+
+    try:
+        c.execute("""
+            DO $$
+            BEGIN
+                ALTER TABLE express_consultations
+                    ADD CONSTRAINT fk_express_consultations_account
+                    FOREIGN KEY (user_id) REFERENCES accounts(user_id);
+            EXCEPTION
+                WHEN duplicate_object THEN NULL;
+            END
+            $$;
+        """)
+        c.execute("""
+            DO $$
+            BEGIN
+                ALTER TABLE mini_game_sessions
+                    ADD CONSTRAINT fk_mini_game_sessions_account
+                    FOREIGN KEY (user_id) REFERENCES accounts(user_id);
+            EXCEPTION
+                WHEN duplicate_object THEN NULL;
+            END
+            $$;
+        """)
+        conn.commit()
+    except Exception as e:
+        conn.rollback()
+        print(f"Migration v50 (express/minigame FKs): {e}")
+
+    try:
+        c.execute(
+            "INSERT INTO express_products "
+            "(product_key, stars_cost, seconds_granted, enabled) "
+            "VALUES (%s, %s, %s, %s) "
+            "ON CONFLICT (product_key) DO NOTHING",
+            ("express_consultation_10min", 500, 600, True),
+        )
+        conn.commit()
+    except Exception as e:
+        conn.rollback()
+        print(f"Migration v50 (express_products seed): {e}")
+
+    try:
+        # Active la règle `mini_game_completed` (créée DÉSACTIVÉE en v49,
+        # amount=0, daily_limit=NULL). Gardé par `AND enabled=FALSE` : si un
+        # opérateur l'a DÉJÀ activée/personnalisée entre-temps, ce rejeu ne
+        # touche RIEN (jamais un écrasement d'un réglage déjà en place).
+        c.execute(
+            "UPDATE reward_rules SET stars_amount=15, enabled=TRUE, "
+            "daily_limit=1, updated_at=%s "
+            "WHERE rule_key='mini_game_completed' AND enabled=FALSE",
+            (datetime.utcnow(),),
+        )
+        conn.commit()
+    except Exception as e:
+        conn.rollback()
+        print(f"Migration v50 (activation mini_game_completed): {e}")
+
     conn.close()
 
 def reset_db():
@@ -6106,7 +6266,11 @@ def api_rewards_wallet():
     (UNIQUEMENT les règles enabled=TRUE — jamais une action future inactive),
     "streak": {"current_streak","best_streak","next_reward_in_days"},
     "recent_transactions": [{"delta_stars","balance_after","reason",
-    "created_at"}, ...] (20 plus récentes)}."""
+    "created_at"}, ...] (20 plus récentes),
+    "express_products": [{"product_key","stars_cost","seconds_granted"}, ...]
+    (GROS CHANTIER AURYEL Prompt 3/5 — UNIQUEMENT les produits enabled=TRUE ;
+    coût/durée résolus ICI pour l'affichage, jamais codés en dur côté
+    Flutter — le serveur reste seul décisionnaire au moment de l'achat)}."""
     user_id = g.app_account["user_id"]
     conn = get_conn()
     try:
@@ -6149,6 +6313,16 @@ def api_rewards_wallet():
             for t in c.fetchall()
         ]
 
+        c.execute(
+            "SELECT product_key, stars_cost, seconds_granted "
+            "FROM express_products WHERE enabled=TRUE ORDER BY stars_cost",
+        )
+        express_products = [
+            {"product_key": r[0], "stars_cost": int(r[1]),
+             "seconds_granted": int(r[2])}
+            for r in c.fetchall()
+        ]
+
         next_in = _STREAK_MILESTONE_DAYS - (streak % _STREAK_MILESTONE_DAYS)
         return _auth_json({
             "stars_balance": balance,
@@ -6159,6 +6333,7 @@ def api_rewards_wallet():
                 "next_reward_in_days": next_in,
             },
             "recent_transactions": recent,
+            "express_products": express_products,
         }, 200)
     finally:
         conn.close()
@@ -6201,6 +6376,112 @@ def api_rewards_claim():
         user_hash=_user_hash(user_id), rule_key=action_key,
         reason=result.get("reason"),
     )
+    return _auth_json(result, 200)
+
+
+# ============================================================
+# GROS CHANTIER AURYEL (Prompt 3/5) — CONSULTATION EXPRESS
+#   POST /api/app/rewards/express-consultation
+# ============================================================
+@app.route("/api/app/rewards/express-consultation", methods=["POST"])
+@limiter.limit("30 per hour")
+@require_app_auth
+def api_rewards_express_consultation():
+    """Débloque du temps de consultation contre des Étoiles. Identité = jeton
+    Bearer.
+      body : { "product_key": "express_consultation_10min",
+               "idempotency_key": "..." }
+    Aucun montant, coût ou durée fournis par le client — TOUT vient de
+    `express_products` (résolu par `purchase_express_consultation`).
+    `idempotency_key` OBLIGATOIRE et générée par le CLIENT, stable pour UNE
+    tentative d'achat (rejouée telle quelle sur un retry réseau / double
+    tap) : fermer/réouvrir l'app, spam bouton, retry, réponse perdue puis
+    retry -> une SEULE dépense, un SEUL crédit de temps.
+
+    Réponse succès :
+      {"success": true, "stars_spent", "stars_balance", "seconds_granted",
+       "balances": {...}}
+    Réponse refus (200, PAS une erreur HTTP — c'est un état métier normal) :
+      {"success": false, "reason": "insufficient_balance"|"product_disabled"
+       |"unknown_product", "stars_balance", "stars_cost"?}."""
+    user_id = g.app_account["user_id"]
+    data = request.get_json(silent=True) or {}
+    product_key = data.get("product_key")
+    idempotency_key = data.get("idempotency_key")
+    if not isinstance(product_key, str) or not product_key.strip():
+        return _auth_json({"error": "invalid_request"}, 400)
+    if not isinstance(idempotency_key, str) or not idempotency_key.strip():
+        return _auth_json({"error": "invalid_request"}, 400)
+    product_key = product_key.strip()
+    idempotency_key = idempotency_key.strip()[:200]
+
+    log_event("express_consultation_opened", user_hash=_user_hash(user_id),
+              product_key=product_key)
+    now = _utcnow()
+    try:
+        result = purchase_express_consultation(
+            user_id, product_key, idempotency_key, now=now
+        )
+    except Exception as e:
+        print(f"[rewards] express-consultation erreur {_user_hash(user_id)}: "
+              f"{type(e).__name__}")
+        return _auth_json({"error": "temporarily_unavailable"}, 503)
+
+    if not result.get("success") and result.get("reason") == "unknown_account":
+        return _auth_json({"error": "unauthorized"}, 401)
+
+    if result.get("success"):
+        log_event("express_consultation_purchased", user_hash=_user_hash(user_id),
+                   product_key=product_key, stars_spent=result.get("stars_spent"))
+    elif result.get("reason") == "insufficient_balance":
+        log_event("express_consultation_insufficient_stars",
+                  user_hash=_user_hash(user_id), product_key=product_key)
+    return _auth_json(result, 200)
+
+
+# ============================================================
+# GROS CHANTIER AURYEL (Prompt 3/5) — MINI-JEUX (session serveur générique)
+#   POST /api/app/minigame/start
+#   POST /api/app/minigame/finish
+# ============================================================
+@app.route("/api/app/minigame/start", methods=["POST"])
+@limiter.limit("60 per hour")
+@require_app_auth
+def api_minigame_start():
+    """Ouvre une session de mini-jeu serveur (Suite intuitive / Carte
+    cachée). Identité = jeton Bearer. body : { "game_key": "sequence_recall"
+    | "hidden_card" }. Ne débite/crédite rien."""
+    user_id = g.app_account["user_id"]
+    data = request.get_json(silent=True) or {}
+    game_key = data.get("game_key")
+    result = start_mini_game(user_id, game_key, now=_utcnow())
+    if result.get("error") == "invalid_game":
+        return _auth_json({"error": "invalid_game"}, 400)
+    if result.get("error") == "unknown_account":
+        return _auth_json({"error": "unauthorized"}, 401)
+    if "error" in result:
+        return _auth_json({"error": "temporarily_unavailable"}, 503)
+    log_event("mini_game_started", user_hash=_user_hash(user_id),
+              game_key=game_key)
+    return _auth_json(result, 200)
+
+
+@app.route("/api/app/minigame/finish", methods=["POST"])
+@limiter.limit("60 per hour")
+@require_app_auth
+def api_minigame_finish():
+    """Ferme une session de mini-jeu et attribue (ou non) la récompense
+    PARTAGÉE `mini_game_completed`. Identité = jeton Bearer.
+    body : { "session_id": "<uuid>" }. Le serveur calcule lui-même le
+    chrono ; aucune récompense fournie par le client."""
+    user_id = g.app_account["user_id"]
+    data = request.get_json(silent=True) or {}
+    session_id = data.get("session_id")
+    if not _is_uuid(session_id):
+        return _auth_json({"error": "session_not_found"}, 404)
+    result = finish_mini_game(user_id, session_id, now=_utcnow())
+    if result.get("status") == "not_found":
+        return _auth_json({"error": "session_not_found"}, 404)
     return _auth_json(result, 200)
 
 
@@ -6680,21 +6961,45 @@ def api_wellbeing_mission():
 #   la croissance de la table, la vraie expiration reste vérifiée à /complete).
 
 _MEMORY_DIFFICULTIES = {
-    "easy":   {"threshold_seconds": 20, "reward_seconds": 300,
+    "easy":   {"threshold_seconds": 20,
                "min_plausible_seconds": 4, "expiry_seconds": 600,  "pair_count": 4},
-    "medium": {"threshold_seconds": 40, "reward_seconds": 600,
+    "medium": {"threshold_seconds": 40,
                "min_plausible_seconds": 6, "expiry_seconds": 600,  "pair_count": 6},
-    "hard":   {"threshold_seconds": 80, "reward_seconds": 900,
+    "hard":   {"threshold_seconds": 80,
                "min_plausible_seconds": 9, "expiry_seconds": 900,  "pair_count": 8},
 }
 _MEMORY_ORDER = ("easy", "medium", "hard")
-_MEMORY_REWARD_WINDOW = timedelta(days=7)
-_MEMORY_MAX_WINDOW_SECONDS = sum(
-    d["reward_seconds"] for d in _MEMORY_DIFFICULTIES.values()
-)  # 1800 s = 30 min
+
+# GROS CHANTIER AURYEL (Prompt 3/5) — MIGRATION DE LA RÉCOMPENSE MEMORY :
+# le jeu (difficulté / seuil / plausibilité / expiration) est INCHANGÉ —
+# c'est toujours `memory_games` qui décide si la partie est GAGNÉE. Seule la
+# RÉCOMPENSE change : elle ne crédite plus `earned_seconds_remaining` (ancien
+# `reward_seconds` par difficulté, fenêtre glissante de 7 j PAR difficulté) —
+# elle crédite désormais la règle PARTAGÉE `mini_game_completed` via
+# `award_stars`, avec le MÊME plafond quotidien (toute la catégorie
+# mini-jeux, tous jeux confondus) que « Suite intuitive » / « Carte cachée ».
+# `memory_rewards` cesse de recevoir de nouvelles lignes (son historique
+# existant n'est PAS touché — cf. migration v50) : plus jamais de double
+# récompense temps + Étoiles pour une même partie.
 
 
-def _memory_finalized_payload(status, difficulty, elapsed, reward_seconds, outcome):
+def _reward_rule_lookup(rule_key):
+    """Lecture seule, connexion dédiée courte. (stars_amount, enabled,
+    daily_limit) ou None si la clé est inconnue."""
+    conn = get_conn()
+    try:
+        c = conn.cursor()
+        c.execute(
+            "SELECT stars_amount, enabled, daily_limit "
+            "FROM reward_rules WHERE rule_key=%s",
+            (rule_key,),
+        )
+        return c.fetchone()
+    finally:
+        conn.close()
+
+
+def _memory_finalized_payload(status, difficulty, elapsed, stars_reward, outcome):
     """Réponse d'une partie DÉJÀ finalisée (rejeu de /complete) : aucun crédit
     pour cet appel."""
     return {
@@ -6702,8 +7007,8 @@ def _memory_finalized_payload(status, difficulty, elapsed, reward_seconds, outco
         "difficulty": difficulty,
         "elapsed_seconds": int(elapsed or 0),
         "reward_credited": False,
-        "credited_seconds": 0,
-        "reward_seconds": int(reward_seconds or 0),
+        "stars_awarded": 0,
+        "stars_reward": int(stars_reward or 0),
         "outcome": outcome,
         "already_finalized": True,
     }
@@ -6756,13 +7061,15 @@ def api_memory_start():
         return _auth_json({"error": "temporarily_unavailable"}, 503)
     finally:
         conn.close()
+    rule = _reward_rule_lookup("mini_game_completed")
+    stars_reward = int(rule[0]) if rule and rule[1] else 0
     return _auth_json({
         "game_id": game_id,
         "difficulty": difficulty,
         "started_at": now.isoformat(),
         "expires_at": (now + timedelta(seconds=cfg["expiry_seconds"])).isoformat(),
         "threshold_seconds": cfg["threshold_seconds"],
-        "reward_seconds": cfg["reward_seconds"],
+        "stars_reward": stars_reward,
         "pair_count": cfg["pair_count"],
     }, 200)
 
@@ -6771,17 +7078,19 @@ def api_memory_start():
 @limiter.limit("60 per hour")
 @require_app_auth
 def api_memory_complete():
-    """Ferme une partie serveur et attribue (ou non) la récompense. Identité =
-    jeton Bearer. Body : { "game_id": "<uuid>" } — RIEN d'autre n'est lu, en
-    particulier aucun chrono ni aucune récompense fournis par le client.
+    """Ferme une partie serveur et attribue (ou non) la récompense Étoiles.
+    Identité = jeton Bearer. Body : { "game_id": "<uuid>" } — RIEN d'autre
+    n'est lu, en particulier aucun chrono ni aucune récompense fournis par
+    le client.
 
     Le serveur calcule lui-même `elapsed_seconds = now - started_at` (les deux
     horodatés côté serveur), applique le seuil de la difficulté ENREGISTRÉE à
-    l'ouverture, vérifie l'éligibilité 7 j, crédite
-    accounts.purchased_seconds_remaining EXACTLY-ONCE et marque la partie
-    terminée.
+    l'ouverture, puis — GROS CHANTIER AURYEL (Prompt 3/5) — crédite la règle
+    PARTAGÉE `mini_game_completed` via `award_stars` (plafond quotidien
+    commun à Memory / Suite intuitive / Carte cachée, PLUS de fenêtre 7 j
+    par difficulté ni de crédit de temps).
 
-    `outcome` ∈ 'rewarded' | 'time_limit_exceeded' | 'cooldown_active' |
+    `outcome` ∈ 'rewarded' | 'time_limit_exceeded' | 'daily_limit_reached' |
     'implausible_time' | 'expired'. `reward_credited` = true UNIQUEMENT si CET
     appel vient d'accorder le crédit."""
     user_id = g.app_account["user_id"]
@@ -6794,7 +7103,10 @@ def api_memory_complete():
     conn = get_conn()
     try:
         c = conn.cursor()
-        # mutex par utilisateur (même verrou que le moteur temps / J5 / J7).
+        # mutex par utilisateur (même verrou que le moteur temps / J5 / J7 /
+        # award_stars) — CE VERROU EST AUSSI CELUI QU'award_stars EXIGE côté
+        # appelant : il est déjà tenu quand `_award_stars_tx` est invoquée
+        # plus bas, dans la MÊME transaction.
         c.execute(
             "SELECT user_id FROM accounts "
             "WHERE user_id=%s AND deleted_at IS NULL FOR UPDATE",
@@ -6806,7 +7118,7 @@ def api_memory_complete():
 
         c.execute(
             "SELECT user_id, difficulty, started_at, status, elapsed_seconds, "
-            "       reward_seconds, outcome "
+            "       stars_awarded, outcome "
             "FROM memory_games WHERE game_id=%s",
             (game_id,),
         )
@@ -6814,17 +7126,19 @@ def api_memory_complete():
         if row is None or row[0] != user_id:
             conn.rollback()
             return _auth_json({"error": "game_not_found"}, 404)
-        _, difficulty, started_at, status, prev_elapsed, prev_reward, prev_outcome = row
+        _, difficulty, started_at, status, prev_elapsed, prev_stars, prev_outcome = row
         cfg = _MEMORY_DIFFICULTIES.get(difficulty)
         if cfg is None:
             conn.rollback()
             return _auth_json({"error": "game_not_found"}, 404)
+        rule = _reward_rule_lookup("mini_game_completed")
+        stars_reward = int(rule[0]) if rule and rule[1] else 0
 
         # déjà finalisée -> renvoie l'état stocké SANS re-créditer.
         if status != "active":
             conn.rollback()
             return _auth_json(_memory_finalized_payload(
-                status, difficulty, prev_elapsed, prev_reward, prev_outcome), 200)
+                status, difficulty, prev_elapsed, prev_stars, prev_outcome), 200)
 
         elapsed = int((now - started_at).total_seconds())
         if elapsed < 0:
@@ -6844,68 +7158,40 @@ def api_memory_complete():
                 "difficulty": difficulty,
                 "elapsed_seconds": elapsed,
                 "reward_credited": False,
-                "credited_seconds": 0,
-                "reward_seconds": cfg["reward_seconds"],
+                "stars_awarded": 0,
+                "stars_reward": stars_reward,
                 "outcome": "expired",
             }, 200)
 
-        # 2) DÉCISION DE RÉCOMPENSE.
+        # 2) DÉCISION DE RÉCOMPENSE — partie gagnée sous le seuil ET plausible
+        # -> tente `award_stars` (plafond quotidien PARTAGÉ par la catégorie
+        # mini-jeux, cf. migration v50/v49).
+        stars_awarded = 0
         credited = False
-        credited_seconds = 0
-        next_eligible_at = None
         if elapsed < cfg["min_plausible_seconds"]:
             outcome = "implausible_time"
         elif elapsed >= cfg["threshold_seconds"]:
             outcome = "time_limit_exceeded"
         else:
-            # sous le seuil ET plausible : reste l'éligibilité 7 j glissante.
-            c.execute(
-                "SELECT MAX(credited_at) FROM memory_rewards "
-                "WHERE user_id=%s AND difficulty=%s",
-                (user_id, difficulty),
+            today = _wellbeing_day(now)
+            award = _award_stars_tx(
+                c, user_id, "mini_game_completed", game_id,
+                f"mini_game_completed:{user_id}:{today}", now,
             )
-            mrow = c.fetchone()
-            last_credited_at = mrow[0] if mrow else None
-            if (last_credited_at is not None
-                    and (now - last_credited_at) < _MEMORY_REWARD_WINDOW):
-                outcome = "cooldown_active"
-                next_eligible_at = last_credited_at + _MEMORY_REWARD_WINDOW
+            if award.get("awarded"):
+                credited = True
+                stars_awarded = int(award.get("stars_awarded") or 0)
+                outcome = "rewarded"
             else:
-                c.execute(
-                    "INSERT INTO memory_rewards "
-                    "(game_id, user_id, difficulty, credited_at, credited_seconds) "
-                    "VALUES (%s, %s, %s, %s, %s) "
-                    "ON CONFLICT (game_id) DO NOTHING",
-                    (game_id, user_id, difficulty, now, cfg["reward_seconds"]),
-                )
-                if c.rowcount == 1:
-                    c.execute(
-                        "UPDATE accounts SET earned_seconds_remaining = "
-                        "COALESCE(earned_seconds_remaining, 0) + %s "
-                        "WHERE user_id=%s",
-                        (cfg["reward_seconds"], user_id),
-                    )
-                    _time_ledger_write(
-                        c, user_id,
-                        [("earned", cfg["reward_seconds"])],
-                        "reward_memory_game", game_id, now,
-                    )
-                    credited = True
-                    credited_seconds = cfg["reward_seconds"]
-                    outcome = "rewarded"
-                    next_eligible_at = now + _MEMORY_REWARD_WINDOW
-                else:
-                    # course perdue sur le MÊME game_id (déjà crédité ailleurs) :
-                    # on ne double jamais.
-                    outcome = "cooldown_active"
+                outcome = award.get("reason") or "daily_limit_reached"
 
         # 3) FINALISATION EXACTLY-ONCE.
         c.execute(
             "UPDATE memory_games SET status='completed', completed_at=%s, "
-            "elapsed_seconds=%s, reward_seconds=%s, reward_credited=%s, "
+            "elapsed_seconds=%s, stars_awarded=%s, reward_credited=%s, "
             "outcome=%s "
             "WHERE game_id=%s AND user_id=%s AND status='active'",
-            (now, elapsed, cfg["reward_seconds"], credited, outcome,
+            (now, elapsed, stars_awarded, credited, outcome,
              game_id, user_id),
         )
         if c.rowcount != 1:
@@ -6914,24 +7200,24 @@ def api_memory_complete():
             # tout annuler, y compris un éventuel crédit, ne rien re-créditer.
             conn.rollback()
             return _auth_json(_memory_finalized_payload(
-                "completed", difficulty, elapsed, cfg["reward_seconds"],
-                "cooldown_active"), 200)
+                "completed", difficulty, elapsed, stars_reward,
+                "already_finalized"), 200)
 
         conn.commit()
         if credited:
-            log_event("memory_reward_credited", user_hash=_user_hash(user_id))
-        payload = {
+            log_event("mini_game_daily_reward_awarded", user_hash=_user_hash(user_id),
+                      game_key="memory")
+        log_event("mini_game_completed", user_hash=_user_hash(user_id),
+                  game_key="memory", awarded=credited)
+        return _auth_json({
             "status": "completed",
             "difficulty": difficulty,
             "elapsed_seconds": elapsed,
             "reward_credited": credited,
-            "credited_seconds": credited_seconds,
-            "reward_seconds": cfg["reward_seconds"],
+            "stars_awarded": stars_awarded,
+            "stars_reward": stars_reward,
             "outcome": outcome,
-        }
-        if next_eligible_at is not None:
-            payload["next_eligible_at"] = next_eligible_at.isoformat()
-        return _auth_json(payload, 200)
+        }, 200)
     except Exception as e:
         conn.rollback()
         print(f"[memory] complete erreur {_user_hash(user_id)}: {type(e).__name__}")
@@ -6940,10 +7226,39 @@ def api_memory_complete():
         conn.close()
 
 
+def _mini_game_daily_status(cursor, user_id, now):
+    """Éligibilité du jour (PARTAGÉE par toute la catégorie mini-jeux) pour
+    la règle `mini_game_completed`. Retour :
+    (eligible_today: bool, stars_reward: int, next_reset_at: datetime|None).
+    LECTURE SEULE — n'accorde jamais de crédit."""
+    today = _wellbeing_day(now)
+    rule = _reward_rule_lookup("mini_game_completed")
+    stars_reward = int(rule[0]) if rule and rule[1] else 0
+    cursor.execute(
+        "SELECT 1 FROM daily_action_claims "
+        "WHERE user_id=%s AND action_key='mini_game_completed' AND claim_date=%s",
+        (str(user_id), today),
+    )
+    already = cursor.fetchone() is not None
+    next_reset_at = None
+    if already:
+        from zoneinfo import ZoneInfo
+        tomorrow_paris_midnight = datetime(
+            today.year, today.month, today.day, tzinfo=ZoneInfo("Europe/Paris")
+        ) + timedelta(days=1)
+        next_reset_at = tomorrow_paris_midnight.astimezone(timezone.utc)
+    return (not already, stars_reward, next_reset_at)
+
+
 @app.route("/api/app/memory/progress", methods=["GET"])
 @require_app_auth
 def api_memory_progress():
-    """État d'éligibilité 7 j de l'utilisateur authentifié, par difficulté.
+    """Éligibilité du « Défi du jour » (mini-jeux) — GROS CHANTIER AURYEL
+    (Prompt 3/5) : PARTAGÉE par toute la catégorie (Memory / Suite intuitive
+    / Carte cachée), plus de fenêtre 7 j par difficulté. Conservé sous ce
+    chemin (compat Flutter existant) : `threshold_seconds` / `pair_count`
+    par difficulté restent des paramètres de JEU (inchangés), distincts de
+    l'éligibilité de récompense (désormais journalière et partagée).
     LECTURE SEULE : n'ouvre aucune partie, N'ACCORDE JAMAIS de crédit."""
     user_id = g.app_account["user_id"]
     now = _utcnow()
@@ -6957,35 +7272,20 @@ def api_memory_progress():
         )
         if c.fetchone() is None:
             return _auth_json({"error": "unauthorized"}, 401)
-        difficulties = []
-        for name in _MEMORY_ORDER:
-            cfg = _MEMORY_DIFFICULTIES[name]
-            c.execute(
-                "SELECT MAX(credited_at) FROM memory_rewards "
-                "WHERE user_id=%s AND difficulty=%s",
-                (user_id, name),
-            )
-            mrow = c.fetchone()
-            last = mrow[0] if mrow else None
-            eligible = last is None or (now - last) >= _MEMORY_REWARD_WINDOW
-            next_at = None if last is None else last + _MEMORY_REWARD_WINDOW
-            remaining = 0
-            if not eligible and next_at is not None:
-                remaining = max(0, int((next_at - now).total_seconds()))
-            difficulties.append({
-                "difficulty": name,
-                "threshold_seconds": cfg["threshold_seconds"],
-                "reward_seconds": cfg["reward_seconds"],
-                "eligible_now": eligible,
-                "last_reward_at": last.isoformat() if last is not None else None,
-                "next_eligible_at": (next_at.isoformat()
-                                     if (next_at is not None and not eligible)
-                                     else None),
-                "remaining_seconds": remaining,
-            })
+        eligible_today, stars_reward, next_reset_at = _mini_game_daily_status(
+            c, user_id, now
+        )
+        difficulties = [{
+            "difficulty": name,
+            "threshold_seconds": _MEMORY_DIFFICULTIES[name]["threshold_seconds"],
+            "pair_count": _MEMORY_DIFFICULTIES[name]["pair_count"],
+        } for name in _MEMORY_ORDER]
         return _auth_json({
-            "window_days": 7,
-            "max_window_seconds": _MEMORY_MAX_WINDOW_SECONDS,
+            "eligible_today": eligible_today,
+            "stars_reward": stars_reward,
+            "next_reset_at": (
+                next_reset_at.isoformat() if next_reset_at is not None else None
+            ),
             "difficulties": difficulties,
         }, 200)
     finally:
@@ -7863,6 +8163,8 @@ _ACCOUNT_DELETE_CHILD_TABLES = (
     "daily_action_claims",
     "reward_transactions",
     "reward_wallet",
+    "express_consultations",
+    "mini_game_sessions",
     "notification_sends",
     "push_devices",
     "app_sessions",
@@ -11578,8 +11880,8 @@ def _debit_stars_tx(cursor, user_id, stars_amount, reason, idempotency_key, now)
 
 def debit_stars(user_id, stars_amount, reason, idempotency_key, now=None):
     """Wrapper public de `_debit_stars_tx` — même convention que
-    `award_stars`. PAS appelée depuis ce lot (aucune dépense d'Étoiles
-    n'existe encore) : fondation pour le Prompt 3/5."""
+    `award_stars`. Utilisée depuis `_purchase_express_consultation_tx`
+    (Prompt 3/5) — voir plus bas."""
     if now is None:
         now = _utcnow()
     uid = str(user_id)
@@ -11601,6 +11903,352 @@ def debit_stars(user_id, stars_amount, reason, idempotency_key, now=None):
     except Exception:
         conn.rollback()
         raise
+    finally:
+        conn.close()
+
+
+# ============================================================
+# GROS CHANTIER AURYEL (Prompt 3/5) — CONSULTATION EXPRESS : dépenser des
+# Étoiles contre du temps de consultation. Compose DEUX primitives déjà
+# bâties comme fondations dans les lots précédents (`_debit_stars_tx` —
+# Prompt 2/5 — et `_credit_bonus_time_tx` — Prompt 1/5) dans UNE SEULE
+# transaction : c'est exactement le rôle pour lequel elles avaient été
+# préparées. Le temps accordé atterrit dans le bucket `earned` (bonus) —
+# AUCUN 5e bucket créé.
+#
+# Config SERVEUR (`express_products`) : `stars_cost` / `seconds_granted` /
+# `enabled` jamais fournis par le client — seul `product_key` (une clé de
+# catalogue, pas une valeur économique) vient de Flutter.
+#
+# IDEMPOTENCE — TROIS niveaux, du plus externe au plus interne :
+#   1. `express_consultations` UNIQUE (user_id, idempotency_key) : vérifiée
+#      EN PREMIER, avant tout débit. Un rejeu de la MÊME clé renvoie le
+#      résultat déjà enregistré tel quel, ne rejoue JAMAIS le débit/crédit.
+#   2. `_debit_stars_tx` idempotent sur une clé DÉRIVÉE (`<clé>:stars`).
+#   3. `_credit_bonus_time_tx` idempotent sur une clé DÉRIVÉE (`<clé>:time`).
+# Les niveaux 2/3 sont un FILET DE SÉCURITÉ (ne devraient jamais être
+# atteints en pratique grâce au niveau 1) — jamais un double débit même en
+# cas de bug d'appelant.
+#
+# Verrouillage : accounts FOR UPDATE (par `purchase_express_consultation`)
+# -> reward_wallet FOR UPDATE (dans `_debit_stars_tx`), MÊME ordre que le
+# reste du fichier. TOUT OU RIEN : la moindre exception fait rollback de
+# l'ensemble (débit ET crédit ET trace), jamais un débit sans crédit ni
+# l'inverse.
+# ============================================================
+
+
+def _express_product_public(cursor, product_key):
+    """Config LECTURE SEULE d'un produit express. Renvoie
+    (stars_cost, seconds_granted, enabled) ou None si la clé est inconnue."""
+    cursor.execute(
+        "SELECT stars_cost, seconds_granted, enabled "
+        "FROM express_products WHERE product_key=%s",
+        (product_key,),
+    )
+    return cursor.fetchone()
+
+
+def _purchase_express_consultation_tx(cursor, user_id, product_key,
+                                       idempotency_key, now):
+    """Sur un curseur DÉJÀ ouvert, `accounts` DÉJÀ verrouillé FOR UPDATE par
+    l'appelant. Ni commit ni rollback ici.
+
+    Retour : {"success": bool, "reason": str|None, "stars_spent": int,
+    "stars_balance": int, "seconds_granted": int, "balances": dict|None}.
+    `reason` ∈ {"unknown_product", "product_disabled",
+    "insufficient_balance"} quand `success=False`."""
+    uid = str(user_id)
+    if not idempotency_key:
+        raise ValueError(
+            "purchase_express_consultation: idempotency_key is required"
+        )
+
+    # Niveau 1 — rejeu EXACT de cette clé : renvoie le résultat déjà acquis,
+    # ne retouche RIEN (jamais un 2e débit/crédit pour la même intention).
+    cursor.execute(
+        "SELECT stars_spent, seconds_granted, status "
+        "FROM express_consultations WHERE user_id=%s AND idempotency_key=%s",
+        (uid, str(idempotency_key)),
+    )
+    existing = cursor.fetchone()
+    if existing is not None:
+        stars_spent, seconds_granted, status = existing
+        if status == "completed":
+            return {
+                "success": True, "reason": None,
+                "stars_spent": int(stars_spent),
+                "stars_balance": _wallet_balance_readonly(cursor, uid),
+                "seconds_granted": int(seconds_granted),
+                "balances": _get_time_snapshot_tx(cursor, uid, now),
+            }
+        # Statut non 'completed' inattendu (ne devrait jamais arriver : cette
+        # ligne n'est insérée qu'une fois tout réussi) — filet de sécurité.
+        return {"success": False, "reason": "previous_attempt_incomplete",
+                "stars_spent": 0, "stars_balance": _wallet_balance_readonly(cursor, uid),
+                "seconds_granted": 0, "balances": None}
+
+    product = _express_product_public(cursor, product_key)
+    if product is None:
+        return {"success": False, "reason": "unknown_product",
+                "stars_spent": 0, "stars_balance": _wallet_balance_readonly(cursor, uid),
+                "seconds_granted": 0, "balances": None}
+    stars_cost, seconds_granted, enabled = product
+    stars_cost = int(stars_cost)
+    seconds_granted = int(seconds_granted)
+    if not enabled:
+        return {"success": False, "reason": "product_disabled",
+                "stars_spent": 0, "stars_balance": _wallet_balance_readonly(cursor, uid),
+                "seconds_granted": 0, "balances": None}
+
+    debit = _debit_stars_tx(
+        cursor, uid, stars_cost, "express_consultation_stars",
+        f"{idempotency_key}:stars", now,
+    )
+    if not debit["debited"]:
+        return {"success": False, "reason": debit["reason"],
+                "stars_spent": 0, "stars_balance": debit["new_balance"],
+                "seconds_granted": 0, "balances": None}
+
+    credit = _credit_bonus_time_tx(
+        cursor, uid, seconds_granted, "express_consultation_stars",
+        f"{idempotency_key}:time", now,
+    )
+    # `credit["credited"]` DOIT être True ici (clé dérivée jamais utilisée
+    # avant, on vient de vérifier qu'aucune ligne express_consultations
+    # n'existait pour `idempotency_key`) — filet de sécurité uniquement.
+
+    cursor.execute(
+        "INSERT INTO express_consultations "
+        "(id, user_id, stars_spent, seconds_granted, status, "
+        " idempotency_key, created_at) "
+        "VALUES (%s, %s, %s, %s, 'completed', %s, %s)",
+        (str(uuid.uuid4()), uid, stars_cost, seconds_granted,
+         str(idempotency_key), now),
+    )
+
+    return {
+        "success": True, "reason": None,
+        "stars_spent": stars_cost,
+        "stars_balance": debit["new_balance"],
+        "seconds_granted": seconds_granted,
+        "balances": _get_time_snapshot_tx(cursor, uid, now),
+    }
+
+
+def purchase_express_consultation(user_id, product_key, idempotency_key,
+                                   now=None):
+    """Wrapper public : UNE connexion, UNE transaction, UN commit. Verrouille
+    `accounts` FOR UPDATE (compte absent/supprimé -> rollback +
+    {"success": False, "reason": "unknown_account"}), délègue à
+    `_purchase_express_consultation_tx`, commit, ferme sa connexion."""
+    if now is None:
+        now = _utcnow()
+    uid = str(user_id)
+    conn = get_conn()
+    try:
+        c = conn.cursor()
+        c.execute(
+            "SELECT user_id FROM accounts "
+            "WHERE user_id=%s AND deleted_at IS NULL FOR UPDATE",
+            (uid,),
+        )
+        if c.fetchone() is None:
+            conn.rollback()
+            return {"success": False, "reason": "unknown_account",
+                    "stars_spent": 0, "stars_balance": 0,
+                    "seconds_granted": 0, "balances": None}
+        result = _purchase_express_consultation_tx(
+            c, uid, product_key, idempotency_key, now
+        )
+        conn.commit()
+        return result
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        conn.close()
+
+
+# ============================================================
+# GROS CHANTIER AURYEL (Prompt 3/5) — MINI-JEUX : session serveur GÉNÉRIQUE,
+# partagée par les 2 NOUVEAUX jeux (Suite intuitive / Carte cachée). MÊME
+# idiome que `memory_games` (déjà existante, réutilisée telle quelle pour le
+# jeu Memory — cf. modification de `api_memory_complete`) : `start` crée une
+# session imprévisible (`session_id` = uuid4), `finish` la ferme
+# EXACTLY-ONCE (`UPDATE ... WHERE status='active'` + garde `rowcount==1`).
+#
+# ANTI-TRIVIAL-REPEAT (pas un anti-cheat niveau banque, juste empêcher
+# l'appel `finish` trivialement répété depuis le client) : un plancher de
+# temps plausible par jeu (`min_plausible_seconds`) — start->finish plus
+# rapide que ce plancher ne peut jamais représenter une vraie partie jouée ;
+# une expiration (`expiry_seconds`) périme les sessions abandonnées.
+#
+# RÉCOMPENSE : les 2 jeux ET Memory créditent tous la MÊME règle
+# `mini_game_completed` via `award_stars`, avec une clé d'idempotence
+# dérivée du JOUR (pas de la session) -> le plafond quotidien de
+# `daily_action_claims` est PARTAGÉ par la catégorie entière (jamais deux
+# jeux différents ne créditent le même jour).
+# ============================================================
+
+_MINI_GAMES = {
+    "sequence_recall": {"min_plausible_seconds": 3, "expiry_seconds": 300},
+    "hidden_card":     {"min_plausible_seconds": 2, "expiry_seconds": 300},
+}
+
+
+def start_mini_game(user_id, game_key, now=None):
+    """Ouvre une session de mini-jeu SERVEUR. Identité = appelant (déjà
+    authentifié plus haut). Ne débite/crédite rien. Renvoie
+    {"session_id", "game_key", "started_at", "expires_at"} ou
+    {"error": "invalid_game"} / {"error": "unknown_account"}."""
+    if game_key not in _MINI_GAMES:
+        return {"error": "invalid_game"}
+    if now is None:
+        now = _utcnow()
+    cfg = _MINI_GAMES[game_key]
+    uid = str(user_id)
+    session_id = str(uuid.uuid4())
+    conn = get_conn()
+    try:
+        c = conn.cursor()
+        c.execute(
+            "SELECT user_id FROM accounts "
+            "WHERE user_id=%s AND deleted_at IS NULL FOR UPDATE",
+            (uid,),
+        )
+        if c.fetchone() is None:
+            conn.rollback()
+            return {"error": "unknown_account"}
+        # housekeeping : périme les sessions actives de plus de 24 h de CE
+        # user (même idiome que memory_games.start).
+        c.execute(
+            "UPDATE mini_game_sessions SET status='expired' "
+            "WHERE user_id=%s AND status='active' AND started_at < %s",
+            (uid, now - timedelta(hours=24)),
+        )
+        c.execute(
+            "INSERT INTO mini_game_sessions "
+            "(id, user_id, game_key, started_at, status, created_at) "
+            "VALUES (%s, %s, %s, %s, 'active', %s)",
+            (session_id, uid, game_key, now, now),
+        )
+        conn.commit()
+    except Exception as e:
+        conn.rollback()
+        print(f"[minigame] start erreur {_user_hash(uid)}: {type(e).__name__}")
+        return {"error": "temporarily_unavailable"}
+    finally:
+        conn.close()
+    return {
+        "session_id": session_id,
+        "game_key": game_key,
+        "started_at": now.isoformat(),
+        "expires_at": (now + timedelta(seconds=cfg["expiry_seconds"])).isoformat(),
+    }
+
+
+def finish_mini_game(user_id, session_id, now=None):
+    """Ferme une session de mini-jeu et attribue (ou non) la récompense
+    Étoiles partagée `mini_game_completed`. Retour :
+    {"status": "completed"|"expired"|"not_found", "outcome": str|None,
+    "awarded": bool, "stars_awarded": int, "new_balance": int|None}."""
+    if now is None:
+        now = _utcnow()
+    uid = str(user_id)
+    conn = get_conn()
+    try:
+        c = conn.cursor()
+        c.execute(
+            "SELECT user_id FROM accounts "
+            "WHERE user_id=%s AND deleted_at IS NULL FOR UPDATE",
+            (uid,),
+        )
+        if c.fetchone() is None:
+            conn.rollback()
+            return {"status": "not_found", "outcome": None, "awarded": False,
+                    "stars_awarded": 0, "new_balance": None}
+
+        c.execute(
+            "SELECT user_id, game_key, started_at, status "
+            "FROM mini_game_sessions WHERE id=%s",
+            (session_id,),
+        )
+        row = c.fetchone()
+        if row is None or row[0] != uid:
+            conn.rollback()
+            return {"status": "not_found", "outcome": None, "awarded": False,
+                    "stars_awarded": 0, "new_balance": None}
+        _, game_key, started_at, status = row
+        cfg = _MINI_GAMES.get(game_key)
+        if cfg is None:
+            conn.rollback()
+            return {"status": "not_found", "outcome": None, "awarded": False,
+                    "stars_awarded": 0, "new_balance": None}
+
+        if status != "active":
+            # déjà finalisée (rejeu de /finish) -> AUCUNE récompense, jamais
+            # deux fois pour la même session.
+            conn.rollback()
+            return {"status": status, "outcome": "already_finalized",
+                    "awarded": False, "stars_awarded": 0, "new_balance": None}
+
+        elapsed = int((now - started_at).total_seconds())
+        if elapsed < 0:
+            elapsed = 0
+
+        if elapsed > cfg["expiry_seconds"]:
+            c.execute(
+                "UPDATE mini_game_sessions SET status='expired', "
+                "completed_at=%s WHERE id=%s AND user_id=%s AND status='active'",
+                (now, session_id, uid),
+            )
+            conn.commit()
+            return {"status": "expired", "outcome": "expired", "awarded": False,
+                    "stars_awarded": 0, "new_balance": None}
+
+        implausible = elapsed < cfg["min_plausible_seconds"]
+
+        c.execute(
+            "UPDATE mini_game_sessions SET status='completed', completed_at=%s "
+            "WHERE id=%s AND user_id=%s AND status='active'",
+            (now, session_id, uid),
+        )
+        if c.rowcount != 1:
+            # course concurrente (2 /finish simultanés sur la même session) :
+            # l'autre a gagné, aucune récompense ici.
+            conn.rollback()
+            return {"status": "completed", "outcome": "already_finalized",
+                    "awarded": False, "stars_awarded": 0, "new_balance": None}
+
+        if implausible:
+            conn.commit()
+            return {"status": "completed", "outcome": "implausible_time",
+                    "awarded": False, "stars_awarded": 0, "new_balance": None}
+
+        today = _wellbeing_day(now)
+        award = _award_stars_tx(
+            c, uid, "mini_game_completed", session_id,
+            f"mini_game_completed:{uid}:{today}", now,
+        )
+        conn.commit()
+        if award.get("awarded"):
+            log_event("mini_game_daily_reward_awarded", user_hash=_user_hash(uid),
+                      game_key=game_key)
+        log_event("mini_game_completed", user_hash=_user_hash(uid),
+                  game_key=game_key, awarded=award.get("awarded"))
+        return {
+            "status": "completed",
+            "outcome": "rewarded" if award.get("awarded") else award.get("reason"),
+            "awarded": bool(award.get("awarded")),
+            "stars_awarded": int(award.get("stars_awarded") or 0),
+            "new_balance": award.get("new_balance"),
+        }
+    except Exception as e:
+        conn.rollback()
+        print(f"[minigame] finish erreur {_user_hash(uid)}: {type(e).__name__}")
+        return {"status": "error", "outcome": None, "awarded": False,
+                "stars_awarded": 0, "new_balance": None}
     finally:
         conn.close()
 
