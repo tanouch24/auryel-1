@@ -2839,6 +2839,21 @@ def init_db():
         conn.rollback()
         print(f"Migration v55 (wellbeing ebook library): {e}")
 
+    # Migration v56 — publication du premier ebook depuis Cloudflare R2.
+    # Le slug stable rend l'opération idempotente et évite tout doublon.
+    try:
+        migration_path = os.path.join(
+            os.path.dirname(__file__),
+            "migrations",
+            "029_wellbeing_first_ebook_r2.sql",
+        )
+        with open(migration_path, "r", encoding="utf-8") as migration_file:
+            c.execute(migration_file.read())
+        conn.commit()
+    except Exception as e:
+        conn.rollback()
+        print(f"Migration v56 (first wellbeing ebook R2): {e}")
+
     conn.close()
 
 def reset_db():

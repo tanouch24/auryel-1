@@ -19,6 +19,15 @@ def test_catalogue_is_additive_and_idempotent():
     assert "TRUNCATE" not in MIGRATION.upper()
 
 
+def test_first_ebook_r2_urls_are_reproducible_and_slug_scoped():
+    migration = (ROOT / "migrations/029_wellbeing_first_ebook_r2.sql").read_text()
+    assert "WHERE slug = '30-jours-pour-prendre-soin-de-soi'" in migration
+    assert "pub-19c78d4dc57a41849a27c0e73ed231ce.r2.dev/ebooks/" in migration
+    assert migration.count("pdf_url = 'https://") == 1
+    assert migration.count("cover_url = 'https://") == 1
+    assert "DROP" not in migration.upper()
+
+
 def test_first_ebook_is_shared_with_the_program():
     assert "30-jours-pour-prendre-soin-de-soi" in MIGRATION
     assert "UPDATE wellbeing_program_ebook_config" in MIGRATION
