@@ -2823,6 +2823,22 @@ def init_db():
         conn.rollback()
         print(f"Migration v54 (wellbeing program): {e}")
 
+    # Migration v55 — catalogue multi-ebooks Bien-être. Additive and
+    # idempotent: the first catalogue entry is the same ebook referenced by
+    # the 30-day program; no user or reference data is removed.
+    try:
+        migration_path = os.path.join(
+            os.path.dirname(__file__),
+            "migrations",
+            "028_wellbeing_ebook_library.sql",
+        )
+        with open(migration_path, "r", encoding="utf-8") as migration_file:
+            c.execute(migration_file.read())
+        conn.commit()
+    except Exception as e:
+        conn.rollback()
+        print(f"Migration v55 (wellbeing ebook library): {e}")
+
     conn.close()
 
 def reset_db():
@@ -6712,14 +6728,40 @@ def _wellbeing_program_day_number(started_at, today):
 
 def _wellbeing_program_ebook(cur):
     cur.execute(
-        "SELECT title, subtitle, pdf_url, version, active "
-        "FROM wellbeing_program_ebook_config WHERE id=1"
+        "SELECT e.id, e.slug, e.title, e.subtitle, e.description, e.cover_url, "
+        "e.pdf_url, e.publication_date, e.month_label, e.version, e.active "
+        "FROM wellbeing_program_ebook_config c "
+        "LEFT JOIN wellbeing_ebooks e ON e.id=c.ebook_id "
+        "WHERE c.id=1"
     )
     row = cur.fetchone()
     if row is None:
         return None
-    return {"title": row[0], "subtitle": row[1], "pdf_url": row[2],
-            "version": row[3], "active": bool(row[4])}
+    if row[0] is not None:
+        return _wellbeing_ebook_dict(row)
+    return None
+
+
+def _wellbeing_ebook_dict(row):
+    return {
+        "id": row[0], "slug": row[1], "title": row[2], "subtitle": row[3],
+        "description": row[4], "cover_url": row[5], "pdf_url": row[6],
+        "publication_date": row[7].isoformat() if row[7] else None,
+        "month_label": row[8], "version": row[9], "active": bool(row[10]),
+    }
+
+
+def _wellbeing_ebook_catalog(cur, today=None):
+    today = today or _wellbeing_program_today()
+    cur.execute(
+        "SELECT id, slug, title, subtitle, description, cover_url, pdf_url, "
+        "publication_date, month_label, version, active "
+        "FROM wellbeing_ebooks "
+        "WHERE active=TRUE AND publication_date <= %s "
+        "ORDER BY publication_date DESC, featured DESC, id DESC",
+        (today,),
+    )
+    return [_wellbeing_ebook_dict(row) for row in cur.fetchall()]
 
 
 def _wellbeing_program_payload(cur, user_id, now=None):
@@ -6818,6 +6860,19 @@ def _wellbeing_program_response(user_id, now=None):
 @require_app_auth
 def api_wellbeing_program():
     return _auth_json(_wellbeing_program_response(g.app_account["user_id"]), 200)
+
+
+@app.route("/api/app/wellbeing-ebooks", methods=["GET"])
+@require_app_auth
+def api_wellbeing_ebooks():
+    conn = get_conn()
+    try:
+        c = conn.cursor()
+        return _auth_json({"ebooks": _wellbeing_ebook_catalog(c)}, 200)
+    except Exception:
+        return _auth_json({"error": "temporarily_unavailable"}, 503)
+    finally:
+        conn.close()
 
 
 @app.route("/api/app/wellbeing-program/start", methods=["POST"])
