@@ -2806,6 +2806,23 @@ def init_db():
         conn.rollback()
         print(f"Migration v53 (stars economy): {e}")
 
+    # Migration v54 — Programme Bien-être V1 : programme gratuit de 30 jours,
+    # cinq actions de vie réelle par jour, sans Étoiles ni temps de consultation.
+    # Le SQL versionné est la source lisible et est exécuté ici au démarrage,
+    # comme les migrations additives précédentes.
+    try:
+        migration_path = os.path.join(
+            os.path.dirname(__file__),
+            "migrations",
+            "027_wellbeing_program_30_days.sql",
+        )
+        with open(migration_path, "r", encoding="utf-8") as migration_file:
+            c.execute(migration_file.read())
+        conn.commit()
+    except Exception as e:
+        conn.rollback()
+        print(f"Migration v54 (wellbeing program): {e}")
+
     conn.close()
 
 def reset_db():
@@ -6665,6 +6682,275 @@ def api_minigame_finish():
 
 
 # ============================================================
+# PROGRAMME BIEN-ÊTRE V1 — programme gratuit persistant de 30 jours.
+# Ce contrat remplace l'ancien parcours de 4 missions dans l'UI active. Les
+# anciennes tables/endpoints restent présents pour compatibilité historique,
+# mais ce programme ne crédite ni Étoiles ni temps de consultation.
+# ============================================================
+
+_WELLBEING_PROGRAM_DAYS = 30
+_WELLBEING_PROGRAM_ACTIONS_PER_DAY = 5
+_WELLBEING_PROGRAM_TIMEZONE = "Europe/Paris"
+
+
+def _wellbeing_program_today(now=None):
+    from zoneinfo import ZoneInfo
+    dt = now or _utcnow()
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    return dt.astimezone(ZoneInfo(_WELLBEING_PROGRAM_TIMEZONE)).date()
+
+
+def _wellbeing_program_day_number(started_at, today):
+    from zoneinfo import ZoneInfo
+    if started_at.tzinfo is None:
+        started_at = started_at.replace(tzinfo=timezone.utc)
+    start_date = started_at.astimezone(ZoneInfo(_WELLBEING_PROGRAM_TIMEZONE)).date()
+    elapsed = (today - start_date).days
+    return min(_WELLBEING_PROGRAM_DAYS, max(1, elapsed + 1))
+
+
+def _wellbeing_program_ebook(cur):
+    cur.execute(
+        "SELECT title, subtitle, pdf_url, version, active "
+        "FROM wellbeing_program_ebook_config WHERE id=1"
+    )
+    row = cur.fetchone()
+    if row is None:
+        return None
+    return {"title": row[0], "subtitle": row[1], "pdf_url": row[2],
+            "version": row[3], "active": bool(row[4])}
+
+
+def _wellbeing_program_payload(cur, user_id, now=None):
+    today = _wellbeing_program_today(now)
+    cur.execute(
+        "SELECT started_at, completed_at, reminder_enabled, reminder_type, "
+        "reminder_text FROM wellbeing_programs WHERE user_id=%s",
+        (str(user_id),),
+    )
+    program = cur.fetchone()
+    ebook = _wellbeing_program_ebook(cur)
+    if program is None:
+        return {"status": "not_started", "timezone": _WELLBEING_PROGRAM_TIMEZONE,
+                "ebook": ebook, "program": None, "today": None}
+
+    started_at, completed_at, reminder_enabled, reminder_type, reminder_text = program
+    day_number = _wellbeing_program_day_number(started_at, today)
+    cur.execute(
+        "SELECT day_number, local_date, completed_at "
+        "FROM wellbeing_program_days WHERE user_id=%s AND day_number=%s",
+        (str(user_id), day_number),
+    )
+    day = cur.fetchone()
+    cur.execute(
+        "SELECT day_number, action_slot, text_snapshot, category, "
+        "completed_at FROM wellbeing_program_actions "
+        "WHERE user_id=%s AND day_number=%s ORDER BY action_slot",
+        (str(user_id), day_number),
+    )
+    actions = [{"day_number": r[0], "action_slot": r[1], "text": r[2],
+                "category": r[3], "completed": r[4] is not None,
+                "completed_at": _ts_iso(r[4])} for r in cur.fetchall()]
+    completed_count = sum(1 for action in actions if action["completed"])
+    if day is not None and completed_count == _WELLBEING_PROGRAM_ACTIONS_PER_DAY:
+        cur.execute(
+            "UPDATE wellbeing_program_days SET completed_at=COALESCE(completed_at, %s) "
+            "WHERE user_id=%s AND day_number=%s",
+            (now or _utcnow(), str(user_id), day_number),
+        )
+    status = "completed" if completed_at is not None else "active"
+    cur.execute(
+        """SELECT COUNT(*) FROM wellbeing_program_days
+           WHERE user_id = %s AND EXISTS (
+             SELECT 1 FROM wellbeing_program_actions a
+             WHERE a.user_id = wellbeing_program_days.user_id
+               AND a.day_number = wellbeing_program_days.day_number
+               AND a.completed_at IS NOT NULL
+           )""",
+        (user_id,),
+    )
+    days_with_actions = int(cur.fetchone()[0] or 0)
+    cur.execute(
+        """SELECT COUNT(*) FROM wellbeing_program_actions
+           WHERE user_id = %s AND completed_at IS NOT NULL""",
+        (user_id,),
+    )
+    total_actions = int(cur.fetchone()[0] or 0)
+
+    return {
+        "status": status,
+        "timezone": _WELLBEING_PROGRAM_TIMEZONE,
+        "ebook": ebook,
+        "program": {
+            "started_at": _ts_iso(started_at),
+            "completed_at": _ts_iso(completed_at),
+            "reminder_enabled": bool(reminder_enabled),
+            "reminder_type": reminder_type,
+            "reminder_text": reminder_text,
+        },
+        "today": {
+            "day_number": day_number,
+            "date": today.isoformat(),
+            "completed_count": completed_count,
+            "completed": completed_count == _WELLBEING_PROGRAM_ACTIONS_PER_DAY,
+            "actions": actions,
+        },
+        "summary": {
+            "days_with_actions": days_with_actions,
+            "total_actions": total_actions,
+        },
+    }
+
+
+def _wellbeing_program_response(user_id, now=None):
+    conn = get_conn()
+    try:
+        c = conn.cursor()
+        payload = _wellbeing_program_payload(c, user_id, now=now)
+        conn.commit()
+        return payload
+    finally:
+        conn.close()
+
+
+@app.route("/api/app/wellbeing-program", methods=["GET"])
+@require_app_auth
+def api_wellbeing_program():
+    return _auth_json(_wellbeing_program_response(g.app_account["user_id"]), 200)
+
+
+@app.route("/api/app/wellbeing-program/start", methods=["POST"])
+@limiter.limit("10 per hour")
+@require_app_auth
+def api_wellbeing_program_start():
+    user_id = g.app_account["user_id"]
+    now = _utcnow()
+    conn = get_conn()
+    try:
+        c = conn.cursor()
+        c.execute(
+            "SELECT user_id FROM accounts WHERE user_id=%s AND deleted_at IS NULL FOR UPDATE",
+            (user_id,),
+        )
+        if c.fetchone() is None:
+            conn.rollback()
+            return _auth_json({"error": "unauthorized"}, 401)
+        c.execute("SELECT user_id FROM wellbeing_programs WHERE user_id=%s FOR UPDATE", (user_id,))
+        if c.fetchone() is None:
+            c.execute(
+                "INSERT INTO wellbeing_programs (user_id, started_at, updated_at) VALUES (%s, %s, %s)",
+                (user_id, now, now),
+            )
+            c.execute(
+                "INSERT INTO wellbeing_program_days (user_id, day_number, local_date) "
+                "SELECT %s, d, ((%s AT TIME ZONE 'Europe/Paris')::date + (d - 1)) "
+                "FROM generate_series(1, 30) AS d",
+                (user_id, now),
+            )
+            c.execute(
+                "INSERT INTO wellbeing_program_actions "
+                "(user_id, day_number, action_slot, advice_id, text_snapshot, category) "
+                "SELECT %s, d, s, a.id, a.text, a.category "
+                "FROM generate_series(1, 30) AS d "
+                "CROSS JOIN generate_series(1, 5) AS s "
+                "JOIN wellbeing_program_advice a ON a.id=((d-1)*5+s) "
+                "WHERE a.is_active=TRUE",
+                (user_id,),
+            )
+        conn.commit()
+        return _auth_json(_wellbeing_program_payload(c, user_id, now=now), 200)
+    except Exception:
+        conn.rollback()
+        return _auth_json({"error": "temporarily_unavailable"}, 503)
+    finally:
+        conn.close()
+
+
+@app.route("/api/app/wellbeing-program/day/<int:day_number>/action/<int:action_slot>", methods=["POST"])
+@limiter.limit("120 per hour")
+@require_app_auth
+def api_wellbeing_program_complete_action(day_number, action_slot):
+    user_id = g.app_account["user_id"]
+    now = _utcnow()
+    if not 1 <= day_number <= 30 or not 1 <= action_slot <= 5:
+        return _auth_json({"error": "invalid_action"}, 400)
+    conn = get_conn()
+    try:
+        c = conn.cursor()
+        c.execute(
+            "SELECT started_at, completed_at FROM wellbeing_programs "
+            "WHERE user_id=%s AND user_id IN (SELECT user_id FROM accounts WHERE deleted_at IS NULL) FOR UPDATE",
+            (user_id,),
+        )
+        program = c.fetchone()
+        if program is None:
+            conn.rollback()
+            return _auth_json({"error": "program_not_started"}, 409)
+        current_day = _wellbeing_program_day_number(program[0], _wellbeing_program_today(now))
+        if day_number != current_day:
+            conn.rollback()
+            return _auth_json({"error": "action_not_current"}, 409)
+        c.execute(
+            "UPDATE wellbeing_program_actions SET completed_at=COALESCE(completed_at, %s) "
+            "WHERE user_id=%s AND day_number=%s AND action_slot=%s",
+            (now, user_id, day_number, action_slot),
+        )
+        if c.rowcount != 1:
+            conn.rollback()
+            return _auth_json({"error": "invalid_action"}, 400)
+        c.execute(
+            "SELECT COUNT(*) FROM wellbeing_program_actions WHERE user_id=%s AND day_number=%s AND completed_at IS NOT NULL",
+            (user_id, day_number),
+        )
+        if c.fetchone()[0] == 5:
+            c.execute(
+                "UPDATE wellbeing_program_days SET completed_at=COALESCE(completed_at, %s) WHERE user_id=%s AND day_number=%s",
+                (now, user_id, day_number),
+            )
+            if day_number == 30:
+                c.execute(
+                    "UPDATE wellbeing_programs SET completed_at=COALESCE(completed_at, %s), updated_at=%s WHERE user_id=%s",
+                    (now, now, user_id),
+                )
+        conn.commit()
+        return _auth_json(_wellbeing_program_payload(c, user_id, now=now), 200)
+    except Exception:
+        conn.rollback()
+        return _auth_json({"error": "temporarily_unavailable"}, 503)
+    finally:
+        conn.close()
+
+
+@app.route("/api/app/wellbeing-program/reminder", methods=["POST"])
+@require_app_auth
+def api_wellbeing_program_reminder():
+    user_id = g.app_account["user_id"]
+    data = request.get_json(silent=True) or {}
+    enabled = data.get("enabled")
+    if not isinstance(enabled, bool):
+        return _auth_json({"error": "invalid_reminder_preference"}, 400)
+    now = _utcnow()
+    conn = get_conn()
+    try:
+        c = conn.cursor()
+        c.execute(
+            "UPDATE wellbeing_programs SET reminder_enabled=%s, reminder_type='wellbeing_daily', updated_at=%s WHERE user_id=%s",
+            (enabled, now, user_id),
+        )
+        if c.rowcount != 1:
+            conn.rollback()
+            return _auth_json({"error": "program_not_started"}, 409)
+        conn.commit()
+        return _auth_json(_wellbeing_program_payload(c, user_id, now=now), 200)
+    except Exception:
+        conn.rollback()
+        return _auth_json({"error": "temporarily_unavailable"}, 503)
+    finally:
+        conn.close()
+
+
+# ============================================================
 # PARCOURS BIEN-ÊTRE (J7) — GET  /api/app/wellbeing/progress
 #                           POST /api/app/wellbeing/mission
 # ============================================================
@@ -8337,6 +8623,9 @@ _ACCOUNT_DELETE_CHILD_TABLES = (
     "share_reward_days",
     "wellbeing_mission_days",
     "wellbeing_cycle_rewards",
+    "wellbeing_program_actions",
+    "wellbeing_program_days",
+    "wellbeing_programs",
     "memory_games",
     "memory_rewards",
     "daily_action_claims",
