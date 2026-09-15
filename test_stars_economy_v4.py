@@ -16,9 +16,10 @@ for key in ("daily_card_completed", "meditation_completed", "streak_7_days"):
     assert key in migration
 assert "enabled = FALSE" in migration
 
-# L'endpoint n'accepte jamais un montant fourni par le client et exige une
-# clé d'événement distincte pour une rewarded réellement terminée.
+# Depuis SSV, le claim client historique refuse toute rewarded : le callback
+# signé Google est l'unique chemin de crédit.
 assert '"rewarded_ad_completed"' in source
-assert 'data.get("event_id")' in source
-assert '"invalid_event_id"' in source
-print("OK stars economy v4: barème, désactivation et idempotence rewarded")
+assert '"/api/app/rewards/admob/ssv"' in source
+assert '"admob_ssv_required"' in source
+assert 'admob_reward_events' in source
+print("OK stars economy v4: barème préservé, rewarded réservée à SSV")

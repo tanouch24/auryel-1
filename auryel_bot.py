@@ -7,6 +7,7 @@ from flask_limiter.util import get_remote_address
 from werkzeug.middleware.proxy_fix import ProxyFix
 from werkzeug.security import generate_password_hash, check_password_hash
 from groq import Groq
+from admob_ssv import SsvError, verify_callback
 import json as _json
 _RELANCES_PATH = os.path.join(os.path.dirname(__file__), "auryel_relances_h4_h22.json")
 try:
@@ -2868,6 +2869,19 @@ def init_db():
     except Exception as e:
         conn.rollback()
         print(f"Migration v57 (stars economy v4): {e}")
+
+    # Migration v58 — AdMob Rewarded SSV. Additive and idempotent : les
+    # historiques/wallets existants sont conservés.
+    try:
+        migration_path = os.path.join(
+            os.path.dirname(__file__), "migrations", "031_admob_rewarded_ssv.sql"
+        )
+        with open(migration_path, "r", encoding="utf-8") as migration_file:
+            c.execute(migration_file.read())
+        conn.commit()
+    except Exception as e:
+        conn.rollback()
+        print(f"Migration v58 (AdMob Rewarded SSV): {e}")
 
     conn.close()
 
@@ -6467,8 +6481,8 @@ def api_rewards_share_progress():
 # ============================================================
 # GROS CHANTIER AURYEL (Prompt 2/5) — ÉTOILES AURYEL
 #   GET  /api/app/rewards/wallet   — solde + règles actives + streak + historique
-#   POST /api/app/rewards/claim    — réclame une action SANS preuve serveur
-#                                     indépendante (whitelist stricte)
+#   POST /api/app/rewards/claim    — réclame une action sans preuve externe
+#                                     (Rewarded Ad exclue depuis SSV)
 # ============================================================
 # Le SERVEUR est l'unique source de vérité (`award_stars` / `reward_rules`).
 # AUCUN endpoint n'accepte de montant, de delta ou de solde depuis Flutter.
@@ -6484,8 +6498,162 @@ def api_rewards_share_progress():
 # EXISTANTS (wellbeing/mission, /api/tirages, rewards/daily-share) — jamais
 # depuis cette route générique.
 _REWARDS_CLIENT_CLAIMABLE_ACTIONS = frozenset({
-    "wake_completed", "rewarded_ad_completed",
+    "wake_completed",
 })
+_ADMOB_REWARDED_AD_UNIT = "ca-app-pub-6355299363807052/1344137680"
+_ADMOB_REWARD_AMOUNT = 6
+_ADMOB_REWARD_ITEM = os.environ.get("ADMOB_REWARDED_REWARD_ITEM", "stars")
+_ADMOB_SESSION_TTL = timedelta(hours=24)
+
+
+@app.route("/api/app/rewards/admob/session", methods=["POST"])
+@limiter.limit("30 per hour")
+@require_app_auth
+def api_admob_reward_session():
+    """Réserve un identifiant opaque transmis à AdMob via custom_data.
+
+    Cette route ne crédite rien. Elle lie la future notification SSV au
+    compte authentifié avant l'ouverture de la publicité.
+    """
+    user_id = g.app_account["user_id"]
+    session_id = uuid.uuid4()
+    now = _utcnow()
+    conn = get_conn()
+    try:
+        c = conn.cursor()
+        c.execute(
+            "INSERT INTO admob_reward_sessions "
+            "(id, user_id, ad_unit, created_at, expires_at) "
+            "VALUES (%s, %s, %s, %s, %s)",
+            (str(session_id), user_id, _ADMOB_REWARDED_AD_UNIT, now,
+             now + _ADMOB_SESSION_TTL),
+        )
+        conn.commit()
+        return _auth_json({"session_id": str(session_id),
+                           "ad_unit": _ADMOB_REWARDED_AD_UNIT}, 201)
+    except Exception:
+        conn.rollback()
+        return _auth_json({"error": "temporarily_unavailable"}, 503)
+    finally:
+        conn.close()
+
+
+@app.route("/api/app/rewards/admob/session/<session_id>", methods=["GET"])
+@require_app_auth
+def api_admob_reward_session_status(session_id):
+    """État de validation SSV, pour l'UX de récompense différée."""
+    user_id = g.app_account["user_id"]
+    try:
+        sid = str(uuid.UUID(session_id))
+    except (ValueError, AttributeError):
+        return _auth_json({"error": "invalid_session"}, 400)
+    conn = get_conn()
+    try:
+        c = conn.cursor()
+        c.execute(
+            "SELECT status, credited_transaction_id FROM admob_reward_sessions "
+            "WHERE id=%s AND user_id=%s",
+            (sid, user_id),
+        )
+        row = c.fetchone()
+        if row is None:
+            return _auth_json({"error": "not_found"}, 404)
+        return _auth_json({"status": row[0],
+                           "credited": row[0] == "credited"}, 200)
+    finally:
+        conn.close()
+
+
+@app.route("/api/app/rewards/admob/ssv", methods=["GET"])
+def api_admob_reward_ssv():
+    """Callback public AdMob SSV : aucune authentification Bearer.
+
+    Seule une URL dont la signature ECDSA Google est valide peut atteindre la
+    transaction métier. Une transaction déjà reçue répond 200 sans nouveau
+    crédit, afin que les retries Google restent idempotents.
+    """
+    try:
+        values = verify_callback(request.query_string)
+        if values.get("ad_unit") != _ADMOB_REWARDED_AD_UNIT:
+            return jsonify({"error": "invalid_ad_unit"}), 400
+        transaction_id = values.get("transaction_id", "")
+        custom_data = values.get("custom_data", "")
+        user_id = values.get("user_id", "")
+        if not transaction_id or not custom_data or not user_id:
+            return jsonify({"error": "missing_callback_parameter"}), 400
+        if int(values.get("reward_amount", "-1")) != _ADMOB_REWARD_AMOUNT:
+            return jsonify({"error": "invalid_reward_amount"}), 400
+        if values.get("reward_item") != _ADMOB_REWARD_ITEM:
+            return jsonify({"error": "invalid_reward_item"}), 400
+        if not (1 <= len(transaction_id) <= 256):
+            return jsonify({"error": "invalid_transaction_id"}), 400
+        try:
+            uid = str(uuid.UUID(user_id))
+            sid = str(uuid.UUID(custom_data))
+            callback_ms = int(values.get("timestamp", ""))
+        except (ValueError, TypeError):
+            return jsonify({"error": "invalid_callback_parameter"}), 400
+        callback_at = datetime.fromtimestamp(callback_ms / 1000, timezone.utc)
+        if abs((_utcnow() - callback_at).total_seconds()) > 7 * 24 * 3600:
+            return jsonify({"error": "stale_callback"}), 400
+    except (SsvError, ValueError, TypeError, requests.RequestException):
+        return jsonify({"error": "invalid_signature"}), 400
+
+    conn = get_conn()
+    try:
+        c = conn.cursor()
+        c.execute(
+            "SELECT user_id, ad_unit, expires_at FROM admob_reward_sessions "
+            "WHERE id=%s AND user_id=%s FOR UPDATE",
+            (sid, uid),
+        )
+        session_row = c.fetchone()
+        if session_row is None or session_row[1] != _ADMOB_REWARDED_AD_UNIT:
+            conn.rollback()
+            return jsonify({"error": "unknown_reward_session"}), 400
+        if session_row[2] < _utcnow():
+            conn.rollback()
+            return jsonify({"error": "expired_reward_session"}), 400
+
+        c.execute(
+            "INSERT INTO admob_reward_events "
+            "(transaction_id, user_id, session_id, ad_unit, reward_amount, "
+            " reward_item, ad_network, callback_timestamp_ms) "
+            "VALUES (%s, %s, %s, %s, %s, %s, %s, %s) "
+            "ON CONFLICT (transaction_id) DO NOTHING RETURNING transaction_id",
+            (transaction_id, uid, sid, values["ad_unit"],
+             _ADMOB_REWARD_AMOUNT, values.get("reward_item", ""),
+             values.get("ad_network"), callback_ms),
+        )
+        inserted = c.fetchone()
+        if inserted is None:
+            conn.commit()
+            return jsonify({"status": "already_processed"}), 200
+
+        result = _award_stars_tx(
+            c, uid, "rewarded_ad_completed", source_id=transaction_id,
+            idempotency_key=f"admob_ssv:{transaction_id}", now=_utcnow(),
+        )
+        if not result.get("awarded"):
+            conn.rollback()
+            return jsonify({"error": "reward_not_awarded"}), 409
+        c.execute(
+            "UPDATE admob_reward_events SET credited_at=NOW() "
+            "WHERE transaction_id=%s",
+            (transaction_id,),
+        )
+        c.execute(
+            "UPDATE admob_reward_sessions SET status='credited', "
+            "credited_transaction_id=%s WHERE id=%s",
+            (transaction_id, sid),
+        )
+        conn.commit()
+        return jsonify({"status": "credited"}), 200
+    except Exception:
+        conn.rollback()
+        return jsonify({"error": "temporarily_unavailable"}), 503
+    finally:
+        conn.close()
 
 
 @app.route("/api/app/rewards/wallet", methods=["GET"])
@@ -6600,18 +6768,17 @@ def api_rewards_claim():
     action_key = data.get("action_key")
     if action_key not in _REWARDS_CLIENT_CLAIMABLE_ACTIONS:
         return _auth_json({"error": "invalid_action"}, 400)
+    if action_key == "rewarded_ad_completed":
+        # Depuis l'activation SSV, le callback client ne constitue plus une
+        # preuve de visionnage. Le crédit est réservé au callback ECDSA signé
+        # par Google (`/admob/ssv`).
+        return _auth_json({"error": "admob_ssv_required"}, 409)
 
     # Rewarded ads use a client-generated event key only as an idempotency
     # handle. The SDK callback is required before this route is called, but
     # Google SSV is not configured in this repository yet; this limitation is
     # intentionally documented and the endpoint remains rate-limited.
-    client_event_id = data.get("event_id") if action_key == "rewarded_ad_completed" else None
-    if action_key == "rewarded_ad_completed":
-        if not isinstance(client_event_id, str) or not (8 <= len(client_event_id) <= 160):
-            return _auth_json({"error": "invalid_event_id"}, 400)
-        idempotency_key = f"rewarded_ad_completed:{user_id}:{client_event_id}"
-    else:
-        idempotency_key = f"{action_key}:{user_id}:{_wellbeing_day(_utcnow())}"
+    idempotency_key = f"{action_key}:{user_id}:{_wellbeing_day(_utcnow())}"
     now = _utcnow()
     today = _wellbeing_day(now)
     try:
@@ -8728,6 +8895,8 @@ _ACCOUNT_DELETE_CHILD_TABLES = (
     "memory_rewards",
     "daily_action_claims",
     "reward_transactions",
+    "admob_reward_events",
+    "admob_reward_sessions",
     "reward_wallet",
     "express_consultations",
     "mini_game_sessions",
