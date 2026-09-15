@@ -168,6 +168,8 @@ def push_tick(now_utc, store, sender, schedule=None):
             continue
         if category == "ebook_monthly" and hasattr(store, "ebook_jobs"):
             jobs = store.ebook_jobs(now_utc)
+        elif category == "wellbeing_daily" and hasattr(store, "wellbeing_jobs"):
+            jobs = store.wellbeing_jobs(now_utc)
         else:
             users = (store.recipients_for(category, now_utc)
                      if hasattr(store, "recipients_for") else recipients)
@@ -296,6 +298,32 @@ class DbPushTickStore:
                      "title": row[2] or MESSAGES["ebook_monthly"][0],
                      "body": row[3] or MESSAGES["ebook_monthly"][1],
                      "user_ids": users} for row in rows]
+        finally:
+            conn.close()
+
+    def wellbeing_jobs(self, now_utc):
+        """Construit les rappels depuis la préférence persistée de chaque
+        programme. Le texte reste donc modifiable côté serveur."""
+        conn = self._get_conn()
+        try:
+            c = conn.cursor()
+            c.execute(
+                "SELECT w.reminder_text, w.user_id FROM wellbeing_programs w "
+                "JOIN accounts a ON a.user_id=w.user_id "
+                "JOIN push_devices d ON d.user_id=w.user_id "
+                "WHERE w.reminder_enabled=TRUE "
+                "AND w.reminder_type='wellbeing_daily' "
+                "AND a.deleted_at IS NULL AND d.enabled=TRUE "
+                "AND d.revoked_at IS NULL AND d.invalid_at IS NULL"
+            )
+            grouped = {}
+            for body, uid in c.fetchall():
+                body = body or MESSAGES["wellbeing_daily"][1]
+                grouped.setdefault(body, []).append(str(uid))
+            return [{"period": now_utc.astimezone(PARIS).date().isoformat(),
+                     "title": MESSAGES["wellbeing_daily"][0],
+                     "body": body, "user_ids": users}
+                    for body, users in grouped.items()]
         finally:
             conn.close()
 
