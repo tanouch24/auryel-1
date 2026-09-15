@@ -87,7 +87,17 @@ class _FakeStore:
             self._users[u] = [t for t in self._users[u] if t != token]
 
 
-SCHED = S.PushSchedule()   # défauts produits
+# Les tests historiques se concentrent sur les quatre fenêtres V1. Les deux
+# nouvelles fenêtres sont déplacées hors de ces instants pour isoler chaque
+# assertion ; leur présence est vérifiée ci-dessous.
+SCHED = S.PushSchedule({"PUSH_WELLBEING_TIME": "23:00",
+                        "PUSH_EBOOK_TIME": "23:30"})
+
+# --- 0. nouveaux types push : fenêtre et textes autorisés -----------------
+check("wellbeing_daily" in S.MESSAGES, "0a — rappel Bien-être configuré")
+check("ebook_monthly" in S.MESSAGES, "0b — publication ebook configurée")
+check("wellbeing_daily" in S.ALLOWED_TYPES and "ebook_monthly" in S.ALLOWED_TYPES,
+      "0c — nouveaux types dans l'allowlist FCM")
 
 
 # --- 1. pensée du jour 08:30 Paris (hiver = 07:30 UTC) -------------------

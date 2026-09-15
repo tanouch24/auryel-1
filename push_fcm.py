@@ -33,7 +33,7 @@ FCM_SCOPE = "https://www.googleapis.com/auth/firebase.messaging"
 # (Flutter) et _PUSH_CATEGORIES (auryel_bot.py).
 ALLOWED_TYPES = (
     "daily_thought", "daily_meditation", "personal_guidance",
-    "weekly_sleep", "weekly_life_lesson",
+    "weekly_sleep", "weekly_life_lesson", "wellbeing_daily", "ebook_monthly",
 )
 
 _PERMANENT_FCM_ERRORS = frozenset({

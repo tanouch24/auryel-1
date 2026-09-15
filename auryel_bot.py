@@ -7873,7 +7873,7 @@ _PUSH_LABEL_MAX   = 120
 # l'envoi FCM (Phase 3) et par le scheduler (Phase 4).
 _PUSH_CATEGORIES = (
     "daily_thought", "daily_meditation", "personal_guidance",
-    "weekly_sleep", "weekly_life_lesson",
+    "weekly_sleep", "weekly_life_lesson", "wellbeing_daily", "ebook_monthly",
 )
 
 
