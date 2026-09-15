@@ -42,9 +42,9 @@ Avant release, vérifier manuellement dans Play Console :
 2. `auryel_extra_hour` est actif avec son prix commercial voulu.
 3. le compte de licence de test et la piste de test sont correctement liés.
 
-L'application n'affiche l'identifiant App Open de production que lorsque
-`ADMOB_APP_OPEN_PROD_ID` est fourni au build release. Aucun identifiant n'est
-inventé dans le dépôt.
+L'identifiant App Open de production est fourni par la façade AdMob. Le
+placement Banner est seulement préparé ; son intégration UI fera l'objet d'un
+lot distinct. Les builds debug utilisent les identifiants de test Google.
 
 ## SSV Rewarded AdMob
 
