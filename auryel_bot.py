@@ -2883,6 +2883,18 @@ def init_db():
         conn.rollback()
         print(f"Migration v58 (AdMob Rewarded SSV): {e}")
 
+    # Migration v59 — Rewarded AdMob : +12 étoiles, sans plafond quotidien.
+    try:
+        migration_path = os.path.join(
+            os.path.dirname(__file__), "migrations", "032_rewarded_ad_12_stars.sql"
+        )
+        with open(migration_path, "r", encoding="utf-8") as migration_file:
+            c.execute(migration_file.read())
+        conn.commit()
+    except Exception as e:
+        conn.rollback()
+        print(f"Migration v59 (AdMob +12 étoiles): {e}")
+
     conn.close()
 
 def reset_db():
@@ -6500,8 +6512,11 @@ def api_rewards_share_progress():
 _REWARDS_CLIENT_CLAIMABLE_ACTIONS = frozenset({
     "wake_completed",
 })
-_ADMOB_REWARDED_AD_UNIT = "ca-app-pub-6355299363807052/1344137680"
-_ADMOB_REWARD_AMOUNT = 6
+_ADMOB_REWARDED_AD_UNIT = "ca-app-pub-9787163762873138/6173561021"
+_ADMOB_REWARDED_AD_UNIT_FORMS = frozenset(
+    {_ADMOB_REWARDED_AD_UNIT, _ADMOB_REWARDED_AD_UNIT.rsplit("/", 1)[1]}
+)
+_ADMOB_REWARD_AMOUNT = 12
 _ADMOB_REWARD_ITEM = os.environ.get("ADMOB_REWARDED_REWARD_ITEM", "stars")
 _ADMOB_SESSION_TTL = timedelta(hours=24)
 
@@ -6574,7 +6589,11 @@ def api_admob_reward_ssv():
     """
     try:
         values = verify_callback(request.query_string)
-        if values.get("ad_unit") != _ADMOB_REWARDED_AD_UNIT:
+        # Google documente `ad_unit` sous sa forme numérique. Certains
+        # environnements renvoient l'identifiant complet utilisé par le SDK;
+        # les deux représentations sont acceptées, mais uniquement pour cette
+        # unité Rewarded précise.
+        if values.get("ad_unit") not in _ADMOB_REWARDED_AD_UNIT_FORMS:
             return jsonify({"error": "invalid_ad_unit"}), 400
         transaction_id = values.get("transaction_id", "")
         custom_data = values.get("custom_data", "")

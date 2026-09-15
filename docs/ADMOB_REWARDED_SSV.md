@@ -8,8 +8,10 @@ et ne crédite jamais le wallet.
 
 Pour l'unité Rewarded Android Auryel :
 
-- unité : `ca-app-pub-6355299363807052/1344137680`
-- reward amount : `6`
+- unité Rewarded SDK : `ca-app-pub-9787163762873138/6173561021`
+- `ad_unit` SSV accepté : `6173561021` (format numérique documenté par Google)
+  ou l'identifiant complet ci-dessus si transmis par l'environnement
+- reward amount : `12`
 - reward item : `stars`
 - URL SSV : `https://web-production-93330.up.railway.app/api/app/rewards/admob/ssv`
 
@@ -31,7 +33,7 @@ Google appelle ensuite l'URL publique. Le serveur :
    de 24 heures ;
 4. vérifie l'unité, le montant, le type de récompense, la transaction et la
    session liée au compte ;
-5. insère `transaction_id` dans `admob_reward_events` et crédite +6 étoiles
+5. insère `transaction_id` dans `admob_reward_events` et crédite +12 étoiles
    dans une seule transaction PostgreSQL.
 
 `transaction_id` est la clé primaire. Un callback Google rejoué répond 200
@@ -45,5 +47,7 @@ callback déjà traité.
 ne contient aucun secret. Les clés publiques sont téléchargées depuis le
 serveur officiel `https://www.gstatic.com/admob/reward/verifier-keys.json`.
 
-La table `admob_reward_sessions` et la table `admob_reward_events` sont
-créées par la migration v58 (`migrations/031_admob_rewarded_ssv.sql`).
+Les tables `admob_reward_sessions` et `admob_reward_events` sont créées par
+la migration v58 (`migrations/031_admob_rewarded_ssv.sql`). La migration v59
+(`migrations/032_rewarded_ad_12_stars.sql`) fixe le reward actif à 12 étoiles
+sans plafond quotidien.
