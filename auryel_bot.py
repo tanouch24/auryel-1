@@ -2854,6 +2854,21 @@ def init_db():
         conn.rollback()
         print(f"Migration v56 (first wellbeing ebook R2): {e}")
 
+    # Migration v57 — économie Étoiles v4. Additive: historical transactions
+    # and balances are preserved; only active rule configuration changes.
+    try:
+        migration_path = os.path.join(
+            os.path.dirname(__file__),
+            "migrations",
+            "030_stars_economy_v4.sql",
+        )
+        with open(migration_path, "r", encoding="utf-8") as migration_file:
+            c.execute(migration_file.read())
+        conn.commit()
+    except Exception as e:
+        conn.rollback()
+        print(f"Migration v57 (stars economy v4): {e}")
+
     conn.close()
 
 def reset_db():
@@ -6468,7 +6483,9 @@ def api_rewards_share_progress():
 # `share_completed`) sont créditées depuis des points d'action serveur
 # EXISTANTS (wellbeing/mission, /api/tirages, rewards/daily-share) — jamais
 # depuis cette route générique.
-_REWARDS_CLIENT_CLAIMABLE_ACTIONS = frozenset({"wake_completed"})
+_REWARDS_CLIENT_CLAIMABLE_ACTIONS = frozenset({
+    "wake_completed", "rewarded_ad_completed",
+})
 
 
 @app.route("/api/app/rewards/wallet", methods=["GET"])
@@ -6584,12 +6601,23 @@ def api_rewards_claim():
     if action_key not in _REWARDS_CLIENT_CLAIMABLE_ACTIONS:
         return _auth_json({"error": "invalid_action"}, 400)
 
+    # Rewarded ads use a client-generated event key only as an idempotency
+    # handle. The SDK callback is required before this route is called, but
+    # Google SSV is not configured in this repository yet; this limitation is
+    # intentionally documented and the endpoint remains rate-limited.
+    client_event_id = data.get("event_id") if action_key == "rewarded_ad_completed" else None
+    if action_key == "rewarded_ad_completed":
+        if not isinstance(client_event_id, str) or not (8 <= len(client_event_id) <= 160):
+            return _auth_json({"error": "invalid_event_id"}, 400)
+        idempotency_key = f"rewarded_ad_completed:{user_id}:{client_event_id}"
+    else:
+        idempotency_key = f"{action_key}:{user_id}:{_wellbeing_day(_utcnow())}"
     now = _utcnow()
     today = _wellbeing_day(now)
     try:
         result = award_stars(
             user_id, action_key, source_id=None,
-            idempotency_key=f"{action_key}:{user_id}:{today}", now=now,
+            idempotency_key=idempotency_key, now=now,
         )
     except Exception as e:
         print(f"[rewards] claim({action_key}) erreur {_user_hash(user_id)}: "

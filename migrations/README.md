@@ -23,6 +23,7 @@ d'exécution réelle ; les fichiers ici sont la source de vérité lisible.
 | `001_index_stripe_customer.sql` | Index unique partiel sur `stripe_customer_id` | 2026-06-17 |
 | `002_admin_logs.sql` | Table `admin_logs` — traçabilité des actions admin | 2026-06-17 |
 | `026_stars_economy_v3.sql` | Barème Étoiles v3 et plafond mensuel de conversion | 2026-09-14 |
+| `030_stars_economy_v4.sql` | Barème V4 et désactivation des anciennes missions | 2026-09-15 |
 
 ## Référence
 
