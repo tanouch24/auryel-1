@@ -2895,6 +2895,19 @@ def init_db():
         conn.rollback()
         print(f"Migration v59 (AdMob +12 étoiles): {e}")
 
+    # Migration v60 — Rewarded V1. Additive only: Stars history is retained,
+    # but no longer drives the active user economy.
+    try:
+        migration_path = os.path.join(
+            os.path.dirname(__file__), "migrations", "033_rewarded_questions.sql"
+        )
+        with open(migration_path, "r", encoding="utf-8") as migration_file:
+            c.execute(migration_file.read())
+        conn.commit()
+    except Exception as e:
+        conn.rollback()
+        print(f"Migration v60 (Rewarded questions): {e}")
+
     conn.close()
 
 def reset_db():
@@ -5285,6 +5298,11 @@ def api_consultation_message():
         return _auth_json({"error": "invalid_request"}, 400)
     if len(msg) > _APP_MESSAGE_MAX_LEN:
         return _auth_json({"error": "message_too_long"}, 400)
+    rewarded_question_key = data.get("idempotency_key")
+    if rewarded_question_key is not None and (
+            not isinstance(rewarded_question_key, str) or
+            not rewarded_question_key.strip()):
+        return _auth_json({"error": "invalid_idempotency_key"}, 400)
 
     user_id = g.app_account["user_id"]   # jamais lu dans le body
 
@@ -5351,6 +5369,7 @@ def api_consultation_message():
         user_id, preferred_advisor,
         tirage_id if tirage_context is not None else None, now,
         target_consultation_id=str(target_cid) if target_cid is not None else None,
+        rewarded_question_key=rewarded_question_key,
     )
 
     if flow["status"] == "unknown_account":
@@ -5371,9 +5390,11 @@ def api_consultation_message():
             "consultation": None,
             "time": _time_json(_st),
             "quota": _quota_shim_json(_st),
+            "rewarded": {"questions_available": 0},
         }, 402)
 
-    # status == "ok"
+    # status == "ok" or "question". The latter is a single complete
+    # interaction paid by a previously validated Rewarded entitlement.
     cid = flow["consultation"]["id"]
     advisor_real = flow["consultation"]["advisor_id"]   # figé si fenêtre active
 
@@ -5421,12 +5442,20 @@ def api_consultation_message():
     # LLM avec le CONSEILLER RÉEL. La persistance user/assistant reste gérée par
     # get_reply_for_user_id (inchangée). Le tirage est DÉJÀ rattaché in-tx par le
     # helper -> pas de ré-attach ici.
-    reply = get_reply_for_user_id(
-        user_id, msg,
-        advisor_override=advisor_real,
-        consultation_id=cid,
-        tirage_context=tirage_context,
-    )
+    try:
+        reply = get_reply_for_user_id(
+            user_id, msg,
+            advisor_override=advisor_real,
+            consultation_id=cid,
+            tirage_context=tirage_context,
+        )
+    except Exception:
+        if flow.get("question_reservation_id"):
+            _finish_rewarded_question(user_id, flow["question_reservation_id"], "released")
+        raise
+    if flow.get("question_reservation_id"):
+        _finish_rewarded_question(
+            user_id, flow["question_reservation_id"], "consumed", consultation_id=cid)
 
     # PARCOURS BIEN-ÊTRE (J7) — un message de consultation abouti (status "ok"
     # ci-dessus) peut compléter la mission `consultation` du jour et donc une
@@ -5488,6 +5517,7 @@ def api_consultation_message():
         },
         "time": _time_json(_st),
         "quota": _quota_shim_json(_st),
+        "rewarded": {"question_consumed": bool(flow.get("question_reservation_id"))},
     }, 200)
 
 
@@ -6516,9 +6546,72 @@ _ADMOB_REWARDED_AD_UNIT = "ca-app-pub-9787163762873138/6173561021"
 _ADMOB_REWARDED_AD_UNIT_FORMS = frozenset(
     {_ADMOB_REWARDED_AD_UNIT, _ADMOB_REWARDED_AD_UNIT.rsplit("/", 1)[1]}
 )
+# The AdMob dashboard still sends the legacy reward payload. It is validated
+# for authenticity and unit identity, but it never becomes Stars in V1.
 _ADMOB_REWARD_AMOUNT = 12
 _ADMOB_REWARD_ITEM = os.environ.get("ADMOB_REWARDED_REWARD_ITEM", "stars")
 _ADMOB_SESSION_TTL = timedelta(hours=24)
+
+
+def _rewarded_state_tx(cursor, user_id):
+    cursor.execute(
+        "SELECT questions_available, rewarded_progress, rewarded_total, "
+        "rewarded_minutes_awarded FROM rewarded_entitlements WHERE user_id=%s",
+        (str(user_id),),
+    )
+    row = cursor.fetchone()
+    if row is None:
+        return {"questions_available": 0, "progress": 0,
+                "total_rewarded": 0, "minutes_awarded": 0}
+    return {"questions_available": int(row[0] or 0),
+            "progress": int(row[1] or 0),
+            "total_rewarded": int(row[2] or 0),
+            "minutes_awarded": int(row[3] or 0)}
+
+
+def _credit_rewarded_entitlement_tx(cursor, user_id, transaction_id, now):
+    """Apply one already-authenticated SSV exactly once.
+
+    The caller has inserted the unique SSV event. This function locks the
+    account, increments the question and progress counters, and credits the
+    existing earned-time bucket for each completed group of ten.
+    """
+    uid = str(user_id)
+    cursor.execute("SELECT user_id FROM accounts WHERE user_id=%s FOR UPDATE", (uid,))
+    if cursor.fetchone() is None:
+        raise ValueError("unknown_account")
+    cursor.execute(
+        """INSERT INTO rewarded_entitlements (user_id)
+           VALUES (%s) ON CONFLICT (user_id) DO NOTHING""", (uid,)
+    )
+    cursor.execute(
+        """SELECT questions_available, rewarded_progress, rewarded_total,
+                  rewarded_minutes_awarded
+           FROM rewarded_entitlements WHERE user_id=%s FOR UPDATE""", (uid,)
+    )
+    q, progress, total, minutes = cursor.fetchone()
+    q = int(q or 0) + 1
+    total = int(total or 0) + 1
+    progress = int(progress or 0) + 1
+    completed = progress // 10
+    progress %= 10
+    credited_minutes = completed * 5
+    if credited_minutes:
+        _credit_bonus_time_tx(
+            cursor, uid, completed * 300, "rewarded_10_ads",
+            f"rewarded-pallet:{transaction_id}", now,
+        )
+        minutes = int(minutes or 0) + credited_minutes
+    cursor.execute(
+        """UPDATE rewarded_entitlements
+           SET questions_available=%s, rewarded_progress=%s,
+               rewarded_total=%s, rewarded_minutes_awarded=%s, updated_at=%s
+           WHERE user_id=%s""",
+        (q, progress, total, int(minutes or 0), now, uid),
+    )
+    return {"questions_available": q, "progress": progress,
+            "total_rewarded": total, "minutes_awarded": int(minutes or 0),
+            "credited_minutes": credited_minutes}
 
 
 @app.route("/api/app/rewards/admob/session", methods=["POST"])
@@ -6649,13 +6742,7 @@ def api_admob_reward_ssv():
             conn.commit()
             return jsonify({"status": "already_processed"}), 200
 
-        result = _award_stars_tx(
-            c, uid, "rewarded_ad_completed", source_id=transaction_id,
-            idempotency_key=f"admob_ssv:{transaction_id}", now=_utcnow(),
-        )
-        if not result.get("awarded"):
-            conn.rollback()
-            return jsonify({"error": "reward_not_awarded"}), 409
+        result = _credit_rewarded_entitlement_tx(c, uid, transaction_id, _utcnow())
         c.execute(
             "UPDATE admob_reward_events SET credited_at=NOW() "
             "WHERE transaction_id=%s",
@@ -6667,7 +6754,7 @@ def api_admob_reward_ssv():
             (transaction_id, sid),
         )
         conn.commit()
-        return jsonify({"status": "credited"}), 200
+        return jsonify({"status": "credited", **result}), 200
     except Exception:
         conn.rollback()
         return jsonify({"error": "temporarily_unavailable"}), 503
@@ -6678,17 +6765,10 @@ def api_admob_reward_ssv():
 @app.route("/api/app/rewards/wallet", methods=["GET"])
 @require_app_auth
 def api_rewards_wallet():
-    """Wallet Étoiles complet de l'utilisateur authentifié. LECTURE SEULE.
-    Contrat : {"stars_balance", "rules": [{"rule_key","stars_amount",
-    "daily_limit" (int|null)}, ...]
-    (UNIQUEMENT les règles enabled=TRUE — jamais une action future inactive),
-    "streak": {"current_streak","best_streak","next_reward_in_days"},
-    "recent_transactions": [{"delta_stars","balance_after","reason",
-    "created_at"}, ...] (20 plus récentes),
-    "express_products": [{"product_key","stars_cost","seconds_granted"}, ...]
-    (GROS CHANTIER AURYEL Prompt 3/5 — UNIQUEMENT les produits enabled=TRUE ;
-    coût/durée résolus ICI pour l'affichage, jamais codés en dur côté
-    Flutter — le serveur reste seul décisionnaire au moment de l'achat)}."""
+    """Read the active Rewarded V1 entitlement state.
+
+    Historical Stars tables are intentionally not read by this contract.
+    """
     user_id = g.app_account["user_id"]
     conn = get_conn()
     try:
@@ -6700,71 +6780,13 @@ def api_rewards_wallet():
         )
         if c.fetchone() is None:
             return _auth_json({"error": "unauthorized"}, 401)
-
-        c.execute(
-            "SELECT stars_balance, current_streak, best_streak, "
-            "       last_active_reward_date "
-            "FROM reward_wallet WHERE user_id=%s",
-            (user_id,),
-        )
-        row = c.fetchone()
-        balance = int(row[0]) if row and row[0] is not None else 0
-        streak = int(row[1]) if row and row[1] is not None else 0
-        best_streak = int(row[2]) if row and row[2] is not None else 0
-        monthly_conversion = _stars_conversion_snapshot(c, user_id, _utcnow())
-
-        c.execute(
-            "SELECT rule_key, stars_amount, daily_limit FROM reward_rules "
-            "WHERE enabled=TRUE ORDER BY rule_key",
-        )
-        # CORRECTIF PRODUIT — expose `daily_limit` (déjà en base depuis la
-        # migration v49, jamais renvoyé jusqu'ici) : l'appli affichait « Mes
-        # Étoiles » sans jamais pouvoir montrer la limite réelle d'une règle,
-        # au risque de l'inventer côté Flutter. Purement additif, aucune
-        # requête existante modifiée par ailleurs.
-        rules = [
-            {
-                "rule_key": r[0],
-                "stars_amount": int(r[1]),
-                "daily_limit": (int(r[2]) if r[2] is not None else None),
-            }
-            for r in c.fetchall()
-        ]
-
-        c.execute(
-            "SELECT delta_stars, balance_after, reason, created_at "
-            "FROM reward_transactions WHERE user_id=%s "
-            "ORDER BY created_at DESC LIMIT 20",
-            (user_id,),
-        )
-        recent = [
-            {"delta_stars": int(t[0]), "balance_after": int(t[1]),
-             "reason": t[2], "created_at": t[3].isoformat()}
-            for t in c.fetchall()
-        ]
-
-        c.execute(
-            "SELECT product_key, stars_cost, seconds_granted "
-            "FROM express_products WHERE enabled=TRUE ORDER BY stars_cost",
-        )
-        express_products = [
-            {"product_key": r[0], "stars_cost": int(r[1]),
-             "seconds_granted": int(r[2])}
-            for r in c.fetchall()
-        ]
-
-        next_in = _STREAK_MILESTONE_DAYS - (streak % _STREAK_MILESTONE_DAYS)
+        state = _rewarded_state_tx(c, user_id)
         return _auth_json({
-            "stars_balance": balance,
-            **monthly_conversion,
-            "rules": rules,
-            "streak": {
-                "current_streak": streak,
-                "best_streak": best_streak,
-                "next_reward_in_days": next_in,
-            },
-            "recent_transactions": recent,
-            "express_products": express_products,
+            "questions_available": state["questions_available"],
+            "progress": state["progress"],
+            "total_rewarded": state["total_rewarded"],
+            "minutes_awarded": state["minutes_awarded"],
+            "next_minutes_at": 10 - state["progress"],
         }, 200)
     finally:
         conn.close()
@@ -6782,7 +6804,10 @@ def api_rewards_claim():
     montant. Idempotent (clé dérivée de (action_key, user_id, jour) —
     fermer/réouvrir l'app, spam bouton, retry réseau, multi-device ne créditent
     jamais deux fois)."""
-    user_id = g.app_account["user_id"]
+    # Engagement/content actions remain available, but no longer have a
+    # monetary-like reward or a claimable Stars side effect.
+    return _auth_json({"awarded": False, "reason": "reward_claims_disabled",
+                       "stars_awarded": 0}, 410)
     data = request.get_json(silent=True) or {}
     action_key = data.get("action_key")
     if action_key not in _REWARDS_CLIENT_CLAIMABLE_ACTIONS:
@@ -6845,7 +6870,7 @@ def api_rewards_express_consultation():
     Réponse refus (200, PAS une erreur HTTP — c'est un état métier normal) :
       {"success": false, "reason": "insufficient_balance"|"product_disabled"
        |"unknown_product", "stars_balance", "stars_cost"?}."""
-    user_id = g.app_account["user_id"]
+    return _auth_json({"error": "stars_economy_retired"}, 410)
     data = request.get_json(silent=True) or {}
     product_key = data.get("product_key")
     idempotency_key = data.get("idempotency_key")
@@ -8919,6 +8944,8 @@ _ACCOUNT_DELETE_CHILD_TABLES = (
     "reward_wallet",
     "express_consultations",
     "mini_game_sessions",
+    "rewarded_question_reservations",
+    "rewarded_entitlements",
     "notification_sends",
     "push_devices",
     "app_sessions",
@@ -11687,8 +11714,76 @@ def get_or_open_time_consultation_tx(cursor, user_id, preferred_advisor_id, now,
                                       "opened_new_advisor")
 
 
+def _reserve_rewarded_question_tx(cursor, user_id, idempotency_key, now):
+    """Reserve exactly one server-side question for a no-time message."""
+    uid = str(user_id)
+    key = str(idempotency_key or '').strip()[:200]
+    if not key:
+        return {"reserved": False, "reason": "missing_idempotency_key"}
+    cursor.execute(
+        "INSERT INTO rewarded_entitlements (user_id) VALUES (%s) "
+        "ON CONFLICT (user_id) DO NOTHING", (uid,))
+    cursor.execute(
+        "SELECT questions_available FROM rewarded_entitlements "
+        "WHERE user_id=%s FOR UPDATE", (uid,))
+    row = cursor.fetchone()
+    if row is None or int(row[0] or 0) <= 0:
+        return {"reserved": False, "reason": "no_question"}
+    cursor.execute(
+        "SELECT id, status FROM rewarded_question_reservations "
+        "WHERE user_id=%s AND idempotency_key=%s", (uid, key))
+    existing = cursor.fetchone()
+    if existing is not None:
+        return {"reserved": existing[1] in ('reserved', 'consumed'),
+                "reservation_id": str(existing[0]), "existing": True}
+    reservation_id = str(uuid.uuid4())
+    cursor.execute(
+        "INSERT INTO rewarded_question_reservations "
+        "(id, user_id, idempotency_key, status, created_at) "
+        "VALUES (%s, %s, %s, 'reserved', %s)",
+        (reservation_id, uid, key, now),)
+    cursor.execute(
+        "UPDATE rewarded_entitlements SET questions_available="
+        "questions_available-1, updated_at=%s WHERE user_id=%s",
+        (now, uid),)
+    return {"reserved": True, "reservation_id": reservation_id, "existing": False}
+
+
+def _finish_rewarded_question(user_id, reservation_id, status, consultation_id=None):
+    if not reservation_id or status not in ('consumed', 'released'):
+        return
+    conn = get_conn()
+    try:
+        c = conn.cursor()
+        c.execute(
+            "SELECT user_id, status FROM rewarded_question_reservations "
+            "WHERE id=%s FOR UPDATE", (str(reservation_id),))
+        row = c.fetchone()
+        if row is None or str(row[0]) != str(user_id) or row[1] != 'reserved':
+            conn.commit()
+            return
+        c.execute(
+            "UPDATE rewarded_question_reservations SET status=%s, "
+            "consumed_at=CASE WHEN %s='consumed' THEN NOW() ELSE consumed_at END, "
+            "consultation_id=%s WHERE id=%s",
+            (status, status, str(consultation_id) if consultation_id else None,
+             str(reservation_id)),)
+        if status == 'released':
+            c.execute(
+                "UPDATE rewarded_entitlements SET questions_available="
+                "questions_available+1, updated_at=NOW() WHERE user_id=%s",
+                (str(user_id),))
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        conn.close()
+
+
 def _open_time_consultation_flow_tx(user_id, preferred_advisor_id, tirage_id, now,
-                                   target_consultation_id=None):
+                                   target_consultation_id=None,
+                                   rewarded_question_key=None):
     """TIMER-A.3c-2b/2c — PLOMBERIE transactionnelle complète du POST temps.
     UNE transaction, AUCUN LLM. Depuis A.3c-2c, c'est le SEUL chemin d'ouverture
     utilisé par api_consultation_message (`open_or_get_consultation` n'y est plus
@@ -11792,7 +11887,28 @@ def _open_time_consultation_flow_tx(user_id, preferred_advisor_id, tirage_id, no
         snap = _get_time_snapshot_tx(c, uid, now)
 
         # 7. plus de temps -> time_exhausted.
-        if snap["total_remaining_seconds"] <= 0:
+        if snap["total_remaining_seconds"] <= 0 and rewarded_question_key:
+            reservation = _reserve_rewarded_question_tx(
+                c, uid, rewarded_question_key, now)
+            if reservation.get("reserved"):
+                if target_row is not None:
+                    sel = {"consultation_id": str(target_row[0]),
+                           "advisor_id": target_row[1], "phase": "question",
+                           "created": False}
+                else:
+                    sel = get_or_open_time_consultation_tx(
+                        c, uid, preferred_advisor_id, now, 1)
+                cid = sel["consultation_id"]
+                touched = _touch_consultation_activity_tx(c, cid, now)
+                conn.commit()
+                return {"status": "question", "consultation": {
+                    "id": cid, "advisor_id": sel["advisor_id"],
+                    "created": bool(sel["created"]), "phase": "question"},
+                    "time": {**snap, "window_active": False,
+                              "window_expires_at": None},
+                    "question_reservation_id": reservation.get("reservation_id"),
+                    "earned_available": 0, "quota_legacy": None,
+                    "tirage_attached": False}
             c.execute(
                 "SELECT COUNT(*) FROM earned_credits "
                 "WHERE user_id=%s AND consumed_at IS NULL",
@@ -12464,6 +12580,14 @@ def _bump_streak_tx(cursor, user_id, today, now):
 
 
 def _award_stars_tx(cursor, user_id, rule_key, source_id, idempotency_key, now):
+    # Historical Stars remain queryable for migration/audit, but are inert in
+    # the active Free V1 product. Content and engagement endpoints continue to
+    # complete normally without creating new Stars transactions.
+    return {"awarded": False, "reason": "stars_economy_retired",
+            "stars_awarded": 0, "new_balance": None}
+
+    # Legacy implementation intentionally retained below for historical
+    # compatibility and audit reference; it is unreachable in V1.
     """Crédite les Étoiles d'UNE règle, sur un curseur DÉJÀ ouvert. `accounts`
     DOIT déjà être verrouillé FOR UPDATE par l'appelant (`award_stars`). Ni
     commit ni rollback ici.
