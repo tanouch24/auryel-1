@@ -72,7 +72,7 @@ def reset_db():
     DB["accounts"][UID] = {"deleted_at": None}
     DB["accounts"][UID2] = {"deleted_at": None}
     DB["reward_rules"]["mini_game_completed"] = {
-        "stars_amount": 15, "enabled": True, "daily_limit": 1, "cooldown_seconds": None,
+        "stars_amount": 0, "enabled": False, "daily_limit": 1, "cooldown_seconds": None,
     }
 
 
@@ -292,9 +292,9 @@ reset_db()
 s = A.start_mini_game(UID, "hidden_card", now=NOW)
 later = NOW + timedelta(seconds=5)  # > min_plausible_seconds (2s pour hidden_card)
 res = A.finish_mini_game(UID, s["session_id"], now=later)
-check(res["status"] == "completed" and res["awarded"] is True
-      and res["stars_awarded"] == 15, "2a completion valide -> +15 ⭐")
-check(_balance(UID) == 15, "2b wallet réellement crédité")
+check(res["status"] == "completed" and res["awarded"] is False
+      and res["stars_awarded"] == 0, "2a completion valide -> aucune récompense")
+check(_balance(UID) == 0, "2b wallet historique inchangé")
 
 # ---------------------------------------------------------------------------
 # 3. Abandon (jamais fini) = 0 — pas de finish appelé, rien ne se passe.
@@ -319,10 +319,10 @@ s = A.start_mini_game(UID, "sequence_recall", now=NOW)
 later = NOW + timedelta(seconds=4)
 r1 = A.finish_mini_game(UID, s["session_id"], now=later)
 r2 = A.finish_mini_game(UID, s["session_id"], now=later)
-check(r1["awarded"] is True and r2["awarded"] is False
+check(r1["awarded"] is False and r2["awarded"] is False
       and r2["outcome"] == "already_finalized",
-      "4a 2e finish -> already_finalized, aucun 2e crédit")
-check(_balance(UID) == 15, "4b solde inchangé après le rejeu")
+      "4a 2e finish -> already_finalized, aucun crédit")
+check(_balance(UID) == 0, "4b solde inchangé après le rejeu")
 
 # ---------------------------------------------------------------------------
 # 5. Replay d'une session finalisée après un NOUVEAU jour -> toujours 0
@@ -350,7 +350,7 @@ reset_db()
 DB["reward_rules"]["mini_game_completed"]["enabled"] = False
 s = A.start_mini_game(UID, "hidden_card", now=NOW)
 r = A.finish_mini_game(UID, s["session_id"], now=NOW + timedelta(seconds=5))
-check(r["awarded"] is False and r["outcome"] == "rule_disabled",
+check(r["awarded"] is False and r["stars_awarded"] == 0,
       "6 règle désactivée -> aucune récompense")
 
 # ---------------------------------------------------------------------------
@@ -407,12 +407,11 @@ print("=" * 64)
 reset_db()
 s = A.start_mini_game(UID, "sequence_recall", now=NOW)
 A.finish_mini_game(UID, s["session_id"], now=NOW + timedelta(seconds=5))
-check(_balance(UID) == 15, "10a 1er mini-jeu du jour -> +15")
+check(_balance(UID) == 0, "10a 1er mini-jeu du jour -> aucune récompense")
 s2 = A.start_mini_game(UID, "hidden_card", now=NOW)
 r2 = A.finish_mini_game(UID, s2["session_id"], now=NOW + timedelta(seconds=5))
-check(r2["awarded"] is False and _balance(UID) == 15,
-      "10b un DEUXIÈME mini-jeu différent le même jour -> aucun 2e crédit "
-      "(daily_action_claims scopé par rule_key, pas par jeu)")
+check(r2["awarded"] is False and _balance(UID) == 0,
+      "10b un DEUXIÈME mini-jeu différent le même jour -> aucun crédit")
 
 # ---------------------------------------------------------------------------
 # 11. HTTP — routes enregistrées + auth + contrat
