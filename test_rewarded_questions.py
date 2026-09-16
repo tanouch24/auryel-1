@@ -61,11 +61,16 @@ class RewardedQuestionsContractTest(unittest.TestCase):
     def test_question_released_on_llm_failure(self):
         self.assertIn('"released")', SRC)
 
+    def test_released_question_can_be_reserved_again_on_retry(self):
+        self.assertIn("existing[1] == 'released'", SRC)
+        self.assertIn("status='reserved'", SRC)
+
     def test_no_time_with_question_enters_question_flow(self):
         self.assertIn('"status": "question"', SRC)
 
     def test_no_time_without_question_remains_blocked(self):
-        self.assertIn('"error": "time_exhausted"', SRC)
+        self.assertIn('"error": "consultation_credit_exhausted"', SRC)
+        self.assertIn('"legacy_error": "time_exhausted"', SRC)
 
     def test_old_stars_are_not_credited(self):
         self.assertIn('stars_economy_retired', SRC)

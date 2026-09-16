@@ -2945,6 +2945,23 @@ def init_db():
             "Migration v62 (catalogue vidéo Méditations) échouée"
         ) from e
 
+    # Migration v63 — idempotence des intentions de message Consultation.
+    # Additive : les messages, quotas et historiques existants restent intacts.
+    try:
+        migration_path = os.path.join(
+            os.path.dirname(__file__), "migrations",
+            "038_consultation_message_idempotency.sql"
+        )
+        with open(migration_path, "r", encoding="utf-8") as migration_file:
+            c.execute(migration_file.read())
+        conn.commit()
+    except Exception as e:
+        conn.rollback()
+        conn.close()
+        raise CriticalSchemaMigrationError(
+            "Migration v63 (idempotence des messages Consultation) échouée"
+        ) from e
+
     conn.close()
 
 def reset_db():
@@ -4803,6 +4820,124 @@ def _auth_json(payload, status=200):
     return resp, status
 
 
+def _claim_consultation_message_request(user_id, idempotency_key, message):
+    """Claim one mobile message intent, server-side and per account.
+
+    A completed request returns its stored payload; a concurrent processing
+    request is never sent to the LLM a second time. Failed requests remain
+    retryable with the same key. The hash prevents accidentally reusing a key
+    for a different message.
+    """
+    key = str(idempotency_key or '').strip()[:200]
+    if not key:
+        return None
+    digest = hashlib.sha256(str(message).encode('utf-8')).hexdigest()
+    conn = get_conn()
+    try:
+        c = conn.cursor()
+        c.execute(
+            "INSERT INTO consultation_message_requests "
+            "(user_id, idempotency_key, message_hash, status) "
+            "VALUES (%s, %s, %s, 'processing') "
+            "ON CONFLICT (user_id, idempotency_key) DO NOTHING "
+            "RETURNING user_id",
+            (str(user_id), key, digest),
+        )
+        inserted = c.fetchone()
+        if inserted is not None:
+            conn.commit()
+            return {"status": "claimed"}
+        c.execute(
+            "SELECT message_hash, status, response_payload "
+            "FROM consultation_message_requests "
+            "WHERE user_id=%s AND idempotency_key=%s FOR UPDATE",
+            (str(user_id), key),
+        )
+        row = c.fetchone()
+        if row is None:
+            raise RuntimeError("consultation_message_request_missing")
+        if row[0] != digest:
+            conn.commit()
+            return {"status": "conflict"}
+        if row[1] == "completed":
+            conn.commit()
+            payload = row[2]
+            return {"status": "completed", "payload": payload or {}}
+        if row[1] == "processing":
+            conn.commit()
+            return {"status": "processing"}
+        c.execute(
+            "UPDATE consultation_message_requests SET status='processing', "
+            "updated_at=NOW() WHERE user_id=%s AND idempotency_key=%s",
+            (str(user_id), key),
+        )
+        conn.commit()
+        return {"status": "claimed"}
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        conn.close()
+
+
+def _finish_consultation_message_request(user_id, idempotency_key, payload):
+    if not idempotency_key:
+        return
+    conn = get_conn()
+    try:
+        c = conn.cursor()
+        c.execute(
+            "UPDATE consultation_message_requests SET status='completed', "
+            "response_payload=%s::jsonb, updated_at=NOW() "
+            "WHERE user_id=%s AND idempotency_key=%s AND status='processing'",
+            (_json.dumps(payload, ensure_ascii=False), str(user_id),
+             str(idempotency_key).strip()[:200]),
+        )
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        conn.close()
+
+
+def _fail_consultation_message_request(user_id, idempotency_key):
+    if not idempotency_key:
+        return
+    conn = get_conn()
+    try:
+        c = conn.cursor()
+        c.execute(
+            "UPDATE consultation_message_requests SET status='failed', "
+            "response_payload=NULL, updated_at=NOW() "
+            "WHERE user_id=%s AND idempotency_key=%s AND status='processing'",
+            (str(user_id), str(idempotency_key).strip()[:200]),
+        )
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        conn.close()
+
+
+def _rewarded_questions_available(user_id):
+    """Lecture tolérante du solde Rewarded pour le contrat UX 402."""
+    conn = get_conn()
+    try:
+        c = conn.cursor()
+        c.execute(
+            "SELECT questions_available FROM rewarded_entitlements "
+            "WHERE user_id=%s", (str(user_id),)
+        )
+        row = c.fetchone()
+        return int((row or (0,))[0] or 0)
+    except Exception:
+        return 0
+    finally:
+        conn.close()
+
+
 def _client_ip_hash():
     """SHA-256 tronqué de l'IP appelante (jamais l'IP en clair). None si indisponible."""
     try:
@@ -5353,6 +5488,21 @@ def api_consultation_message():
     if _gate is not None:
         return _auth_json(_gate[0], _gate[1])
 
+    # La clé identifie une intention complète, pas seulement une réservation
+    # Rewarded. Une répétition terminée renvoie son résultat sans repasser par
+    # le moteur temps ni le LLM ; une requête concurrente reste unique.
+    request_key = (rewarded_question_key.strip()[:200]
+                   if isinstance(rewarded_question_key, str)
+                   else None)
+    request_claim = _claim_consultation_message_request(user_id, request_key, msg)
+    if request_claim is not None:
+        if request_claim["status"] == "completed":
+            return _auth_json(request_claim["payload"], 200)
+        if request_claim["status"] == "processing":
+            return _auth_json({"error": "consultation_request_processing"}, 409)
+        if request_claim["status"] == "conflict":
+            return _auth_json({"error": "idempotency_key_conflict"}, 409)
+
     # J6 — fil CIBLÉ (optionnel). Fourni : on VÉRIFIE l'appartenance au compte
     # authentifié et on utilise l'advisor_id RÉEL de CETTE ligne ; app_profiles.guide
     # n'écrase JAMAIS ce conseiller. Absent : comportement legacy (fil courant /
@@ -5404,32 +5554,43 @@ def api_consultation_message():
     preferred_advisor = target_advisor or (profile.get("guide") or "selena")
 
     now = _utcnow()
-    flow = _open_time_consultation_flow_tx(
-        user_id, preferred_advisor,
-        tirage_id if tirage_context is not None else None, now,
-        target_consultation_id=str(target_cid) if target_cid is not None else None,
-        rewarded_question_key=rewarded_question_key,
-    )
+    try:
+        flow = _open_time_consultation_flow_tx(
+            user_id, preferred_advisor,
+            tirage_id if tirage_context is not None else None, now,
+            target_consultation_id=str(target_cid) if target_cid is not None else None,
+            rewarded_question_key=request_key,
+        )
+    except Exception:
+        _fail_consultation_message_request(user_id, request_key)
+        raise
 
     if flow["status"] == "unknown_account":
+        _fail_consultation_message_request(user_id, request_key)
         return _auth_json({"error": "unauthorized"}, 401)
     if flow["status"] == "consultation_not_found":
+        _fail_consultation_message_request(user_id, request_key)
         return _auth_json({"error": "consultation_not_found"}, 404)
     if flow["status"] == "tirage_not_found":
+        _fail_consultation_message_request(user_id, request_key)
         return _auth_json({"error": "tirage_not_found"}, 404)
     if flow["status"] == "time_exhausted":
         # AUCUN LLM, aucun message persisté, aucune consultation / touch / tirage.
+        rewarded_questions_available = _rewarded_questions_available(user_id)
         _st = {"time_snapshot": flow["time"],
                "window_active": flow["time"]["window_active"],
                "window_expires_at": flow["time"]["window_expires_at"],
                "earned_available": flow["earned_available"],
+               "rewarded_questions_available": rewarded_questions_available,
                "quota_legacy": flow["quota_legacy"]}
+        _fail_consultation_message_request(user_id, request_key)
         return _auth_json({
-            "error": "time_exhausted",
+            "error": "consultation_credit_exhausted",
+            "legacy_error": "time_exhausted",
             "consultation": None,
             "time": _time_json(_st),
             "quota": _quota_shim_json(_st),
-            "rewarded": {"questions_available": 0},
+            "rewarded": {"questions_available": rewarded_questions_available},
         }, 402)
 
     # status == "ok" or "question". The latter is a single complete
@@ -5491,6 +5652,7 @@ def api_consultation_message():
     except Exception:
         if flow.get("question_reservation_id"):
             _finish_rewarded_question(user_id, flow["question_reservation_id"], "released")
+        _fail_consultation_message_request(user_id, request_key)
         raise
     # Une panne totale des fournisseurs ne constitue pas une réponse
     # conseiller utilisable : la question réservée doit rester disponible.
@@ -5508,7 +5670,7 @@ def api_consultation_message():
                 _ccur.execute(
                     "UPDATE accounts SET earned_seconds_remaining = "
                     "COALESCE(earned_seconds_remaining, 0) + %s WHERE user_id=%s",
-                    (_LLM_FAILURE_CREDIT_SECONDS, str(user_id)),
+                (_LLM_FAILURE_CREDIT_SECONDS, str(user_id)),
                 )
                 _time_ledger_write(
                     _ccur, user_id, [("earned", _LLM_FAILURE_CREDIT_SECONDS)],
@@ -5520,6 +5682,7 @@ def api_consultation_message():
             log_event("llm_total_failure_credit", user_hash=_user_hash(user_id))
         except Exception as e:
             print(f"[llm] crédit compensatoire échec ({type(e).__name__})")
+        _fail_consultation_message_request(user_id, request_key)
         return _auth_json({
             "error": "consultation_temporarily_unavailable",
             "llm_status": llm_status,
@@ -5547,7 +5710,7 @@ def api_consultation_message():
            "window_expires_at": flow["time"]["window_expires_at"],
            "earned_available": flow["earned_available"],
            "quota_legacy": flow["quota_legacy"]}
-    return _auth_json({
+    response_payload = {
         "reply": reply,
         "message_id": assistant_message_id,
         "llm_status": llm_status,
@@ -5563,7 +5726,9 @@ def api_consultation_message():
         "time": _time_json(_st),
         "quota": _quota_shim_json(_st),
         "rewarded": {"question_consumed": bool(flow.get("question_reservation_id"))},
-    }, 200)
+    }
+    _finish_consultation_message_request(user_id, request_key, response_payload)
+    return _auth_json(response_payload, 200)
 
 
 @app.route("/api/consultation/state", methods=["GET"])
@@ -11865,6 +12030,19 @@ def _reserve_rewarded_question_tx(cursor, user_id, idempotency_key, now):
         "WHERE user_id=%s AND idempotency_key=%s", (uid, key))
     existing = cursor.fetchone()
     if existing is not None:
+        if existing[1] == 'released':
+            cursor.execute(
+                "UPDATE rewarded_question_reservations SET status='reserved', "
+                "consumed_at=NULL, consultation_id=NULL WHERE id=%s",
+                (str(existing[0]),),
+            )
+            cursor.execute(
+                "UPDATE rewarded_entitlements SET questions_available="
+                "questions_available-1, updated_at=%s WHERE user_id=%s",
+                (now, uid),
+            )
+            return {"reserved": True, "reservation_id": str(existing[0]),
+                    "existing": True}
         return {"reserved": existing[1] in ('reserved', 'consumed'),
                 "reservation_id": str(existing[0]), "existing": True}
     reservation_id = str(uuid.uuid4())
@@ -12018,9 +12196,11 @@ def _open_time_consultation_flow_tx(user_id, preferred_advisor_id, tirage_id, no
         snap = _get_time_snapshot_tx(c, uid, now)
 
         # 7. plus de temps -> time_exhausted.
-        if snap["total_remaining_seconds"] <= 0 and rewarded_question_key:
-            reservation = _reserve_rewarded_question_tx(
-                c, uid, rewarded_question_key, now)
+        if snap["total_remaining_seconds"] <= 0:
+            reservation = (
+                _reserve_rewarded_question_tx(c, uid, rewarded_question_key, now)
+                if rewarded_question_key else {"reserved": False}
+            )
             if reservation.get("reserved"):
                 if target_row is not None:
                     sel = {"consultation_id": str(target_row[0]),
