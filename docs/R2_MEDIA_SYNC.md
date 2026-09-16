@@ -17,7 +17,8 @@ iOS, aucun changement Flutter.**
 ## Pour AJOUTER UNE MÉDITATION VIDÉO
 
 1. Préparer un fichier **`.mp4`**.
-2. L'uploader dans le préfixe **`meditations/`** du bucket.
+2. L'uploader dans le préfixe **`méditations/`** du bucket.
+   Le préfixe historique **`meditations/`** reste accepté pour compatibilité.
 3. Attendre le prochain passage du cron (environ 15 minutes).
 4. Le fichier est ajouté au catalogue `meditation_video_catalog` et servi par
    `GET /api/app/content/meditations?media=video`.
@@ -38,7 +39,7 @@ Ce catalogue est indépendant des méditations audio et de `relaxation-videos/`.
 
 ## Règle absolue
 
-**1 MP3 = 1 méditation audio. 1 MP4 `meditations/` = 1 méditation vidéo.
+**1 MP3 = 1 méditation audio. 1 MP4 `méditations/` ou `meditations/` = 1 méditation vidéo.
 1 MP4 `relaxation-videos/` = 1 visuel Réveil.**
 Une vidéo ne crée **jamais** une méditation audio. Une méditation n'est **jamais**
 dupliquée parce que plusieurs vidéos existent. Les deux catalogues sont

@@ -7051,7 +7051,7 @@ def api_content_meditations():
 
 # --- MP4 Méditations distantes (catalogue R2 strictement séparé) -----------
 def _meditation_video_catalog_active_rows():
-    """MP4 publiés provenant exclusivement du préfixe R2 meditations/."""
+    """MP4 publiés provenant exclusivement des préfixes R2 Méditations."""
     conn = get_conn()
     try:
         c = conn.cursor()
@@ -7062,7 +7062,8 @@ def _meditation_video_catalog_active_rows():
             "FROM meditation_video_catalog "
             "WHERE is_active = TRUE "
             "  AND (published_at IS NULL OR published_at <= NOW()) "
-            "  AND r2_object_key LIKE 'meditations/%' "
+            "  AND (r2_object_key LIKE 'méditations/%' "
+            "       OR r2_object_key LIKE 'meditations/%') "
             "ORDER BY sort_order ASC, id ASC"
         )
         return c.fetchall()

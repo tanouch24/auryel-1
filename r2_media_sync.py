@@ -9,7 +9,8 @@ Principe produit : Nathanyel dépose un fichier dans R2, il apparaît dans l'app
 sous ~15 min, sans release, sans script manuel.
 
     R2  méditations/*.mp3        -> 1 ligne meditation_catalog
-    R2  meditations/*.mp4        -> 1 ligne meditation_video_catalog
+    R2  méditations/*.mp4        -> 1 ligne meditation_video_catalog
+    R2  meditations/*.mp4        -> 1 ligne meditation_video_catalog (compat.)
     R2  relaxation-videos/*.mp4  -> 1 ligne relaxation_video_catalog
 
 RÈGLE ABSOLUE : 1 MP3 = 1 méditation, 1 MP4 = 1 visuel. Une vidéo ne crée
@@ -37,9 +38,15 @@ import urllib.parse
 import uuid
 from datetime import datetime, timezone
 
-# Préfixes EXACTS dans le bucket. Le premier contient réellement un « é ».
+# Préfixes EXACTS dans le bucket. Les deux appartiennent au catalogue métier
+# Méditations ; le premier est le préfixe actuellement utilisé en production.
 AUDIO_PREFIX = "méditations/"
-MEDITATION_VIDEO_PREFIX = "meditations/"
+MEDITATION_VIDEO_PREFIX = "méditations/"
+MEDITATION_VIDEO_PREFIX_COMPAT = "meditations/"
+MEDITATION_VIDEO_PREFIXES = (
+    MEDITATION_VIDEO_PREFIX,
+    MEDITATION_VIDEO_PREFIX_COMPAT,
+)
 VIDEO_PREFIX = "relaxation-videos/"
 
 _R2_ENDPOINT_TMPL = "https://{account_id}.r2.cloudflarestorage.com"
@@ -276,20 +283,40 @@ class R2MediaCatalogSync:
         self._now = now_fn or (lambda: datetime.now(timezone.utc))
 
     # -- listing + filtrage --------------------------------------------------
-    def _collect(self, prefix, ext):
+    def _collect(self, prefix, ext, *, ignore_exts=(),
+                 count_extension_mismatch=True):
         found, invalid = [], 0
         for obj in self._r2.list_objects(prefix):
             key = obj["key"]
             if not is_object_key(key):
                 continue
             _stem, e = _split_ext(_basename(key))
+            if e in ignore_exts:
+                continue
             if e != ext:
-                invalid += 1
+                if count_extension_mismatch:
+                    invalid += 1
                 continue
             if int(obj.get("size", 0)) <= 0:
                 invalid += 1
                 continue
             found.append(key)
+        return found, invalid
+
+    def _collect_prefixes(self, prefixes, ext, *, ignore_exts=(),
+                          count_extension_mismatch=True):
+        """Collecte plusieurs préfixes d'un même catalogue sans doublon."""
+        found, invalid, seen = [], 0, set()
+        for prefix in prefixes:
+            keys, bad = self._collect(
+                prefix, ext, ignore_exts=ignore_exts,
+                count_extension_mismatch=count_extension_mismatch,
+            )
+            invalid += bad
+            for key in keys:
+                if key not in seen:
+                    seen.add(key)
+                    found.append(key)
         return found, invalid
 
     # -- accès DB ----------------------------------------------------------
@@ -349,8 +376,9 @@ class R2MediaCatalogSync:
                     return result
 
             audio_keys, inv_a = self._collect(AUDIO_PREFIX, "mp3")
-            meditation_video_keys, inv_mv = self._collect(
-                MEDITATION_VIDEO_PREFIX, "mp4"
+            meditation_video_keys, inv_mv = self._collect_prefixes(
+                MEDITATION_VIDEO_PREFIXES, "mp4", ignore_exts={"mp3"},
+                count_extension_mismatch=False,
             )
             video_keys, inv_v = self._collect(VIDEO_PREFIX, "mp4")
             result["audio_objects"] = len(audio_keys)
