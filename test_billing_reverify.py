@@ -66,27 +66,39 @@ SUBS = []
 def _reset():
     SUBS.clear()
     SUBS.extend([
-        # périmés, google_play, actifs -> à recontrôler
+        # périmés, google_play, dans un état à recontrôler — VRAIES valeurs
+        # Google (`subscriptionState` brut de _google_normalize), PAS le
+        # vocabulaire inventé ("active", "billing_retry"...) qui masquait le
+        # bug audité : ce test seedait autrefois des statuts qui ne
+        # correspondaient JAMAIS à ce qu'écrit réellement _google_normalize
+        # en production, ce qui faisait passer la suite sans jamais exercer
+        # le vrai format Google.
         {"id": "s1", "user_id": "u1", "product_id": "auryel_premium_monthly",
-         "subscription_key": "tok1", "store": "google_play", "status": "active",
+         "subscription_key": "tok1", "store": "google_play",
+         "status": "SUBSCRIPTION_STATE_ACTIVE",
          "last_verified_at": OLD},
         {"id": "s2", "user_id": "u2", "product_id": "auryel_premium_monthly",
-         "subscription_key": "tok2", "store": "google_play", "status": "active",
+         "subscription_key": "tok2", "store": "google_play",
+         "status": "SUBSCRIPTION_STATE_ACTIVE",
          "last_verified_at": None},
         {"id": "s3", "user_id": "u3", "product_id": "auryel_premium_monthly",
-         "subscription_key": "tok3", "store": "google_play", "status": "billing_retry",
+         "subscription_key": "tok3", "store": "google_play",
+         "status": "SUBSCRIPTION_STATE_IN_GRACE_PERIOD",
          "last_verified_at": OLD},
         # exclus : récent
         {"id": "s4", "user_id": "u4", "product_id": "auryel_premium_monthly",
-         "subscription_key": "tok4", "store": "google_play", "status": "active",
+         "subscription_key": "tok4", "store": "google_play",
+         "status": "SUBSCRIPTION_STATE_ACTIVE",
          "last_verified_at": RECENT},
         # exclus : app_store
         {"id": "s5", "user_id": "u5", "product_id": "auryel_premium_monthly",
-         "subscription_key": "tok5", "store": "app_store", "status": "active",
+         "subscription_key": "tok5", "store": "app_store",
+         "status": "SUBSCRIPTION_STATE_ACTIVE",
          "last_verified_at": OLD},
-        # exclus : statut non actif
+        # exclus : statut terminal (plus rien à revérifier automatiquement)
         {"id": "s6", "user_id": "u6", "product_id": "auryel_premium_monthly",
-         "subscription_key": "tok6", "store": "google_play", "status": "expired",
+         "subscription_key": "tok6", "store": "google_play",
+         "status": "SUBSCRIPTION_STATE_EXPIRED",
          "last_verified_at": OLD},
     ])
 
@@ -153,7 +165,7 @@ client = A.app.test_client()
 CALLS = {"verify": [], "record": [], "revoke": []}
 
 
-def _norm_dict(entitled=True, status="active"):
+def _norm_dict(entitled=True, status="SUBSCRIPTION_STATE_ACTIVE"):
     return {"store": "google_play", "product_id": "auryel_premium_monthly",
             "subscription_key": "tokX", "latest_transaction_id": "gpa.1",
             "status": status, "entitled": entitled,
@@ -176,8 +188,8 @@ def _fake_verify(purchase_token, product_id, now=None):
         raise A.StoreVerificationError("invalid_store_receipt",
                                        "achat Google inconnu")
     if b == "expired":
-        return _norm_dict(entitled=False, status="expired")
-    return _norm_dict(entitled=True, status="active")
+        return _norm_dict(entitled=False, status="SUBSCRIPTION_STATE_EXPIRED")
+    return _norm_dict(entitled=True, status="SUBSCRIPTION_STATE_ACTIVE")
 
 
 def _fake_record(**kw):
@@ -312,6 +324,67 @@ check("def _billing_reverify_revoke" in _mod
 check("RTDN" in _mod and "Pub/Sub" in _mod and "amélioration FUTURE" in _mod
       and "n'est PAS instantané" in _mod,
       "8 RTDN / Pub/Sub documenté comme futur ; un cron n'est pas instantané")
+
+# ===========================================================================
+# 9. BUG CORRIGÉ — le cron reconnaît les VRAIES valeurs Google
+#    (`mobile_subscriptions.status` = `subscriptionState` brut, jamais un
+#    vocabulaire inventé). Avant le correctif, `_BILLING_ACTIVE_STATUSES`
+#    valait ("active", "billing_retry", "grace_period", "paused") : AUCUNE
+#    de ces valeurs ne correspond à ce que `_google_normalize` écrit
+#    réellement -> le cron ne sélectionnait jamais rien en production.
+# ===========================================================================
+check("SUBSCRIPTION_STATE_ACTIVE" in A._BILLING_REVERIFY_STATUSES,
+      "9a SUBSCRIPTION_STATE_ACTIVE (vraie valeur Google) est reconnu")
+check("SUBSCRIPTION_STATE_IN_GRACE_PERIOD" in A._BILLING_REVERIFY_STATUSES,
+      "9b SUBSCRIPTION_STATE_IN_GRACE_PERIOD est reconnu")
+check("SUBSCRIPTION_STATE_ON_HOLD" in A._BILLING_REVERIFY_STATUSES,
+      "9c SUBSCRIPTION_STATE_ON_HOLD est reconnu (peut reprendre sans notif)")
+check("SUBSCRIPTION_STATE_PAUSED" in A._BILLING_REVERIFY_STATUSES,
+      "9d SUBSCRIPTION_STATE_PAUSED est reconnu (peut reprendre sans notif)")
+check("SUBSCRIPTION_STATE_CANCELED" in A._BILLING_REVERIFY_STATUSES,
+      "9e SUBSCRIPTION_STATE_CANCELED est reconnu (encore entitled tant que "
+      "expires_at > now, cf. _google_entitled)")
+check("SUBSCRIPTION_STATE_EXPIRED" not in A._BILLING_REVERIFY_STATUSES
+      and "SUBSCRIPTION_STATE_PENDING" not in A._BILLING_REVERIFY_STATUSES,
+      "9f les statuts terminaux / pas-encore-entitled restent EXCLUS")
+# L'ancien vocabulaire inventé ne doit plus rien piloter dans le code : il ne
+# doit même plus exister comme nom.
+check(not hasattr(A, "_BILLING_ACTIVE_STATUSES"),
+      "9g l'ancien nom _BILLING_ACTIVE_STATUSES (vocabulaire inventé) a "
+      "disparu du module")
+_ghost = {"active", "billing_retry", "grace_period", "paused"}
+check(not (_ghost & A._BILLING_REVERIFY_STATUSES),
+      "9h aucune des anciennes valeurs minuscules inventées ne traîne dans "
+      "le nouvel ensemble")
+
+# ===========================================================================
+# 10. Une ligne Google RÉELLE (grace period / canceled-not-yet-expired /
+#     on_hold) n'est plus jamais ignorée par le cron — preuve bout-en-bout,
+#     pas seulement au niveau de la constante.
+# ===========================================================================
+_reset_all()
+SUBS.append({
+    "id": "s7", "user_id": "u7", "product_id": "auryel_premium_monthly",
+    "subscription_key": "tok7", "store": "google_play",
+    "status": "SUBSCRIPTION_STATE_CANCELED", "last_verified_at": OLD,
+})
+SUBS.append({
+    "id": "s8", "user_id": "u8", "product_id": "auryel_premium_monthly",
+    "subscription_key": "tok8", "store": "google_play",
+    "status": "SUBSCRIPTION_STATE_ON_HOLD", "last_verified_at": OLD,
+})
+A._BILLING_REVERIFY_BATCH = 10  # assez large pour tout traiter cette fois
+r = _post(secret="rv-secret-123")
+j = r.get_json()
+seen10 = {t for t, _ in CALLS["verify"]}
+check("tok7" in seen10 and "tok8" in seen10,
+      "10a CANCELED (non expiré) et ON_HOLD sont bien sélectionnés et "
+      "reconsultés auprès de Google (mocké)")
+check(any(kw.get("user_id") == "u7" for kw in CALLS["record"])
+      and any(kw.get("user_id") == "u8" for kw in CALLS["record"]),
+      "10b les deux lignes sont effectivement revérifiées "
+      "(record_and_resync_mobile_subscription appelé, identité = ligne DB)")
+A._BILLING_REVERIFY_BATCH = 3  # restaure la valeur des sections précédentes
 
 # ---------------------------------------------------------------------------
 print("-" * 60)

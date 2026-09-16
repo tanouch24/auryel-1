@@ -238,8 +238,8 @@ class FakeCursor:
                         "monthly_limit": lim, "monthly_used": 0, "created_at": created,
                         "source_subscription_id": src, "source_period_start": sps,
                         # DEFAULT migration v34 (colonnes non énumérées par l'INSERT) :
-                        # 8 h Premium / période, 0 s consommée.
-                        "monthly_allowance_seconds": 28800,
+                        # 4 h Premium / période, 0 s consommée.
+                        "monthly_allowance_seconds": 14400,
                         "monthly_used_seconds": 0,
                     })
                     self.rowcount = 1
@@ -303,7 +303,7 @@ class FakeCursor:
                         and a["period_end"] > now]
             rows.sort(key=lambda a: a["period_start"], reverse=True)
             if rows:
-                self._result = (rows[0].get("monthly_allowance_seconds", 28800),
+                self._result = (rows[0].get("monthly_allowance_seconds", 14400),
                                 rows[0].get("monthly_used_seconds", 0))
 
         else:
@@ -754,13 +754,13 @@ print("TIMER-A.3b — périodes Premium en SECONDES")
 
 _MISC = {"h": None}
 
-# A. nouvelle période -> monthly_allowance_seconds = 28800, monthly_used_seconds = 0
+# A. nouvelle période -> monthly_allowance_seconds = 14400, monthly_used_seconds = 0
 reset(); seed_account()
 seed_sub(G_ID, "google_play", dt(2026, 8, 15), dt(2026, 9, 15), True)
 resync(dt(2026, 8, 20))
 _a = alw()[0]
-check(_a["monthly_allowance_seconds"] == 28800 and _a["monthly_used_seconds"] == 0,
-      "A.3b-A nouvelle période -> monthly_allowance_seconds 28800, monthly_used_seconds 0")
+check(_a["monthly_allowance_seconds"] == 14400 and _a["monthly_used_seconds"] == 0,
+      "A.3b-A nouvelle période -> monthly_allowance_seconds 14400, monthly_used_seconds 0")
 check(_a["monthly_limit"] == 4 and _a["monthly_used"] == 0,
       "A.3b-I legacy monthly_limit/monthly_used inchangés (4 / 0)")
 
@@ -771,7 +771,7 @@ with _STORE_LOCK:
 r = resync(dt(2026, 8, 21))
 check(r["action"] == "noop" and len(alw()) == 1
       and alw()[0]["monthly_used_seconds"] == 4321
-      and alw()[0]["monthly_allowance_seconds"] == 28800
+      and alw()[0]["monthly_allowance_seconds"] == 14400
       and alw()[0]["monthly_used"] == 2,
       "A.3b-B reverify même cycle -> noop, monthly_used_seconds 4321 et legacy 2 préservés")
 
@@ -787,8 +787,8 @@ _old = next(a for a in alw() if a["period_start"] == dt(2026, 7, 15))
 _new = next(a for a in alw() if a["period_start"] == dt(2026, 8, 15))
 check(_old["monthly_used_seconds"] == 12345 and _old["monthly_used"] == 3,
       "A.3b-C ancienne période : monthly_used_seconds 12345 (et legacy 3) PRÉSERVÉS")
-check(_new["monthly_allowance_seconds"] == 28800 and _new["monthly_used_seconds"] == 0,
-      "A.3b-D nouvelle période : allowance 28800, used_seconds 0 (uniquement sur la neuve)")
+check(_new["monthly_allowance_seconds"] == 14400 and _new["monthly_used_seconds"] == 0,
+      "A.3b-D nouvelle période : allowance 14400, used_seconds 0 (uniquement sur la neuve)")
 check(len(alw()) == 2, "A.3b-D2 ancienne ligne CONSERVÉE (aucun DELETE destructif)")
 
 # E + F. first_free / purchased NON reset par le resync.
@@ -815,9 +815,9 @@ with _STORE_LOCK:
     alw()[0]["monthly_used_seconds"] = 900
 resync(dt(2026, 8, 20))
 check(len(alw()) == 1 and alw()[0]["monthly_used_seconds"] == 900
-      and alw()[0]["monthly_allowance_seconds"] == 28800,
+      and alw()[0]["monthly_allowance_seconds"] == 14400,
       "A.3b-G resync rejoué -> 1 seule ligne, monthly_used_seconds 900 non remis à 0, "
-      "pas de 28800 supplémentaire")
+      "pas de 14400 supplémentaire")
 
 # H. entitlement expiré -> aucune période active -> premium_remaining_seconds = 0.
 reset(); seed_account()

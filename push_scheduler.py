@@ -18,6 +18,8 @@ non secrètes) :
   - méditation quotidienne : 19:00 Europe/Paris, tous les jours
   - sommeil                : mercredi & dimanche 22:00 Europe/Paris
   - leçon de vie           : dimanche 11:00 Europe/Paris
+  - bien-être              : 10:00 Europe/Paris (utilisateurs ayant activé le rappel)
+  - ebook mensuel          : 10:15 Europe/Paris (publication non déjà notifiée)
 """
 
 import os
@@ -46,6 +48,14 @@ MESSAGES = {
     "weekly_life_lesson": (
         "Ta leçon de vie de la semaine",
         "Elle t'attend dans Auryel.",
+    ),
+    "wellbeing_daily": (
+        "Ton moment Bien-être t'attend",
+        "Tes 5 actions du jour sont disponibles dans Auryel.",
+    ),
+    "ebook_monthly": (
+        "Ton nouvel ebook Auryel est disponible",
+        "Découvre gratuitement le nouveau guide Bien-être du mois.",
     ),
 }
 
@@ -84,6 +94,8 @@ class PushSchedule:
         self.sleep_days = _parse_days(env.get("PUSH_SLEEP_DAYS"), ("wed", "sun"))
         self.lesson_time = _parse_hhmm(env.get("PUSH_LESSON_TIME"), (11, 0))
         self.lesson_days = _parse_days(env.get("PUSH_LESSON_DAY"), ("sun",))
+        self.wellbeing_time = _parse_hhmm(env.get("PUSH_WELLBEING_TIME"), (10, 0))
+        self.ebook_time = _parse_hhmm(env.get("PUSH_EBOOK_TIME"), (10, 15))
         self.catch_up_hours = catch_up_hours
 
     @classmethod
@@ -117,6 +129,12 @@ class PushSchedule:
             due.append(("weekly_sleep", f"{week_key}-{paris_now.weekday()}"))
         if self._is_due(paris_now, self.lesson_days, *self.lesson_time):
             due.append(("weekly_life_lesson", week_key))
+        if self._is_due(paris_now, every_day, *self.wellbeing_time):
+            due.append(("wellbeing_daily", day_key))
+        if self._is_due(paris_now, every_day, *self.ebook_time):
+            # Les ebooks sont développés par le store DB : la catégorie ne
+            # sera envoyée que pour une publication active non déjà notifiée.
+            due.append(("ebook_monthly", day_key))
         return due
 
 
@@ -148,41 +166,54 @@ def push_tick(now_utc, store, sender, schedule=None):
     for category, period in due:
         if category not in ALLOWED_TYPES or category not in MESSAGES:
             continue
-        title, body = MESSAGES[category]
-        for uid in recipients:
-            dedupe_key = f"{category}:{uid}:{period}"
-            tokens = store.active_tokens(uid)
-            provisional = ("dry_run" if dry
-                           else "sent" if tokens
-                           else "skipped_no_device")
-            if not store.claim(uid, category, dedupe_key, provisional):
-                summary["deduped"] += 1
-                continue
-            if not enabled:
-                store.finalize(dedupe_key, "skipped_disabled")
-                continue
-            if not tokens:
-                summary["skipped_no_device"] += 1
-                continue
+        if category == "ebook_monthly" and hasattr(store, "ebook_jobs"):
+            jobs = store.ebook_jobs(now_utc)
+        elif category == "wellbeing_daily" and hasattr(store, "wellbeing_jobs"):
+            jobs = store.wellbeing_jobs(now_utc)
+        else:
+            users = (store.recipients_for(category, now_utc)
+                     if hasattr(store, "recipients_for") else recipients)
+            jobs = [{"period": period, "title": MESSAGES[category][0],
+                     "body": MESSAGES[category][1], "user_ids": users}]
+        for job in jobs:
+            job_period = job["period"]
+            title, body = job["title"], job["body"]
+            user_ids = job.get("user_ids")
+            if user_ids is None and hasattr(store, "recipients_for"):
+                user_ids = store.recipients_for(category, now_utc)
+            for uid in user_ids or []:
+                dedupe_key = f"{category}:{uid}:{job_period}"
+                tokens = store.active_tokens(uid)
+                provisional = ("dry_run" if dry
+                               else "sent" if tokens
+                               else "skipped_no_device")
+                if not store.claim(uid, category, dedupe_key, provisional):
+                    summary["deduped"] += 1
+                    continue
+                if not enabled:
+                    store.finalize(dedupe_key, "skipped_disabled")
+                    continue
+                if not tokens:
+                    summary["skipped_no_device"] += 1
+                    continue
 
-            any_ok = False
-            last_err = None
-            for tok in tokens:
-                res = sender.send(tok, category, title, body)
-                if res.outcome in ("sent", "dry_run"):
-                    any_ok = True
-                elif res.outcome == "invalid_token":
-                    store.mark_invalid(tok)
+                any_ok = False
+                for tok in tokens:
+                    res = sender.send(tok, category, title, body)
+                    if res.outcome in ("sent", "dry_run"):
+                        any_ok = True
+                    elif res.outcome == "invalid_token":
+                        store.mark_invalid(tok)
+                if any_ok:
+                    store.finalize(dedupe_key, "dry_run" if dry else "sent")
+                    if (category == "ebook_monthly" and not dry and
+                            hasattr(store, "mark_ebook_notification_sent")):
+                        store.mark_ebook_notification_sent(job.get("ebook_id"))
+                    summary["sent"] += 1
                 else:
-                    last_err = res.error
-            if any_ok:
-                store.finalize(dedupe_key, "dry_run" if dry else "sent")
-                summary["sent"] += 1
-            else:
-                # rien parti : on LIBÈRE la clé pour retenter au prochain tick
-                # (tant qu'on reste dans la fenêtre catch-up).
-                store.release(dedupe_key)
-                summary["failed"] += 1
+                    # Rien parti : libère la clé pour retenter au tick suivant.
+                    store.release(dedupe_key)
+                    summary["failed"] += 1
 
     return summary
 
@@ -222,6 +253,89 @@ class DbPushTickStore:
                 (str(user_id),),
             )
             return [r[0] for r in c.fetchall()]
+        finally:
+            conn.close()
+
+    def recipients_for(self, category, now_utc):
+        """Ciblage métier des rappels utilisateur sans exposer de données.
+        Un rappel Bien-être ne part que si le compte l'a explicitement activé.
+        Les autres catégories conservent le ciblage historique."""
+        if category != "wellbeing_daily":
+            return self.recipients()
+        conn = self._get_conn()
+        try:
+            c = conn.cursor()
+            c.execute(
+                "SELECT DISTINCT d.user_id FROM push_devices d "
+                "JOIN accounts a ON a.user_id=d.user_id "
+                "JOIN wellbeing_programs w ON w.user_id=a.user_id "
+                "WHERE d.enabled=TRUE AND d.revoked_at IS NULL "
+                "AND d.invalid_at IS NULL AND a.deleted_at IS NULL "
+                "AND w.reminder_enabled=TRUE AND w.reminder_type='wellbeing_daily'"
+            )
+            return [str(r[0]) for r in c.fetchall()]
+        finally:
+            conn.close()
+
+    def ebook_jobs(self, now_utc):
+        """Retourne les publications actives arrivées à échéance, une fois.
+        Les textes viennent du catalogue serveur et la clé de période repose
+        sur l'id stable de l'ebook, jamais sur la date du tick."""
+        conn = self._get_conn()
+        try:
+            c = conn.cursor()
+            local_date = now_utc.astimezone(PARIS).date()
+            c.execute(
+                "SELECT id, title, push_title, push_body FROM wellbeing_ebooks "
+                "WHERE active=TRUE AND publication_date<=%s "
+                "AND notification_sent_at IS NULL",
+                (local_date,),
+            )
+            rows = c.fetchall()
+            users = self.recipients()
+            return [{"ebook_id": str(row[0]),
+                     "period": f"ebook:{row[0]}",
+                     "title": row[2] or MESSAGES["ebook_monthly"][0],
+                     "body": row[3] or MESSAGES["ebook_monthly"][1],
+                     "user_ids": users} for row in rows]
+        finally:
+            conn.close()
+
+    def wellbeing_jobs(self, now_utc):
+        """Construit les rappels depuis la préférence persistée de chaque
+        programme. Le texte reste donc modifiable côté serveur."""
+        conn = self._get_conn()
+        try:
+            c = conn.cursor()
+            c.execute(
+                "SELECT w.reminder_text, w.user_id FROM wellbeing_programs w "
+                "JOIN accounts a ON a.user_id=w.user_id "
+                "JOIN push_devices d ON d.user_id=w.user_id "
+                "WHERE w.reminder_enabled=TRUE "
+                "AND w.reminder_type='wellbeing_daily' "
+                "AND a.deleted_at IS NULL AND d.enabled=TRUE "
+                "AND d.revoked_at IS NULL AND d.invalid_at IS NULL"
+            )
+            grouped = {}
+            for body, uid in c.fetchall():
+                body = body or MESSAGES["wellbeing_daily"][1]
+                grouped.setdefault(body, []).append(str(uid))
+            return [{"period": now_utc.astimezone(PARIS).date().isoformat(),
+                     "title": MESSAGES["wellbeing_daily"][0],
+                     "body": body, "user_ids": users}
+                    for body, users in grouped.items()]
+        finally:
+            conn.close()
+
+    def mark_ebook_notification_sent(self, ebook_id):
+        if ebook_id is None:
+            return
+        conn = self._get_conn()
+        try:
+            c = conn.cursor()
+            c.execute("UPDATE wellbeing_ebooks SET notification_sent_at=NOW() "
+                      "WHERE id=%s AND notification_sent_at IS NULL", (ebook_id,))
+            conn.commit()
         finally:
             conn.close()
 

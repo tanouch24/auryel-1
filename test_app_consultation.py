@@ -630,7 +630,7 @@ with patch.object(A, "call_llm", return_value=REPLY) as m_llm, \
 j = r.get_json()
 check(r.status_code == 200, "1a premier message Premium -> 200")
 check(j["reply"] == REPLY and m_llm.call_count == 1, "1b reply renvoyé, call_llm appelé 1x")
-check(set(j.keys()) == {"reply", "message_id", "llm_status", "consultation", "time", "quota"},
+check(set(j.keys()) == {"reply", "message_id", "llm_status", "consultation", "time", "quota", "rewarded"},
       "1c racine = reply / message_id / llm_status / consultation / time / quota")
 check(j["consultation"]["opened_now"] is True, "1d opened_now = true (flow.consultation.created)")
 check(j["consultation"]["credit_source"] == "time", "1e credit_source = time")
@@ -640,9 +640,9 @@ check(j["time"]["premium_remaining_seconds"] == 28800
       "1g time : Premium plein (1er touch ne débite rien)")
 check(j["consultation"]["seconds_remaining"] == j["time"]["total_remaining_seconds"] == 28800,
       "1h consultation.seconds_remaining == time.total_remaining_seconds (PAS expires_at - now)")
-check(j["quota"]["is_premium"] is True and j["quota"]["monthly_limit"] == 8
+check(j["quota"]["is_premium"] is True and j["quota"]["monthly_limit"] == 4
       and j["quota"]["monthly_used"] == 0,
-      "1i shim : is_premium, monthly_limit 8, monthly_used 0 (aucun débit legacy)")
+      "1i shim : is_premium, monthly_limit 4, monthly_used 0 (aucun débit legacy)")
 check(FAKE["consultation_allowance"][0]["monthly_used"] == 0,
       "1j monthly_used legacy JAMAIS incrémenté par le POST")
 _cid = j["consultation"]["id"]
@@ -682,8 +682,10 @@ with patch.object(A, "call_llm", return_value=REPLY) as m_llm3, \
     r3 = _post(tok)
 j3 = r3.get_json()
 check(r3.status_code == 402, "3a aucun temps -> HTTP 402")
-check(j3["error"] == "time_exhausted" and j3["consultation"] is None,
-      "3b payload { error: time_exhausted, consultation: null }")
+check(j3["error"] == "consultation_credit_exhausted"
+      and j3["legacy_error"] == "time_exhausted"
+      and j3["consultation"] is None,
+      "3b payload { error: consultation_credit_exhausted, consultation: null }")
 check(j3["time"]["total_remaining_seconds"] == 0
       and j3["time"]["window_active"] is False
       and j3["time"]["window_expires_at"] is None,
@@ -705,7 +707,7 @@ A.grant_earned_credit(UID1, "referral")
 with patch.object(A, "call_llm", return_value=REPLY) as m_llm4:
     r4 = _post(tok)
 j4 = r4.get_json()
-check(r4.status_code == 402 and j4["error"] == "time_exhausted",
+check(r4.status_code == 402 and j4["error"] == "consultation_credit_exhausted",
       "4a earned credit seul ne donne plus accès -> 402 time_exhausted")
 check(m_llm4.call_count == 0, "4b aucun LLM")
 check(sum(1 for e in FAKE["earned_credits"] if e["consumed_at"] is None) == 1
@@ -717,7 +719,7 @@ check(j4["quota"]["earned_available"] == 1, "4d quota.earned_available préserv�
 tok = fresh(premium=False)
 with patch.object(A, "call_llm", return_value=REPLY) as m_llm5:
     r5 = _post(tok)
-check(r5.status_code == 402 and r5.get_json()["error"] == "time_exhausted"
+check(r5.status_code == 402 and r5.get_json()["error"] == "consultation_credit_exhausted"
       and m_llm5.call_count == 0,
       "5 gratuit sans temps -> 402 time_exhausted, aucun LLM")
 
@@ -765,9 +767,9 @@ check(js["time"]["premium_remaining_seconds"] == 28800
       and js["time"]["window_active"] is False
       and js["time"]["window_expires_at"] is None,
       "7b state : time = 28800 Premium, fenêtre inactive")
-check(js["quota"]["is_premium"] is True and js["quota"]["monthly_limit"] == 8
+check(js["quota"]["is_premium"] is True and js["quota"]["monthly_limit"] == 4
       and js["quota"]["monthly_remaining"] == 8 and js["quota"]["monthly_used"] == 0,
-      "7b2 shim : monthly_limit 8, remaining 8, used 0")
+      "7b2 shim : monthly_limit 4, remaining 8, used 0")
 check(len(FAKE["consultations"]) == 0, "7c state n'ouvre AUCUNE consultation")
 
 # 7d. actif après un message + earned credit préservé.
@@ -956,10 +958,10 @@ tok = fresh()   # rétablit l'état pour les scénarios suivants
 tok = fresh()
 FAKE["consultation_allowance"][0]["monthly_used_seconds"] = 5400   # 1 h 30 consommée
 jq = _state(tok)["quota"]
-check(jq["monthly_limit"] == 8
+check(jq["monthly_limit"] == 4
       and jq["monthly_remaining"] == 7          # ceil((28800-5400)/3600) = ceil(6.5) = 7
-      and jq["monthly_used"] == 1,              # 8 - 7
-      "7.K shim : monthly_limit 8, monthly_remaining ceil(premium/3600)=7, monthly_used 1")
+      and jq["monthly_used"] == 0,              # 4 - 7, borné à 0
+      "7.K shim : monthly_limit 4, monthly_remaining ceil(premium/3600)=7")
 
 # --- 7.L — first_free_available dérivé du temps -----------------------------
 tok = fresh(premium=False, first_free=True)
@@ -1025,7 +1027,7 @@ check(len(FAKE["consultations"]) == 2, "8g exactement 2 consultations logiques")
 tok = fresh()
 with patch.object(A, "call_llm", return_value=REPLY):
     j9 = _post(tok).get_json()
-check(set(j9.keys()) == {"reply", "message_id", "llm_status", "consultation", "time", "quota"},
+check(set(j9.keys()) == {"reply", "message_id", "llm_status", "consultation", "time", "quota", "rewarded"},
       "9a clés racine = reply / message_id / llm_status / consultation / time / quota")
 check(set(j9["consultation"].keys()) == {"id", "advisor_id", "started_at", "expires_at",
                                           "seconds_remaining", "credit_source", "opened_now"},
@@ -1147,7 +1149,7 @@ _drain_first_free()
 _expire_window()
 with patch.object(A, "call_llm", return_value=REPLY) as m_llm15d:
     r15d = _post(tok)
-check(r15d.status_code == 402 and r15d.get_json()["error"] == "time_exhausted"
+check(r15d.status_code == 402 and r15d.get_json()["error"] == "consultation_credit_exhausted"
       and m_llm15d.call_count == 0
       and r15d.get_json()["quota"]["first_free_available"] is False,
       "15d first_free épuisée + aucun autre droit -> 402 time_exhausted")

@@ -8,6 +8,7 @@ from flask_limiter.util import get_remote_address
 from werkzeug.middleware.proxy_fix import ProxyFix
 from werkzeug.security import generate_password_hash, check_password_hash
 from groq import Groq
+from admob_ssv import SsvError, verify_callback
 import json as _json
 _RELANCES_PATH = os.path.join(os.path.dirname(__file__), "auryel_relances_h4_h22.json")
 try:
@@ -424,8 +425,83 @@ def get_conn():
     except Exception:
         return psycopg2.connect(DATABASE_URL)
 
+# ---------------------------------------------------------------------------
+# RÉVEIL AURYEL — 60 phrases du matin (Migration v47). Aucun prénom, aucune
+# voyance/prédiction/promesse, ton calme/positif/adulte, jamais infantilisant.
+# Texte = source de vérité (PostgreSQL) ; l'audio MP3 pré-généré (Cloudflare
+# R2) est référencé par `audio_url`, NULLABLE tant qu'il n'est pas produit —
+# l'app utilise alors un repli TextToSpeech local (voir CLAUDE.md / rapport
+# du lot « feed méditation + réveil vocal »). Définie AVANT `init_db()` (et
+# non à côté de l'endpoint plus bas) : `init_db()` est appelée dès l'import du
+# module (cf. plus bas `try: init_db()`), avant que le reste du fichier ne
+# soit exécuté — le nom doit donc déjà exister à ce moment-là.
+# ---------------------------------------------------------------------------
+_WAKE_MESSAGES_SEED = (
+    "Respire doucement avant de te lever. Ce moment n'appartient qu'à toi.",
+    "Prends le temps de te réveiller vraiment, sans te presser.",
+    "Cette journée n'a pas besoin d'être parfaite pour être bonne.",
+    "Commence doucement. Le reste suivra à son heure.",
+    "Un peu de calme le matin change souvent toute une journée.",
+    "Tu n'as pas à tout faire tout de suite. Choisis une seule chose et commence par elle.",
+    "Laisse la nuit derrière toi et accueille ce nouveau jour tel qu'il vient.",
+    "Ta journée peut commencer simplement, sans pression ni attente.",
+    "Offre-toi quelques minutes avant de courir vers le reste du monde.",
+    "Ce que tu ressens ce matin a le droit d'exister, sans jugement.",
+    "Avance doucement. La constance compte plus que la vitesse.",
+    "Aujourd'hui, sois un peu plus indulgent avec toi-même.",
+    "Une journée se construit geste après geste, pas d'un seul coup.",
+    "Tu peux commencer petit. Ce sera déjà suffisant.",
+    "Le calme du matin t'appartient, personne ne peut te le prendre.",
+    "Prends une grande respiration. Tu as le temps de bien démarrer.",
+    "Rien ne t'oblige à foncer dès les premières minutes du jour.",
+    "Fais de la place pour un peu de douceur avant d'attaquer ta journée.",
+    "Chaque matin est une occasion simple de recommencer autrement.",
+    "Tu peux avancer sans te comparer à hier ou à demain.",
+    "Aujourd'hui, écoute un peu plus ce dont tu as vraiment besoin.",
+    "Un bon départ ne demande pas grand-chose : juste un peu de présence.",
+    "Laisse ton corps se réveiller à son propre rythme.",
+    "Tu n'as rien à prouver ce matin, seulement à commencer.",
+    "Cette journée t'appartient. Tu peux la façonner à ta mesure.",
+    "Accorde-toi le droit de démarrer lentement si c'est ce dont tu as besoin.",
+    "Un geste calme le matin peut apaiser toute une journée.",
+    "Avance avec ce que tu as aujourd'hui, ça suffit amplement.",
+    "Ce matin, choisis la douceur plutôt que la précipitation.",
+    "Tu peux traverser cette journée sans te mettre de pression inutile.",
+    "Prends un instant pour toi avant que la journée ne s'accélère.",
+    "Le silence du matin est un bon endroit pour se retrouver.",
+    "Une journée qui commence calmement laisse plus de place à l'essentiel.",
+    "Tu as le droit de prendre ton temps, même un lundi.",
+    "Ce jour t'offre une page neuve. Écris-la à ton allure.",
+    "Reste simple ce matin. Le reste peut attendre quelques minutes.",
+    "Un réveil tranquille est déjà une bonne façon de commencer.",
+    "Tu n'as pas à être au meilleur de toi-même dès le réveil.",
+    "Laisse-toi le temps d'ouvrir les yeux avant d'ouvrir les pensées.",
+    "Aujourd'hui, avance pas à pas plutôt que tout d'un bloc.",
+    "Un matin calme prépare souvent une journée plus légère.",
+    "Tu peux commencer doucement et accélérer seulement si tu en as envie.",
+    "Ce réveil est une occasion simple de repartir sur une base saine.",
+    "Prends soin de toi avant de prendre soin du reste.",
+    "Rien ne presse encore. Profite de ce moment tranquille.",
+    "Une respiration lente peut suffire à changer la couleur du matin.",
+    "Tu peux avancer avec constance, sans te brusquer.",
+    "Ce matin t'appartient encore un peu avant que la journée ne commence vraiment.",
+    "Accueille cette journée comme elle vient, sans l'exiger parfaite.",
+    "Un pas tranquille aujourd'hui vaut mieux qu'une course dès le réveil.",
+    "Tu as le droit de démarrer doucement, même si d'autres foncent déjà.",
+    "Ce moment de calme est un bon carburant pour la suite.",
+    "Laisse la journée se dérouler sans vouloir tout contrôler d'avance.",
+    "Un réveil paisible peut suffire à donner le ton du jour.",
+    "Avance avec ce que tu ressens maintenant, pas avec ce que tu devrais ressentir.",
+    "Ce matin, une seule intention simple peut suffire à bien commencer.",
+    "Tu peux poser les choses une à une, sans précipitation.",
+    "Une journée posée commence souvent par un réveil sans urgence.",
+    "Fais de ce moment un point d'appui calme pour toute la journée.",
+    "Aujourd'hui encore, tu as le droit d'avancer à ta manière.",
+)
+
+
 class CriticalSchemaMigrationError(RuntimeError):
-    """Migration critique échouée : le serveur ne doit pas démarrer invalide."""
+    """A critical schema guarantee is unavailable; startup must stop."""
 
 
 def init_db():
@@ -2121,8 +2197,741 @@ def init_db():
         conn.rollback()
         print(f"Migration v46 (r2 media sync): {e}")
 
-    # Migration v47 — CATALOGUE MP4 MÉDITATIONS R2. Additif : catalogue
-    # distinct des audios et des vidéos d'ambiance du Réveil.
+    # Migration v47 — RÉVEIL AURYEL : messages du matin. PUREMENT ADDITIF :
+    # 1 table neuve + 1 index + seed idempotent de 60 phrases. Aucune colonne
+    # existante ALTER-ée, aucun DROP / TRUNCATE / DELETE, aucune FK vers
+    # accounts (contenu GLOBAL, comme meditation_catalog / relaxation_video_
+    # catalog). Miroir lisible : migrations/021_wake_messages.sql.
+    try:
+        c.execute("""
+            CREATE TABLE IF NOT EXISTS wake_messages (
+                id           UUID         PRIMARY KEY,
+                text         TEXT         NOT NULL UNIQUE,
+                is_active    BOOLEAN      NOT NULL DEFAULT TRUE,
+                audio_url    TEXT,
+                created_at   TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
+                updated_at   TIMESTAMPTZ  NOT NULL DEFAULT NOW()
+            )
+        """)
+        c.execute("""
+            CREATE INDEX IF NOT EXISTS idx_wake_messages_active
+            ON wake_messages (is_active, id)
+        """)
+        # Seed idempotent : UNIQUE(text) + ON CONFLICT DO NOTHING -> rejouable
+        # sans jamais dupliquer une phrase, même si le texte est ajusté ici
+        # dans une future version (une phrase déjà en base n'est pas éditée
+        # par le seed, uniquement par l'admin).
+        for _msg in _WAKE_MESSAGES_SEED:
+            c.execute(
+                "INSERT INTO wake_messages (id, text) VALUES (%s, %s) "
+                "ON CONFLICT (text) DO NOTHING",
+                (str(uuid.uuid4()), _msg),
+            )
+        conn.commit()
+    except Exception as e:
+        conn.rollback()
+        print(f"Migration v47 (wake messages): {e}")
+
+    # Migration v48 — GROS CHANTIER ÉCONOMIQUE (Prompt 1/5) : bienvenue
+    # 20 min (au lieu d'1 h), + idempotency_key sur time_ledger pour le futur
+    # moteur de bonus. PUREMENT ADDITIF : 1 ALTER COLUMN (SET DEFAULT, ne
+    # touche aucune ligne existante), 1 UPDATE ciblé et NON DESTRUCTEUR
+    # (uniquement les comptes n'ayant JAMAIS consommé la bienvenue et encore
+    # à l'ancienne valeur exacte 3600), 1 colonne nullable + 1 index UNIQUE
+    # PARTIEL. Aucun DROP / TRUNCATE / DELETE, aucune autre table touchée.
+    #
+    #   accounts.first_free_seconds_remaining
+    #     Nouveau standard produit : 20 min (1200 s) au lieu d'1 h (3600 s),
+    #     décision documentée dans le rapport du lot. `SET DEFAULT 1200`
+    #     -> tout NOUVEAU compte (INSERT omettant la colonne) reçoit 1200
+    #     désormais. Comptes EXISTANTS :
+    #       - JAMAIS consommée (first_consultation_used_at IS NULL) ET encore
+    #         EXACTEMENT à l'ancienne valeur par défaut (3600, donc jamais
+    #         touchée par un ajustement admin ou un débit partiel) -> ramenée
+    #         à 1200. Choix documenté : la bienvenue n'a par définition RIEN
+    #         coûté à ce compte (aucune seconde consommée) ; aligner sur le
+    #         nouveau standard n'enlève aucun bénéfice déjà exercé. Aucun
+    #         double cadeau : ce n'est jamais un AJOUT, seulement un
+    #         RÉALIGNEMENT d'un solde encore vierge.
+    #       - déjà partiellement/totalement consommée (first_consultation_
+    #         used_at renseigné) OU à une valeur custom (admin) -> JAMAIS
+    #         touchée : stratégie la plus conservatrice face à l'ambiguïté
+    #         (cf. règle explicite du lot : « si ambigu, la plus
+    #         conservatrice »).
+    #     Idempotent : au rejeu, plus aucune ligne ne vaut exactement 3600
+    #     avec used_at NULL (déjà ramenée à 1200 la 1re fois) -> 0 ligne
+    #     modifiée.
+    #
+    #   time_ledger.idempotency_key
+    #     Nouvelle colonne nullable + index UNIQUE PARTIEL
+    #     (user_id, idempotency_key) WHERE idempotency_key IS NOT NULL.
+    #     Sert UNIQUEMENT au futur crédit générique `credit_bonus_time` (voir
+    #     plus bas) : les lignes historiques (débits de consultation, seed
+    #     backfill v42…) gardent idempotency_key NULL, jamais concernées par
+    #     l'index (partiel). Aucune ligne existante modifiée.
+    try:
+        c.execute(
+            "ALTER TABLE accounts "
+            "ALTER COLUMN first_free_seconds_remaining SET DEFAULT 1200"
+        )
+        c.execute(
+            "UPDATE accounts SET first_free_seconds_remaining = 1200 "
+            "WHERE first_consultation_used_at IS NULL "
+            "AND first_free_seconds_remaining = 3600"
+        )
+        c.execute(
+            "ALTER TABLE time_ledger "
+            "ADD COLUMN IF NOT EXISTS idempotency_key TEXT"
+        )
+        c.execute("""
+            CREATE UNIQUE INDEX IF NOT EXISTS uq_time_ledger_user_idempotency
+            ON time_ledger (user_id, idempotency_key)
+            WHERE idempotency_key IS NOT NULL
+        """)
+        conn.commit()
+    except Exception as e:
+        conn.rollback()
+        print(f"Migration v48 (welcome 20 min + bonus idempotency): {e}")
+
+    # Migration v49 — GROS CHANTIER AURYEL (Prompt 2/5) : ÉTOILES AURYEL,
+    # monnaie interne virtuelle (non transférable, sans valeur monétaire, non
+    # remboursable). PUREMENT ADDITIF : 4 tables neuves + 3 FK idempotentes +
+    # un seed idempotent de règles. Aucune colonne existante ALTER-ée, aucun
+    # backfill, aucun DROP / TRUNCATE / DELETE, aucune donnée existante
+    # modifiée. NE RÉUTILISE PAS le moteur temps (accounts.*_seconds_remaining,
+    # time_ledger) : les Étoiles sont une monnaie DISTINCTE, avec son propre
+    # wallet/journal/règles — cf. audit du rapport de ce lot (share_reward_days
+    # / wellbeing_mission_days / memory_rewards existants créditent tous du
+    # TEMPS, jamais une monnaie de points ; aucune architecture de points
+    # préexistante à réutiliser).
+    #
+    #   reward_wallet
+    #     UNE ligne par utilisateur. `stars_balance` = solde ACTUEL (source de
+    #     vérité affichée). `current_streak` / `best_streak` /
+    #     `last_active_reward_date` : streak de jours actifs consécutifs (jour
+    #     Europe/Paris, même convention que `_wellbeing_day` /
+    #     `_reward_share_date` — pas une 3e fonction de jour). Créée
+    #     paresseusement (`INSERT ... ON CONFLICT DO NOTHING`) au premier
+    #     `award_stars` : un compte qui ne gagne jamais d'Étoile n'a pas besoin
+    #     de ligne.
+    #
+    #   reward_rules
+    #     Configuration SERVEUR des montants (jamais codés en dur dans
+    #     Flutter). `daily_limit` : NULL = pas de plafond quotidien dédié (ex.
+    #     `streak_7_days`, jalon et non action quotidienne) ; 1 = la seule
+    #     valeur exploitée dans ce lot (toutes les actions quotidiennes),
+    #     appliquée via l'UNIQUE de `daily_action_claims` (pas encore de
+    #     support N>1/jour — non nécessaire aujourd'hui, cf. rapport).
+    #     `cooldown_seconds` : NULL = non utilisé pour l'instant (colonne
+    #     prête pour une future règle à cooldown). Seed idempotent (`ON
+    #     CONFLICT (rule_key) DO NOTHING`) : un montant ajusté ensuite en base
+    #     par un opérateur n'est JAMAIS écrasé par un rejeu de migration.
+    #     `mini_game_completed` / `rewarded_ad_completed` : clés FUTURES
+    #     prévues mais `enabled=FALSE` — pas d'appelant dans ce lot (interdit :
+    #     mini-jeux, AdMob).
+    #
+    #   daily_action_claims
+    #     Anti-farming EN BASE (pas seulement applicatif) : UNIQUE
+    #     (user_id, action_key, claim_date) — fermer/réouvrir l'app, logout/
+    #     login, spam bouton, retry réseau, multi-device ne peuvent jamais
+    #     produire une 2e ligne pour le même (utilisateur, action, jour). Sert
+    #     aussi de base à la détection de streak (`_bump_streak_tx` dans
+    #     `award_stars`).
+    #
+    #   reward_transactions
+    #     Journal APPEND-ONLY (aucun UPDATE destructif d'historique). `type` :
+    #     'earn' (seul type produit dans ce lot) ou 'spend' (fondation pour un
+    #     futur débit — `_debit_stars_tx` existe déjà, non exposé en HTTP).
+    #     `idempotency_key` + index UNIQUE PARTIEL (user_id, idempotency_key)
+    #     WHERE idempotency_key IS NOT NULL : MÊME idiome que
+    #     `time_ledger.idempotency_key` (migration v48) — protection
+    #     supplémentaire au-delà de `daily_action_claims`, notamment pour les
+    #     jalons non quotidiens (`streak_7_days`).
+    #
+    # FK ... -> accounts(user_id) SANS ON DELETE CASCADE (idiome v27 : blocs
+    # DO $$ n'attrapant que duplicate_object) : DELETE /api/app/account purge
+    # explicitement reward_wallet / reward_transactions / daily_action_claims
+    # (cf. _ACCOUNT_DELETE_CHILD_TABLES, mis à jour). `reward_rules` est une
+    # table de configuration GLOBALE (comme wake_messages) : aucune FK
+    # utilisateur, absente de _ACCOUNT_DELETE_CHILD_TABLES.
+    # Miroir lisible : migrations/023_reward_stars.sql.
+    try:
+        c.execute("""
+            CREATE TABLE IF NOT EXISTS reward_wallet (
+                user_id                  UUID         PRIMARY KEY,
+                stars_balance            BIGINT       NOT NULL DEFAULT 0,
+                current_streak           INTEGER      NOT NULL DEFAULT 0,
+                best_streak              INTEGER      NOT NULL DEFAULT 0,
+                last_active_reward_date  DATE,
+                updated_at               TIMESTAMPTZ  NOT NULL DEFAULT NOW()
+            )
+        """)
+        c.execute("""
+            CREATE TABLE IF NOT EXISTS reward_rules (
+                rule_key         TEXT         PRIMARY KEY,
+                stars_amount     INTEGER      NOT NULL,
+                enabled          BOOLEAN      NOT NULL DEFAULT TRUE,
+                daily_limit      INTEGER,
+                cooldown_seconds INTEGER,
+                metadata         JSONB,
+                created_at       TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
+                updated_at       TIMESTAMPTZ  NOT NULL DEFAULT NOW()
+            )
+        """)
+        c.execute("""
+            CREATE TABLE IF NOT EXISTS daily_action_claims (
+                id             UUID         PRIMARY KEY,
+                user_id        UUID         NOT NULL,
+                action_key     TEXT         NOT NULL,
+                claim_date     DATE         NOT NULL,
+                source_id      TEXT,
+                stars_awarded  INTEGER      NOT NULL,
+                created_at     TIMESTAMPTZ  NOT NULL DEFAULT NOW()
+            )
+        """)
+        c.execute("""
+            CREATE UNIQUE INDEX IF NOT EXISTS uq_daily_action_claims_user_action_date
+            ON daily_action_claims (user_id, action_key, claim_date)
+        """)
+        c.execute("""
+            CREATE TABLE IF NOT EXISTS reward_transactions (
+                id               UUID         PRIMARY KEY,
+                user_id          UUID         NOT NULL,
+                delta_stars      INTEGER      NOT NULL,
+                balance_after    BIGINT       NOT NULL,
+                type             TEXT         NOT NULL,
+                reason           TEXT         NOT NULL,
+                source_type      TEXT,
+                source_id        TEXT,
+                idempotency_key  TEXT,
+                metadata         JSONB,
+                created_at       TIMESTAMPTZ  NOT NULL DEFAULT NOW()
+            )
+        """)
+        c.execute("""
+            CREATE UNIQUE INDEX IF NOT EXISTS uq_reward_transactions_user_idempotency
+            ON reward_transactions (user_id, idempotency_key)
+            WHERE idempotency_key IS NOT NULL
+        """)
+        c.execute("""
+            CREATE INDEX IF NOT EXISTS idx_reward_transactions_user_created
+            ON reward_transactions (user_id, created_at DESC)
+        """)
+        conn.commit()
+    except Exception as e:
+        conn.rollback()
+        print(f"Migration v49 (reward_wallet/rules/claims/transactions): {e}")
+
+    try:
+        c.execute("""
+            DO $$
+            BEGIN
+                ALTER TABLE reward_wallet
+                    ADD CONSTRAINT fk_reward_wallet_account
+                    FOREIGN KEY (user_id) REFERENCES accounts(user_id);
+            EXCEPTION
+                WHEN duplicate_object THEN NULL;
+            END
+            $$;
+        """)
+        c.execute("""
+            DO $$
+            BEGIN
+                ALTER TABLE daily_action_claims
+                    ADD CONSTRAINT fk_daily_action_claims_account
+                    FOREIGN KEY (user_id) REFERENCES accounts(user_id);
+            EXCEPTION
+                WHEN duplicate_object THEN NULL;
+            END
+            $$;
+        """)
+        c.execute("""
+            DO $$
+            BEGIN
+                ALTER TABLE reward_transactions
+                    ADD CONSTRAINT fk_reward_transactions_account
+                    FOREIGN KEY (user_id) REFERENCES accounts(user_id);
+            EXCEPTION
+                WHEN duplicate_object THEN NULL;
+            END
+            $$;
+        """)
+        conn.commit()
+    except Exception as e:
+        conn.rollback()
+        print(f"Migration v49 (reward FKs): {e}")
+
+    try:
+        # Seed idempotent : n'écrase JAMAIS un montant déjà ajusté en base
+        # (ON CONFLICT DO NOTHING, jamais DO UPDATE). Montants du rapport
+        # Prompt 2/5 §3. `mini_game_completed` / `rewarded_ad_completed` :
+        # clés réservées, désactivées (aucun appelant dans ce lot).
+        c.executemany(
+            "INSERT INTO reward_rules "
+            "(rule_key, stars_amount, enabled, daily_limit, cooldown_seconds) "
+            "VALUES (%s, %s, %s, %s, %s) "
+            "ON CONFLICT (rule_key) DO NOTHING",
+            [
+                ("wake_completed",       5,  True,  1,    None),
+                ("daily_card_completed", 10, True,  1,    None),
+                ("tarot_completed",      10, True,  1,    None),
+                ("meditation_completed", 10, True,  1,    None),
+                ("share_completed",      15, True,  1,    None),
+                ("streak_7_days",        50, True,  None, None),
+                ("mini_game_completed",  0,  False, None, None),
+                ("rewarded_ad_completed", 0, False, None, None),
+            ],
+        )
+        conn.commit()
+    except Exception as e:
+        conn.rollback()
+        print(f"Migration v49 (reward_rules seed): {e}")
+
+    # Migration v50 — GROS CHANTIER AURYEL (Prompt 3/5) : CONSULTATION EXPRESS
+    # (dépenser des Étoiles contre du temps) + MINI-JEUX (session serveur
+    # générique, réutilisée par les 3 jeux). PUREMENT ADDITIF : 3 tables
+    # neuves + 2 FK idempotentes + 1 UPDATE ciblé et GARDÉ (active la règle
+    # `mini_game_completed`, déjà présente désactivée depuis v49 — jamais un
+    # INSERT en double, jamais un écrasement d'un réglage déjà personnalisé).
+    # Aucune colonne existante ALTER-ée, aucun DROP / TRUNCATE / DELETE.
+    #
+    #   express_products
+    #     Configuration SERVEUR (comme reward_rules) du catalogue "temps
+    #     contre Étoiles" — `stars_cost` / `seconds_granted` / `enabled`
+    #     jamais codés en dur côté Flutter. Seed idempotent (ON CONFLICT DO
+    #     NOTHING) : `express_consultation_10min` (500 Étoiles -> 600 s).
+    #
+    #   express_consultations
+    #     Trace d'audit APPEND-ONLY d'un achat réussi (Étoiles dépensées <->
+    #     temps accordé). UNIQUE (user_id, idempotency_key) : sert de PREMIER
+    #     gardien d'idempotence (avant même `_debit_stars_tx` /
+    #     `_credit_bonus_time_tx`) — un rejeu de la MÊME clé renvoie le
+    #     résultat déjà enregistré, ne rejoue jamais le débit/crédit.
+    #
+    #   mini_game_sessions
+    #     Session de jeu SERVEUR générique, partagée par les 2 NOUVEAUX
+    #     mini-jeux (Suite intuitive / Carte cachée) — même idiome que
+    #     `memory_games` (déjà existante, RÉUTILISÉE telle quelle pour le
+    #     Memory) : `start` crée une session imprévisible, `finish` la ferme
+    #     EXACTLY-ONCE (`UPDATE ... WHERE status='active'` + rowcount) et
+    #     empêche l'appel trivial `finish` répété. `game_key` ∈
+    #     ('sequence_recall', 'hidden_card').
+    #
+    # RÉCOMPENSE MINI-JEUX — UNIFIÉE : Memory (table existante, logique de
+    # difficulté/seuil/plausibilité inchangée) ET les 2 nouveaux jeux
+    # (mini_game_sessions) créditent tous la MÊME règle `mini_game_completed`
+    # via `award_stars`, dont le plafond quotidien (`daily_action_claims`,
+    # partagé par CLÉ DE RÈGLE, pas par jeu) garantit NATURELLEMENT "maximum
+    # UNE récompense mini-jeu par jour pour l'ensemble de la catégorie" sans
+    # code supplémentaire. Memory NE CRÉDITE PLUS `earned_seconds_remaining`
+    # pour les NOUVELLES parties (cf. modification de api_memory_complete) —
+    # `memory_rewards` cesse de recevoir de nouvelles lignes (son historique
+    # existant, lui, n'est pas touché) : plus jamais de double récompense
+    # temps + Étoiles pour une même partie.
+    #
+    # FK ... -> accounts(user_id) SANS ON DELETE CASCADE (idiome v27) : DELETE
+    # /api/app/account purge explicitement express_consultations /
+    # mini_game_sessions (cf. _ACCOUNT_DELETE_CHILD_TABLES, mis à jour).
+    # `express_products` est une config GLOBALE (comme reward_rules) : aucune
+    # FK utilisateur.
+    # Miroir lisible : migrations/024_express_and_minigames.sql.
+    try:
+        c.execute("""
+            CREATE TABLE IF NOT EXISTS express_products (
+                product_key      TEXT         PRIMARY KEY,
+                stars_cost       INTEGER      NOT NULL,
+                seconds_granted  INTEGER      NOT NULL,
+                enabled          BOOLEAN      NOT NULL DEFAULT TRUE,
+                created_at       TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
+                updated_at       TIMESTAMPTZ  NOT NULL DEFAULT NOW()
+            )
+        """)
+        c.execute("""
+            CREATE TABLE IF NOT EXISTS express_consultations (
+                id               UUID         PRIMARY KEY,
+                user_id          UUID         NOT NULL,
+                stars_spent      INTEGER      NOT NULL,
+                seconds_granted  INTEGER      NOT NULL,
+                status           TEXT         NOT NULL DEFAULT 'completed',
+                idempotency_key  TEXT         NOT NULL,
+                created_at       TIMESTAMPTZ  NOT NULL DEFAULT NOW()
+            )
+        """)
+        c.execute("""
+            CREATE UNIQUE INDEX IF NOT EXISTS uq_express_consultations_user_idempotency
+            ON express_consultations (user_id, idempotency_key)
+        """)
+        c.execute("""
+            CREATE TABLE IF NOT EXISTS mini_game_sessions (
+                id            UUID         PRIMARY KEY,
+                user_id       UUID         NOT NULL,
+                game_key      TEXT         NOT NULL,
+                started_at    TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
+                status        TEXT         NOT NULL DEFAULT 'active',
+                completed_at  TIMESTAMPTZ,
+                created_at    TIMESTAMPTZ  NOT NULL DEFAULT NOW()
+            )
+        """)
+        c.execute("""
+            CREATE INDEX IF NOT EXISTS idx_mini_game_sessions_user_status
+            ON mini_game_sessions (user_id, status)
+        """)
+        # memory_games.reward_seconds (v39, NOT NULL DEFAULT 0) documentait le
+        # nombre de secondes credités — Memory ne crédite plus de temps (voir
+        # ci-dessus) : la colonne reste (jamais supprimée), toujours écrite à
+        # 0 pour les NOUVELLES parties. `stars_awarded` est la colonne
+        # ADDITIVE qui porte désormais la vraie récompense.
+        c.execute(
+            "ALTER TABLE memory_games "
+            "ADD COLUMN IF NOT EXISTS stars_awarded INTEGER NOT NULL DEFAULT 0"
+        )
+        conn.commit()
+    except Exception as e:
+        conn.rollback()
+        print(f"Migration v50 (express_products/express_consultations/mini_game_sessions): {e}")
+
+    try:
+        c.execute("""
+            DO $$
+            BEGIN
+                ALTER TABLE express_consultations
+                    ADD CONSTRAINT fk_express_consultations_account
+                    FOREIGN KEY (user_id) REFERENCES accounts(user_id);
+            EXCEPTION
+                WHEN duplicate_object THEN NULL;
+            END
+            $$;
+        """)
+        c.execute("""
+            DO $$
+            BEGIN
+                ALTER TABLE mini_game_sessions
+                    ADD CONSTRAINT fk_mini_game_sessions_account
+                    FOREIGN KEY (user_id) REFERENCES accounts(user_id);
+            EXCEPTION
+                WHEN duplicate_object THEN NULL;
+            END
+            $$;
+        """)
+        conn.commit()
+    except Exception as e:
+        conn.rollback()
+        print(f"Migration v50 (express/minigame FKs): {e}")
+
+    try:
+        c.execute(
+            "INSERT INTO express_products "
+            "(product_key, stars_cost, seconds_granted, enabled) "
+            "VALUES (%s, %s, %s, %s) "
+            "ON CONFLICT (product_key) DO NOTHING",
+            ("express_consultation_10min", 500, 600, True),
+        )
+        conn.commit()
+    except Exception as e:
+        conn.rollback()
+        print(f"Migration v50 (express_products seed): {e}")
+
+    try:
+        # Active la règle `mini_game_completed` (créée DÉSACTIVÉE en v49,
+        # amount=0, daily_limit=NULL). Gardé par `AND enabled=FALSE` : si un
+        # opérateur l'a DÉJÀ activée/personnalisée entre-temps, ce rejeu ne
+        # touche RIEN (jamais un écrasement d'un réglage déjà en place).
+        c.execute(
+            "UPDATE reward_rules SET stars_amount=15, enabled=TRUE, "
+            "daily_limit=1, updated_at=%s "
+            "WHERE rule_key='mini_game_completed' AND enabled=FALSE",
+            (datetime.utcnow(),),
+        )
+        conn.commit()
+    except Exception as e:
+        conn.rollback()
+        print(f"Migration v50 (activation mini_game_completed): {e}")
+
+    # ============================================================
+    # Migration v51 — GROS CHANTIER AURYEL (Prompt technique 1) : ÉCONOMIE
+    # ÉTOILES v2. PUREMENT ADDITIF côté schéma (1 colonne + 1 index remplacé,
+    # jamais une table détruite) + des UPDATE GARDÉS (jamais un écrasement
+    # d'un réglage déjà personnalisé en prod) + 4 nouveaux produits express.
+    #
+    #   daily_action_claims.claim_seq (colonne ADDITIVE, DEFAULT 1)
+    #     Jusqu'ici l'unicité (user_id, action_key, claim_date) plafonnait
+    #     TOUTE règle à 1 crédit/jour EN PRATIQUE, quelle que soit la valeur
+    #     de reward_rules.daily_limit — `rewarded_ad_completed` a besoin de 5.
+    #     `claim_seq` numérote les réclamations du jour (1, 2, 3…) ; l'unicité
+    #     devient (user_id, action_key, claim_date, claim_seq). Un
+    #     daily_limit=1 se comporte EXACTEMENT comme avant (`_award_stars_tx`
+    #     compte AVANT d'insérer : 0 claim -> autorisé avec claim_seq=1, puis
+    #     1 claim -> refusé) ; un daily_limit=N autorise N lignes distinctes.
+    #     L'ancien index est supprimé puis remplacé (jamais les deux actifs
+    #     en même temps, ce qui replafonnerait tout le monde à 1). Aucune
+    #     donnée n'est perdue : DROP INDEX ne touche qu'une contrainte, pas
+    #     les lignes déjà écrites (`claim_seq` DEFAULT 1 les rend valides
+    #     sous le nouvel index sans réécriture).
+    #
+    #   reward_rules — nouveau barème (Prompt technique 1)
+    #     wake_completed / share_completed / mini_game_completed : montants
+    #     ajustés (voir rapport). `rewarded_ad_completed` : ACTIVÉE (créée
+    #     désactivée en v49, réservée depuis). meditation_completed,
+    #     daily_card_completed, tarot_completed, streak_7_days : montants
+    #     INCHANGÉS (aucune cible fournie pour les 2 premières ; logique
+    #     streak jugée saine, conservée telle quelle). Chaque UPDATE est
+    #     GARDÉ par l'ancienne valeur/état : un opérateur ayant déjà
+    #     personnalisé une règle n'est jamais écrasé par un rejeu.
+    #
+    #   express_products — nouveaux paliers Étoiles -> temps
+    #     `express_consultation_10min` : 500 -> 400 ⭐ (durée inchangée,
+    #     10 min). 4 produits ADDITIFS (jamais un remplacement) : 15/30/45/60
+    #     minutes, au ratio produit annoncé (500 ⭐ = 15 min, puis linéaire).
+    #     Choix DISCRETS comme avant (aucun calcul serveur nouveau requis) :
+    #     `purchase_express_consultation` / l'endpoint HTTP restent
+    #     INCHANGÉS, la table suffit — le serveur reste seul décisionnaire
+    #     du coût/durée, jamais une valeur fournie par le client.
+    #
+    # Miroir lisible : migrations/025_stars_economy_v2.sql.
+    # ============================================================
+    try:
+        c.execute(
+            "ALTER TABLE daily_action_claims "
+            "ADD COLUMN IF NOT EXISTS claim_seq INTEGER NOT NULL DEFAULT 1"
+        )
+        c.execute(
+            "DROP INDEX IF EXISTS uq_daily_action_claims_user_action_date"
+        )
+        c.execute("""
+            CREATE UNIQUE INDEX IF NOT EXISTS
+                uq_daily_action_claims_user_action_date_seq
+            ON daily_action_claims (user_id, action_key, claim_date, claim_seq)
+        """)
+        conn.commit()
+    except Exception as e:
+        conn.rollback()
+        print(f"Migration v51 (daily_action_claims multi-claims): {e}")
+
+    try:
+        now51 = datetime.utcnow()
+        # GARDÉ par l'ANCIEN montant : un opérateur ayant déjà ajusté une de
+        # ces règles en base n'est jamais écrasé par ce rejeu.
+        c.executemany(
+            "UPDATE reward_rules SET stars_amount=%s, updated_at=%s "
+            "WHERE rule_key=%s AND stars_amount=%s",
+            [
+                (10, now51, "wake_completed", 5),
+                (20, now51, "share_completed", 15),
+                (20, now51, "mini_game_completed", 15),
+            ],
+        )
+        conn.commit()
+    except Exception as e:
+        conn.rollback()
+        print(f"Migration v51 (barème mis à jour): {e}")
+
+    try:
+        # Active la règle `rewarded_ad_completed` (créée DÉSACTIVÉE en v49,
+        # amount=0, daily_limit=NULL, réservée pour ce lot). Gardé par
+        # `AND enabled=FALSE` : même idiome que l'activation de
+        # `mini_game_completed` en v50.
+        c.execute(
+            "UPDATE reward_rules SET stars_amount=10, enabled=TRUE, "
+            "daily_limit=5, updated_at=%s "
+            "WHERE rule_key='rewarded_ad_completed' AND enabled=FALSE",
+            (datetime.utcnow(),),
+        )
+        conn.commit()
+    except Exception as e:
+        conn.rollback()
+        print(f"Migration v51 (activation rewarded_ad_completed): {e}")
+
+    try:
+        # GARDÉ par l'ANCIEN coût (500) : un opérateur ayant déjà ajusté ce
+        # produit n'est jamais écrasé par ce rejeu.
+        c.execute(
+            "UPDATE express_products SET stars_cost=400 "
+            "WHERE product_key='express_consultation_10min' AND stars_cost=500"
+        )
+        c.executemany(
+            "INSERT INTO express_products "
+            "(product_key, stars_cost, seconds_granted, enabled) "
+            "VALUES (%s, %s, %s, %s) "
+            "ON CONFLICT (product_key) DO NOTHING",
+            [
+                ("express_consultation_15min", 500, 900, True),
+                ("express_consultation_30min", 1000, 1800, True),
+                ("express_consultation_45min", 1500, 2700, True),
+                ("express_consultation_60min", 2000, 3600, True),
+            ],
+        )
+        conn.commit()
+    except Exception as e:
+        conn.rollback()
+        print(f"Migration v51 (nouveaux paliers express_products): {e}")
+
+    # Migration v52 — cohérence produit : cadeau de bienvenue 20 min et
+    # quota Premium 4 h/mois. Ne touche ni aux secondes gagnées/achetées ni
+    # aux secondes Premium consommées. Les anciennes allowances au défaut
+    # historique 28 800 s sont réalignées à 14 400 s, idempotemment.
+    try:
+        c.execute(
+            "ALTER TABLE accounts "
+            "ALTER COLUMN first_free_seconds_remaining SET DEFAULT 1200"
+        )
+        c.execute(
+            "ALTER TABLE consultation_allowance "
+            "ALTER COLUMN monthly_allowance_seconds SET DEFAULT 14400"
+        )
+        c.execute(
+            "UPDATE consultation_allowance "
+            "SET monthly_allowance_seconds=14400 "
+            "WHERE monthly_allowance_seconds=28800"
+        )
+        conn.commit()
+    except Exception as e:
+        conn.rollback()
+        print(f"Migration v52 (product coherence): {e}")
+
+    # Migration v53 — économie Étoiles v3 : barème final et plafond mensuel
+    # des conversions Étoiles -> temps. PUREMENT additive : les wallets,
+    # ledgers et temps existants ne sont ni supprimés ni réinitialisés.
+    try:
+        now53 = datetime.utcnow()
+        c.executemany(
+            "UPDATE reward_rules SET stars_amount=%s, enabled=TRUE, "
+            "daily_limit=%s, updated_at=%s WHERE rule_key=%s",
+            [
+                (6, 5, now53, "rewarded_ad_completed"),
+                (1, 1, now53, "meditation_completed"),
+                (1, 1, now53, "mini_game_completed"),
+                (1, 1, now53, "daily_card_completed"),
+                (1, 1, now53, "tarot_completed"),
+                (1, 1, now53, "wake_completed"),
+                (1, 1, now53, "share_completed"),
+                (5, None, now53, "streak_7_days"),
+            ],
+        )
+        conn.commit()
+    except Exception as e:
+        conn.rollback()
+        print(f"Migration v53 (stars economy): {e}")
+
+    # Migration v54 — Programme Bien-être V1 : programme gratuit de 30 jours,
+    # cinq actions de vie réelle par jour, sans Étoiles ni temps de consultation.
+    # Le SQL versionné est la source lisible et est exécuté ici au démarrage,
+    # comme les migrations additives précédentes.
+    try:
+        migration_path = os.path.join(
+            os.path.dirname(__file__),
+            "migrations",
+            "027_wellbeing_program_30_days.sql",
+        )
+        with open(migration_path, "r", encoding="utf-8") as migration_file:
+            c.execute(migration_file.read())
+        conn.commit()
+    except Exception as e:
+        conn.rollback()
+        print(f"Migration v54 (wellbeing program): {e}")
+
+    # Migration v55 — catalogue multi-ebooks Bien-être. Additive and
+    # idempotent: the first catalogue entry is the same ebook referenced by
+    # the 30-day program; no user or reference data is removed.
+    try:
+        migration_path = os.path.join(
+            os.path.dirname(__file__),
+            "migrations",
+            "028_wellbeing_ebook_library.sql",
+        )
+        with open(migration_path, "r", encoding="utf-8") as migration_file:
+            c.execute(migration_file.read())
+        conn.commit()
+    except Exception as e:
+        conn.rollback()
+        print(f"Migration v55 (wellbeing ebook library): {e}")
+
+    # Migration v56 — publication du premier ebook depuis Cloudflare R2.
+    # Le slug stable rend l'opération idempotente et évite tout doublon.
+    try:
+        migration_path = os.path.join(
+            os.path.dirname(__file__),
+            "migrations",
+            "029_wellbeing_first_ebook_r2.sql",
+        )
+        with open(migration_path, "r", encoding="utf-8") as migration_file:
+            c.execute(migration_file.read())
+        conn.commit()
+    except Exception as e:
+        conn.rollback()
+        print(f"Migration v56 (first wellbeing ebook R2): {e}")
+
+    # Migration v57 — économie Étoiles v4. Additive: historical transactions
+    # and balances are preserved; only active rule configuration changes.
+    try:
+        migration_path = os.path.join(
+            os.path.dirname(__file__),
+            "migrations",
+            "030_stars_economy_v4.sql",
+        )
+        with open(migration_path, "r", encoding="utf-8") as migration_file:
+            c.execute(migration_file.read())
+        conn.commit()
+    except Exception as e:
+        conn.rollback()
+        print(f"Migration v57 (stars economy v4): {e}")
+
+    # Migration v58 — AdMob Rewarded SSV. Additive and idempotent : les
+    # historiques/wallets existants sont conservés.
+    try:
+        migration_path = os.path.join(
+            os.path.dirname(__file__), "migrations", "031_admob_rewarded_ssv.sql"
+        )
+        with open(migration_path, "r", encoding="utf-8") as migration_file:
+            c.execute(migration_file.read())
+        conn.commit()
+    except Exception as e:
+        conn.rollback()
+        print(f"Migration v58 (AdMob Rewarded SSV): {e}")
+
+    # Migration v59 — Rewarded AdMob : +12 étoiles, sans plafond quotidien.
+    try:
+        migration_path = os.path.join(
+            os.path.dirname(__file__), "migrations", "032_rewarded_ad_12_stars.sql"
+        )
+        with open(migration_path, "r", encoding="utf-8") as migration_file:
+            c.execute(migration_file.read())
+        conn.commit()
+    except Exception as e:
+        conn.rollback()
+        print(f"Migration v59 (AdMob +12 étoiles): {e}")
+
+    # Migration v60 — Rewarded V1. Additive only: Stars history is retained,
+    # but no longer drives the active user economy.
+    try:
+        migration_path = os.path.join(
+            os.path.dirname(__file__), "migrations", "033_rewarded_questions.sql"
+        )
+        with open(migration_path, "r", encoding="utf-8") as migration_file:
+            c.execute(migration_file.read())
+        conn.commit()
+    except Exception as e:
+        conn.rollback()
+        print(f"Migration v60 (Rewarded questions): {e}")
+
+    # Migration v61 — tirage du jour idempotent. Additive : les anciennes
+    # lignes restent intactes ; les nouvelles portent le jour Europe/Paris et
+    # sont protégées par une unicité serveur (user_id, draw_date).
+    try:
+        migration_path = os.path.join(
+            os.path.dirname(__file__), "migrations", "034_tirages_daily_idempotency.sql"
+        )
+        with open(migration_path, "r", encoding="utf-8") as migration_file:
+            c.execute(migration_file.read())
+        conn.commit()
+    except Exception as e:
+        conn.rollback()
+        conn.close()
+        raise CriticalSchemaMigrationError(
+            "Migration v61 (tirage du jour) échouée"
+        ) from e
+
+    # Migration v62 — catalogue MP4 Méditations R2. Catalogue distinct des
+    # audios de meditation_catalog et des médias du Réveil.
     try:
         migration_path = os.path.join(
             os.path.dirname(__file__), "migrations", "035_meditation_video_catalog.sql"
@@ -2134,11 +2943,11 @@ def init_db():
         conn.rollback()
         conn.close()
         raise CriticalSchemaMigrationError(
-            "Migration v47 (catalogue vidéo Méditations) échouée"
+            "Migration v62 (catalogue vidéo Méditations) échouée"
         ) from e
 
-    # Migration v48 — CATALOGUE EXERCICES BIEN-ÊTRE V1. Additif : table et
-    # contenu éditorial initial, indépendants des catalogues média existants.
+    # Migration v63 — catalogue Exercices Bien-être V1. Additive and
+    # idempotent; kept separate from meditation, wake and ebook catalogs.
     try:
         migration_path = os.path.join(
             os.path.dirname(__file__), "migrations", "036_exercise_catalog.sql"
@@ -2150,15 +2959,15 @@ def init_db():
         conn.rollback()
         conn.close()
         raise CriticalSchemaMigrationError(
-            "Migration v48 (catalogue exercices Bien-être) échouée"
+            "Migration v63 (catalogue exercices Bien-être) échouée"
         ) from e
 
-    # Migration v49 — CATALOGUE DYNAMIQUE DES EBOOKS BIEN-ÊTRE. Additif :
-    # conserve les éventuelles lignes legacy et ajoute uniquement les
-    # métadonnées nécessaires à un catalogue extensible piloté par R2.
+    # Migration v64 — catalogue dynamique des ebooks Bien-être. Additive and
+    # idempotent; legacy rows are preserved.
     try:
         migration_path = os.path.join(
-            os.path.dirname(__file__), "migrations", "037_wellbeing_ebook_catalog.sql"
+            os.path.dirname(__file__), "migrations",
+            "037_wellbeing_ebook_catalog.sql",
         )
         with open(migration_path, "r", encoding="utf-8") as migration_file:
             c.execute(migration_file.read())
@@ -2167,7 +2976,24 @@ def init_db():
         conn.rollback()
         conn.close()
         raise CriticalSchemaMigrationError(
-            "Migration v49 (catalogue ebooks Bien-être) échouée"
+            "Migration v64 (catalogue ebooks Bien-être) échouée"
+        ) from e
+
+    # Migration v65 — idempotence des intentions de message Consultation.
+    # Additive : les messages, quotas et historiques existants restent intacts.
+    try:
+        migration_path = os.path.join(
+            os.path.dirname(__file__), "migrations",
+            "038_consultation_message_idempotency.sql"
+        )
+        with open(migration_path, "r", encoding="utf-8") as migration_file:
+            c.execute(migration_file.read())
+        conn.commit()
+    except Exception as e:
+        conn.rollback()
+        conn.close()
+        raise CriticalSchemaMigrationError(
+            "Migration v63 (idempotence des messages Consultation) échouée"
         ) from e
 
     conn.close()
@@ -2752,6 +3578,8 @@ def get_jours_absence(phone):
 
 try:
     init_db()
+except CriticalSchemaMigrationError:
+    raise
 except Exception as e:
     print(f"[init_db] Warning: {e}")
 
@@ -4026,6 +4854,124 @@ def _auth_json(payload, status=200):
     return resp, status
 
 
+def _claim_consultation_message_request(user_id, idempotency_key, message):
+    """Claim one mobile message intent, server-side and per account.
+
+    A completed request returns its stored payload; a concurrent processing
+    request is never sent to the LLM a second time. Failed requests remain
+    retryable with the same key. The hash prevents accidentally reusing a key
+    for a different message.
+    """
+    key = str(idempotency_key or '').strip()[:200]
+    if not key:
+        return None
+    digest = hashlib.sha256(str(message).encode('utf-8')).hexdigest()
+    conn = get_conn()
+    try:
+        c = conn.cursor()
+        c.execute(
+            "INSERT INTO consultation_message_requests "
+            "(user_id, idempotency_key, message_hash, status) "
+            "VALUES (%s, %s, %s, 'processing') "
+            "ON CONFLICT (user_id, idempotency_key) DO NOTHING "
+            "RETURNING user_id",
+            (str(user_id), key, digest),
+        )
+        inserted = c.fetchone()
+        if inserted is not None:
+            conn.commit()
+            return {"status": "claimed"}
+        c.execute(
+            "SELECT message_hash, status, response_payload "
+            "FROM consultation_message_requests "
+            "WHERE user_id=%s AND idempotency_key=%s FOR UPDATE",
+            (str(user_id), key),
+        )
+        row = c.fetchone()
+        if row is None:
+            raise RuntimeError("consultation_message_request_missing")
+        if row[0] != digest:
+            conn.commit()
+            return {"status": "conflict"}
+        if row[1] == "completed":
+            conn.commit()
+            payload = row[2]
+            return {"status": "completed", "payload": payload or {}}
+        if row[1] == "processing":
+            conn.commit()
+            return {"status": "processing"}
+        c.execute(
+            "UPDATE consultation_message_requests SET status='processing', "
+            "updated_at=NOW() WHERE user_id=%s AND idempotency_key=%s",
+            (str(user_id), key),
+        )
+        conn.commit()
+        return {"status": "claimed"}
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        conn.close()
+
+
+def _finish_consultation_message_request(user_id, idempotency_key, payload):
+    if not idempotency_key:
+        return
+    conn = get_conn()
+    try:
+        c = conn.cursor()
+        c.execute(
+            "UPDATE consultation_message_requests SET status='completed', "
+            "response_payload=%s::jsonb, updated_at=NOW() "
+            "WHERE user_id=%s AND idempotency_key=%s AND status='processing'",
+            (_json.dumps(payload, ensure_ascii=False), str(user_id),
+             str(idempotency_key).strip()[:200]),
+        )
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        conn.close()
+
+
+def _fail_consultation_message_request(user_id, idempotency_key):
+    if not idempotency_key:
+        return
+    conn = get_conn()
+    try:
+        c = conn.cursor()
+        c.execute(
+            "UPDATE consultation_message_requests SET status='failed', "
+            "response_payload=NULL, updated_at=NOW() "
+            "WHERE user_id=%s AND idempotency_key=%s AND status='processing'",
+            (str(user_id), str(idempotency_key).strip()[:200]),
+        )
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        conn.close()
+
+
+def _rewarded_questions_available(user_id):
+    """Lecture tolérante du solde Rewarded pour le contrat UX 402."""
+    conn = get_conn()
+    try:
+        c = conn.cursor()
+        c.execute(
+            "SELECT questions_available FROM rewarded_entitlements "
+            "WHERE user_id=%s", (str(user_id),)
+        )
+        row = c.fetchone()
+        return int((row or (0,))[0] or 0)
+    except Exception:
+        return 0
+    finally:
+        conn.close()
+
+
 def _client_ip_hash():
     """SHA-256 tronqué de l'IP appelante (jamais l'IP en clair). None si indisponible."""
     try:
@@ -4339,7 +5285,7 @@ def _quota_json(quota):
 # GET /api/consultation/messages NI resync_premium_entitlement (câblage = A.3c).
 # ------------------------------------------------------------
 
-_QUOTA_SHIM_MONTHLY_LIMIT_HOURS = 8   # 8 h Premium / période (affichage UI)
+_QUOTA_SHIM_MONTHLY_LIMIT_HOURS = 4   # 4 h Premium / période (affichage UI)
 
 
 def _state_with_time_settle(user_id, now=None):
@@ -4488,7 +5434,7 @@ def _quota_shim_json(st):
 
     ⚠️ APPROXIMATION UI UNIQUEMENT. Ce bloc n'est JAMAIS relu par le moteur
     pour débiter — la SOURCE DE VÉRITÉ des secondes est le bloc `time`.
-      monthly_limit        : 8 (heures Premium / période, constante d'affichage)
+      monthly_limit        : 4 (heures Premium / période, constante d'affichage)
       monthly_remaining    : ceil(premium_remaining_seconds / 3600)
       monthly_used         : max(0, 8 - monthly_remaining)
       first_free_available : first_free_remaining_seconds > 0  (dérivé du TEMPS)
@@ -4560,6 +5506,11 @@ def api_consultation_message():
         return _auth_json({"error": "invalid_request"}, 400)
     if len(msg) > _APP_MESSAGE_MAX_LEN:
         return _auth_json({"error": "message_too_long"}, 400)
+    rewarded_question_key = data.get("idempotency_key")
+    if rewarded_question_key is not None and (
+            not isinstance(rewarded_question_key, str) or
+            not rewarded_question_key.strip()):
+        return _auth_json({"error": "invalid_idempotency_key"}, 400)
 
     user_id = g.app_account["user_id"]   # jamais lu dans le body
 
@@ -4570,6 +5521,21 @@ def api_consultation_message():
     _gate = _adult_gate_check(user_id)
     if _gate is not None:
         return _auth_json(_gate[0], _gate[1])
+
+    # La clé identifie une intention complète, pas seulement une réservation
+    # Rewarded. Une répétition terminée renvoie son résultat sans repasser par
+    # le moteur temps ni le LLM ; une requête concurrente reste unique.
+    request_key = (rewarded_question_key.strip()[:200]
+                   if isinstance(rewarded_question_key, str)
+                   else None)
+    request_claim = _claim_consultation_message_request(user_id, request_key, msg)
+    if request_claim is not None:
+        if request_claim["status"] == "completed":
+            return _auth_json(request_claim["payload"], 200)
+        if request_claim["status"] == "processing":
+            return _auth_json({"error": "consultation_request_processing"}, 409)
+        if request_claim["status"] == "conflict":
+            return _auth_json({"error": "idempotency_key_conflict"}, 409)
 
     # J6 — fil CIBLÉ (optionnel). Fourni : on VÉRIFIE l'appartenance au compte
     # authentifié et on utilise l'advisor_id RÉEL de CETTE ligne ; app_profiles.guide
@@ -4622,33 +5588,47 @@ def api_consultation_message():
     preferred_advisor = target_advisor or (profile.get("guide") or "selena")
 
     now = _utcnow()
-    flow = _open_time_consultation_flow_tx(
-        user_id, preferred_advisor,
-        tirage_id if tirage_context is not None else None, now,
-        target_consultation_id=str(target_cid) if target_cid is not None else None,
-    )
+    try:
+        flow = _open_time_consultation_flow_tx(
+            user_id, preferred_advisor,
+            tirage_id if tirage_context is not None else None, now,
+            target_consultation_id=str(target_cid) if target_cid is not None else None,
+            rewarded_question_key=request_key,
+        )
+    except Exception:
+        _fail_consultation_message_request(user_id, request_key)
+        raise
 
     if flow["status"] == "unknown_account":
+        _fail_consultation_message_request(user_id, request_key)
         return _auth_json({"error": "unauthorized"}, 401)
     if flow["status"] == "consultation_not_found":
+        _fail_consultation_message_request(user_id, request_key)
         return _auth_json({"error": "consultation_not_found"}, 404)
     if flow["status"] == "tirage_not_found":
+        _fail_consultation_message_request(user_id, request_key)
         return _auth_json({"error": "tirage_not_found"}, 404)
     if flow["status"] == "time_exhausted":
         # AUCUN LLM, aucun message persisté, aucune consultation / touch / tirage.
+        rewarded_questions_available = _rewarded_questions_available(user_id)
         _st = {"time_snapshot": flow["time"],
                "window_active": flow["time"]["window_active"],
                "window_expires_at": flow["time"]["window_expires_at"],
                "earned_available": flow["earned_available"],
+               "rewarded_questions_available": rewarded_questions_available,
                "quota_legacy": flow["quota_legacy"]}
+        _fail_consultation_message_request(user_id, request_key)
         return _auth_json({
-            "error": "time_exhausted",
+            "error": "consultation_credit_exhausted",
+            "legacy_error": "time_exhausted",
             "consultation": None,
             "time": _time_json(_st),
             "quota": _quota_shim_json(_st),
+            "rewarded": {"questions_available": rewarded_questions_available},
         }, 402)
 
-    # status == "ok"
+    # status == "ok" or "question". The latter is a single complete
+    # interaction paid by a previously validated Rewarded entitlement.
     cid = flow["consultation"]["id"]
     advisor_real = flow["consultation"]["advisor_id"]   # figé si fenêtre active
 
@@ -4696,12 +5676,55 @@ def api_consultation_message():
     # LLM avec le CONSEILLER RÉEL. La persistance user/assistant reste gérée par
     # get_reply_for_user_id (inchangée). Le tirage est DÉJÀ rattaché in-tx par le
     # helper -> pas de ré-attach ici.
-    reply = get_reply_for_user_id(
-        user_id, msg,
-        advisor_override=advisor_real,
-        consultation_id=cid,
-        tirage_context=tirage_context,
-    )
+    try:
+        reply = get_reply_for_user_id(
+            user_id, msg,
+            advisor_override=advisor_real,
+            consultation_id=cid,
+            tirage_context=tirage_context,
+        )
+    except Exception:
+        if flow.get("question_reservation_id"):
+            _finish_rewarded_question(user_id, flow["question_reservation_id"], "released")
+        _fail_consultation_message_request(user_id, request_key)
+        raise
+    # Une panne totale des fournisseurs ne constitue pas une réponse
+    # conseiller utilisable : la question réservée doit rester disponible.
+    # Le fallback technique n'est pas persisté sur le chemin app (voir
+    # `_reply_core`) et le temps perdu reçoit le crédit compensatoire existant.
+    llm_status = llm_last_outcome()
+    if llm_status == "fallback_failure":
+        if flow.get("question_reservation_id"):
+            _finish_rewarded_question(
+                user_id, flow["question_reservation_id"], "released")
+        try:
+            _cc = get_conn()
+            try:
+                _ccur = _cc.cursor()
+                _ccur.execute(
+                    "UPDATE accounts SET earned_seconds_remaining = "
+                    "COALESCE(earned_seconds_remaining, 0) + %s WHERE user_id=%s",
+                (_LLM_FAILURE_CREDIT_SECONDS, str(user_id)),
+                )
+                _time_ledger_write(
+                    _ccur, user_id, [("earned", _LLM_FAILURE_CREDIT_SECONDS)],
+                    "llm_total_failure_credit", cid, now,
+                )
+                _cc.commit()
+            finally:
+                _cc.close()
+            log_event("llm_total_failure_credit", user_hash=_user_hash(user_id))
+        except Exception as e:
+            print(f"[llm] crédit compensatoire échec ({type(e).__name__})")
+        _fail_consultation_message_request(user_id, request_key)
+        return _auth_json({
+            "error": "consultation_temporarily_unavailable",
+            "llm_status": llm_status,
+        }, 503)
+
+    if flow.get("question_reservation_id"):
+        _finish_rewarded_question(
+            user_id, flow["question_reservation_id"], "consumed", consultation_id=cid)
 
     # PARCOURS BIEN-ÊTRE (J7) — un message de consultation abouti (status "ok"
     # ci-dessus) peut compléter la mission `consultation` du jour et donc une
@@ -4716,39 +5739,12 @@ def api_consultation_message():
     # quota ne sont pas affectés. None si la persistance n'a rien écrit.
     assistant_message_id = _latest_assistant_message_id(user_id, cid)
 
-    # SÉCURITÉ IA (G.4) — ÉCHEC TOTAL des fournisseurs LLM : l'utilisateur ne
-    # doit pas payer le temps perdu à cause de ça. Le moteur de temps N'EST PAS
-    # touché : on ajoute un CRÉDIT compensatoire de _LLM_FAILURE_CREDIT_SECONDS
-    # dans `earned_seconds_remaining`, tracé au time_ledger, dans sa propre
-    # transaction courte. `llm_status` est renvoyé au client.
-    llm_status = llm_last_outcome()
-    if llm_status == "fallback_failure":
-        try:
-            _cc = get_conn()
-            try:
-                _ccur = _cc.cursor()
-                _ccur.execute(
-                    "UPDATE accounts SET earned_seconds_remaining = "
-                    "COALESCE(earned_seconds_remaining, 0) + %s WHERE user_id=%s",
-                    (_LLM_FAILURE_CREDIT_SECONDS, str(user_id)),
-                )
-                _time_ledger_write(
-                    _ccur, user_id, [("earned", _LLM_FAILURE_CREDIT_SECONDS)],
-                    "llm_total_failure_credit", cid, now,
-                )
-                _cc.commit()
-            finally:
-                _cc.close()
-            log_event("llm_total_failure_credit", user_hash=_user_hash(user_id))
-        except Exception as e:
-            print(f"[llm] crédit compensatoire échec ({type(e).__name__})")
-
     _st = {"time_snapshot": flow["time"],
            "window_active": flow["time"]["window_active"],
            "window_expires_at": flow["time"]["window_expires_at"],
            "earned_available": flow["earned_available"],
            "quota_legacy": flow["quota_legacy"]}
-    return _auth_json({
+    response_payload = {
         "reply": reply,
         "message_id": assistant_message_id,
         "llm_status": llm_status,
@@ -4763,7 +5759,10 @@ def api_consultation_message():
         },
         "time": _time_json(_st),
         "quota": _quota_shim_json(_st),
-    }, 200)
+        "rewarded": {"question_consumed": bool(flow.get("question_reservation_id"))},
+    }
+    _finish_consultation_message_request(user_id, request_key, response_payload)
+    return _auth_json(response_payload, 200)
 
 
 @app.route("/api/consultation/state", methods=["GET"])
@@ -5378,26 +6377,74 @@ def _tirage_public(row):
     }
 
 
+def _tirage_day_bounds(draw_date):
+    """Bornes UTC du jour calendaire Europe/Paris [start, end)."""
+    from zoneinfo import ZoneInfo
+    paris = ZoneInfo("Europe/Paris")
+    start = datetime.combine(draw_date, datetime.min.time(), tzinfo=paris)
+    return start.astimezone(timezone.utc), (start + timedelta(days=1)).astimezone(timezone.utc)
+
+
+def _tirage_row_from_db_tuple(row):
+    return {"id": row[0], "user_id": row[1], "card_keys": row[2],
+            "advisor_id": row[3], "consultation_id": row[4],
+            "draw_date": row[5], "created_at": row[6]}
+
+
+def _get_daily_tirage_cursor(cursor, user_id, draw_date):
+    start, end = _tirage_day_bounds(draw_date)
+    cursor.execute(
+        "SELECT id, user_id, card_keys, advisor_id, consultation_id, draw_date, created_at "
+        "FROM tirages WHERE user_id=%s AND "
+        "(draw_date=%s OR (draw_date IS NULL AND created_at >= %s AND created_at < %s)) "
+        "ORDER BY created_at ASC LIMIT 1",
+        (str(user_id), draw_date, start, end),
+    )
+    row = cursor.fetchone()
+    return _tirage_row_from_db_tuple(row) if row else None
+
+
 def save_tirage(user_id, card_keys, advisor_id=None):
-    """INSERT d'un tirage. card_keys DOIT être déjà validé (3 clés canoniques,
-    ordre = ordre de sélection). Retourne le dict row inséré. Aucun crédit,
-    aucun LLM, aucune consultation."""
-    tid = str(uuid.uuid4())
+    """Crée ou retrouve le tirage du jour du compte.
+
+    card_keys DOIT être déjà validé. La décision du jour est serveur-side,
+    Europe/Paris ; un rejeu (même ou autre payload) renvoie le tirage existant.
+    Retourne (row, created). Aucun crédit, LLM ou consultation n'est consommé.
+    """
     now = _utcnow()
+    draw_date = _wellbeing_day(now)
+    tid = str(uuid.uuid4())
     conn = get_conn()
     try:
         c = conn.cursor()
+        existing = _get_daily_tirage_cursor(c, user_id, draw_date)
+        if existing is not None:
+            conn.rollback()
+            return existing, False
         c.execute(
-            "INSERT INTO tirages (id, user_id, card_keys, advisor_id, consultation_id, created_at) "
-            "VALUES (%s, %s, %s::jsonb, %s, NULL, %s)",
-            (tid, str(user_id), _json.dumps(list(card_keys)), advisor_id, now),
+            "INSERT INTO tirages "
+            "(id, user_id, card_keys, advisor_id, consultation_id, draw_date, created_at) "
+            "VALUES (%s, %s, %s::jsonb, %s, NULL, %s, %s)",
+            (tid, str(user_id), _json.dumps(list(card_keys)), advisor_id, draw_date, now),
         )
         conn.commit()
+    except Exception as e:
+        conn.rollback()
+        # Deux appareils peuvent passer la lecture initiale simultanément ;
+        # l'index unique devient alors l'arbitre, puis on renvoie le gagnant.
+        if getattr(e, "pgcode", None) != "23505":
+            raise
+        c = conn.cursor()
+        existing = _get_daily_tirage_cursor(c, user_id, draw_date)
+        if existing is None:
+            raise
+        return existing, False
     finally:
         try: conn.close()
         except Exception: pass
     return {"id": tid, "user_id": str(user_id), "card_keys": list(card_keys),
-            "advisor_id": advisor_id, "consultation_id": None, "created_at": now}
+            "advisor_id": advisor_id, "consultation_id": None,
+            "draw_date": draw_date, "created_at": now}, True
 
 
 def get_tirage(user_id, tirage_id):
@@ -5418,7 +6465,7 @@ def get_tirage(user_id, tirage_id):
     if not r:
         return None
     return {"id": r[0], "user_id": r[1], "card_keys": r[2], "advisor_id": r[3],
-            "consultation_id": r[4], "created_at": r[5]}
+            "consultation_id": r[4], "draw_date": None, "created_at": r[5]}
 
 
 def list_tirages(user_id, limit=20, before=None):
@@ -5514,12 +6561,10 @@ def api_tirages_create():
         return _auth_json({"error": "unauthorized"}, 401)
     advisor_id = profile.get("guide") or None   # dérivé du profil app, jamais du body
 
-    row = save_tirage(user_id, keys, advisor_id)
-    # PARCOURS BIEN-ÊTRE (J7) — un tirage sauvegardé peut compléter la mission
-    # `tirage` (dérivée de tirages.created_at) et donc une journée entière : on
-    # réconcilie la progression et on crédite la récompense de cycle si due.
-    # Transaction courte dédiée, JAMAIS bloquante pour le 201.
-    _reconcile_wellbeing_progress(user_id)
+    row, created = save_tirage(user_id, keys, advisor_id)
+    if not created:
+        return _auth_json(_tirage_public(row), 200)
+    # Le Tarot est autonome : il ne déclenche aucune récompense Bien-être.
     return _auth_json(_tirage_public(row), 201)
 
 
@@ -5644,6 +6689,12 @@ def api_rewards_daily_share():
             "ON CONFLICT (user_id, share_date) DO NOTHING",
             (user_id, share_date, now),
         )
+        # GROS CHANTIER AURYEL (Prompt 2/5) — ÉTOILES : capturé ICI (avant que
+        # le prochain SELECT n'écrase rowcount) — vrai UNIQUEMENT si CETTE
+        # requête vient d'enregistrer un NOUVEAU jour de partage (jamais un
+        # rejeu/spam/multi-device le même jour, garanti par l'UNIQUE
+        # (user_id, share_date) ci-dessus).
+        new_share_day = (c.rowcount == 1)
 
         c.execute(
             "SELECT COUNT(*) FROM share_reward_days WHERE user_id=%s",
@@ -5673,6 +6724,26 @@ def api_rewards_daily_share():
         conn.commit()
         if credited:
             log_event("share_reward_credited", user_hash=_user_hash(user_id))
+        # ÉTOILES `share_completed` — APRÈS le commit ci-dessus (le verrou
+        # `accounts` de CETTE transaction doit être relâché avant qu'`award_
+        # stars` n'ouvre sa PROPRE connexion et reverrouille la même ligne :
+        # appelée AVANT le commit, elle bloquerait indéfiniment sur elle-même).
+        # Fire-and-forget, jamais bloquant pour la réponse ShareProgress.
+        if new_share_day:
+            try:
+                sres = award_stars(
+                    user_id, "share_completed", source_id=None,
+                    idempotency_key=f"share_completed:{user_id}:{share_date}",
+                    now=now,
+                )
+                log_event(
+                    "stars_awarded" if sres.get("awarded") else "reward_claim_denied",
+                    user_hash=_user_hash(user_id), rule_key="share_completed",
+                    reason=sres.get("reason"),
+                )
+            except Exception as e:
+                print(f"[rewards] award_stars(share_completed) erreur "
+                      f"{_user_hash(user_id)}: {type(e).__name__}")
         return _auth_json({
             "count": count,
             "target": _SHARE_REWARD_TARGET_DAYS,
@@ -5720,14 +6791,511 @@ def api_rewards_share_progress():
 
 
 # ============================================================
-# CATALOGUE EBOOKS BIEN-ÊTRE — source serveur dynamique, sans plafond de volume
-def _wellbeing_ebook_media_url(stored_url, object_key):
-    """Résout une clé R2 stable en URL publique, sans exposer de secret.
+# GROS CHANTIER AURYEL (Prompt 2/5) — ÉTOILES AURYEL
+#   GET  /api/app/rewards/wallet   — solde + règles actives + streak + historique
+#   POST /api/app/rewards/claim    — réclame une action sans preuve externe
+#                                     (Rewarded Ad exclue depuis SSV)
+# ============================================================
+# Le SERVEUR est l'unique source de vérité (`award_stars` / `reward_rules`).
+# AUCUN endpoint n'accepte de montant, de delta ou de solde depuis Flutter.
+#
+# `POST /claim` : whitelist ULTRA STRICTE de `action_key` — aujourd'hui
+# UNIQUEMENT `wake_completed` (aucune trace serveur possible pour une alarme
+# native locale ; le client ne déclare QUE le fait que l'alarme a réellement
+# sonné et a été RÉELLEMENT ÉTEINTE, cf. WakeRingingScreen._turnOff — jamais
+# à l'ouverture de l'onglet Réveil ni à la simple configuration d'une alarme,
+# qui n'appellent jamais cette route). Les 4 autres règles quotidiennes
+# (`daily_card_completed`, `tarot_completed`, `meditation_completed`,
+# `share_completed`) sont créditées depuis des points d'action serveur
+# EXISTANTS (wellbeing/mission, /api/tirages, rewards/daily-share) — jamais
+# depuis cette route générique.
+_REWARDS_CLIENT_CLAIMABLE_ACTIONS = frozenset({
+    "wake_completed",
+})
+_ADMOB_REWARDED_AD_UNIT = "ca-app-pub-9787163762873138/6173561021"
+_ADMOB_REWARDED_AD_UNIT_FORMS = frozenset(
+    {_ADMOB_REWARDED_AD_UNIT, _ADMOB_REWARDED_AD_UNIT.rsplit("/", 1)[1]}
+)
+# Rewarded Consultation V1 is the only active AdMob entitlement. These values
+# are server-owned: an environment override cannot turn the callback into
+# Stars or another product.
+_ADMOB_REWARD_AMOUNT = 1
+_ADMOB_REWARD_ITEM = "consultation_question"
+_ADMOB_SESSION_TTL = timedelta(hours=24)
 
-    Les lignes legacy continuent d'utiliser leur URL existante. Les nouvelles
-    lignes doivent privilégier une clé sous `ebooks/`; la clé est encodée une
-    seule fois pour le CDN public.
+
+def _rewarded_state_tx(cursor, user_id):
+    cursor.execute(
+        "SELECT questions_available, rewarded_progress, rewarded_total, "
+        "rewarded_minutes_awarded FROM rewarded_entitlements WHERE user_id=%s",
+        (str(user_id),),
+    )
+    row = cursor.fetchone()
+    if row is None:
+        return {"questions_available": 0, "progress": 0,
+                "total_rewarded": 0, "minutes_awarded": 0}
+    return {"questions_available": int(row[0] or 0),
+            "progress": int(row[1] or 0),
+            "total_rewarded": int(row[2] or 0),
+            "minutes_awarded": int(row[3] or 0)}
+
+
+def _credit_rewarded_entitlement_tx(cursor, user_id, transaction_id, now):
+    """Apply one already-authenticated SSV exactly once.
+
+    The caller has inserted the unique SSV event. This function locks the
+    account, increments the question and progress counters, and credits the
+    existing earned-time bucket for each completed group of ten.
     """
+    uid = str(user_id)
+    cursor.execute("SELECT user_id FROM accounts WHERE user_id=%s FOR UPDATE", (uid,))
+    if cursor.fetchone() is None:
+        raise ValueError("unknown_account")
+    cursor.execute(
+        """INSERT INTO rewarded_entitlements (user_id)
+           VALUES (%s) ON CONFLICT (user_id) DO NOTHING""", (uid,)
+    )
+    cursor.execute(
+        """SELECT questions_available, rewarded_progress, rewarded_total,
+                  rewarded_minutes_awarded
+           FROM rewarded_entitlements WHERE user_id=%s FOR UPDATE""", (uid,)
+    )
+    q, progress, total, minutes = cursor.fetchone()
+    state = _apply_rewarded_entitlement_credit(q, progress, total, minutes)
+    q = state["questions_available"]
+    progress = state["progress"]
+    total = state["total_rewarded"]
+    minutes = state["minutes_awarded"]
+    completed = state["completed_paliers"]
+    credited_minutes = completed * 5
+    if credited_minutes:
+        _credit_bonus_time_tx(
+            cursor, uid, completed * 300, "rewarded_10_ads",
+            f"rewarded-pallet:{transaction_id}", now,
+        )
+    cursor.execute(
+        """UPDATE rewarded_entitlements
+           SET questions_available=%s, rewarded_progress=%s,
+               rewarded_total=%s, rewarded_minutes_awarded=%s, updated_at=%s
+           WHERE user_id=%s""",
+        (q, progress, total, int(minutes or 0), now, uid),
+    )
+    return {"questions_available": q, "progress": progress,
+            "total_rewarded": total, "minutes_awarded": int(minutes or 0),
+            "credited_minutes": credited_minutes}
+
+
+def _apply_rewarded_entitlement_credit(questions_available, progress,
+                                       total_rewarded, minutes_awarded):
+    """Pure state transition for one validated Rewarded callback."""
+    questions = max(0, int(questions_available or 0)) + 1
+    total = max(0, int(total_rewarded or 0)) + 1
+    next_progress = max(0, int(progress or 0)) + 1
+    completed = next_progress // 10
+    residual = next_progress % 10
+    minutes = max(0, int(minutes_awarded or 0)) + completed * 5
+    return {
+        "questions_available": questions,
+        "progress": residual,
+        "total_rewarded": total,
+        "minutes_awarded": minutes,
+        "completed_paliers": completed,
+    }
+
+
+@app.route("/api/app/rewards/admob/session", methods=["POST"])
+@limiter.limit("30 per hour")
+@require_app_auth
+def api_admob_reward_session():
+    """Réserve un identifiant opaque transmis à AdMob via custom_data.
+
+    Cette route ne crédite rien. Elle lie la future notification SSV au
+    compte authentifié avant l'ouverture de la publicité.
+    """
+    user_id = g.app_account["user_id"]
+    session_id = uuid.uuid4()
+    now = _utcnow()
+    conn = get_conn()
+    try:
+        c = conn.cursor()
+        c.execute(
+            "INSERT INTO admob_reward_sessions "
+            "(id, user_id, ad_unit, created_at, expires_at) "
+            "VALUES (%s, %s, %s, %s, %s)",
+            (str(session_id), user_id, _ADMOB_REWARDED_AD_UNIT, now,
+             now + _ADMOB_SESSION_TTL),
+        )
+        conn.commit()
+        return _auth_json({"session_id": str(session_id),
+                           "ad_unit": _ADMOB_REWARDED_AD_UNIT}, 201)
+    except Exception:
+        conn.rollback()
+        return _auth_json({"error": "temporarily_unavailable"}, 503)
+    finally:
+        conn.close()
+
+
+@app.route("/api/app/rewards/admob/session/<session_id>", methods=["GET"])
+@require_app_auth
+def api_admob_reward_session_status(session_id):
+    """État de validation SSV, pour l'UX de récompense différée."""
+    user_id = g.app_account["user_id"]
+    try:
+        sid = str(uuid.UUID(session_id))
+    except (ValueError, AttributeError):
+        return _auth_json({"error": "invalid_session"}, 400)
+    conn = get_conn()
+    try:
+        c = conn.cursor()
+        c.execute(
+            "SELECT status, credited_transaction_id FROM admob_reward_sessions "
+            "WHERE id=%s AND user_id=%s",
+            (sid, user_id),
+        )
+        row = c.fetchone()
+        if row is None:
+            return _auth_json({"error": "not_found"}, 404)
+        return _auth_json({"status": row[0],
+                           "credited": row[0] == "credited"}, 200)
+    finally:
+        conn.close()
+
+
+@app.route("/api/app/rewards/admob/ssv", methods=["GET"])
+def api_admob_reward_ssv():
+    """Callback public AdMob SSV : aucune authentification Bearer.
+
+    Seule une URL dont la signature ECDSA Google est valide peut atteindre la
+    transaction métier. Une transaction déjà reçue répond 200 sans nouveau
+    crédit, afin que les retries Google restent idempotents.
+    """
+    try:
+        values = verify_callback(request.query_string)
+        # Google documente `ad_unit` sous sa forme numérique. Certains
+        # environnements renvoient l'identifiant complet utilisé par le SDK;
+        # les deux représentations sont acceptées, mais uniquement pour cette
+        # unité Rewarded précise.
+        if values.get("ad_unit") not in _ADMOB_REWARDED_AD_UNIT_FORMS:
+            return jsonify({"error": "invalid_ad_unit"}), 400
+        transaction_id = values.get("transaction_id", "")
+        custom_data = values.get("custom_data", "")
+        user_id = values.get("user_id", "")
+        if not transaction_id or not custom_data or not user_id:
+            return jsonify({"error": "missing_callback_parameter"}), 400
+        if int(values.get("reward_amount", "-1")) != _ADMOB_REWARD_AMOUNT:
+            return jsonify({"error": "invalid_reward_amount"}), 400
+        if values.get("reward_item") != _ADMOB_REWARD_ITEM:
+            return jsonify({"error": "invalid_reward_item"}), 400
+        if not (1 <= len(transaction_id) <= 256):
+            return jsonify({"error": "invalid_transaction_id"}), 400
+        try:
+            uid = str(uuid.UUID(user_id))
+            sid = str(uuid.UUID(custom_data))
+            callback_ms = int(values.get("timestamp", ""))
+        except (ValueError, TypeError):
+            return jsonify({"error": "invalid_callback_parameter"}), 400
+        callback_at = datetime.fromtimestamp(callback_ms / 1000, timezone.utc)
+        if abs((_utcnow() - callback_at).total_seconds()) > 7 * 24 * 3600:
+            return jsonify({"error": "stale_callback"}), 400
+    except (SsvError, ValueError, TypeError, requests.RequestException):
+        return jsonify({"error": "invalid_signature"}), 400
+
+    conn = get_conn()
+    try:
+        c = conn.cursor()
+        c.execute(
+            "SELECT user_id, ad_unit, expires_at FROM admob_reward_sessions "
+            "WHERE id=%s AND user_id=%s FOR UPDATE",
+            (sid, uid),
+        )
+        session_row = c.fetchone()
+        if session_row is None or session_row[1] != _ADMOB_REWARDED_AD_UNIT:
+            conn.rollback()
+            return jsonify({"error": "unknown_reward_session"}), 400
+        if session_row[2] < _utcnow():
+            conn.rollback()
+            return jsonify({"error": "expired_reward_session"}), 400
+
+        c.execute(
+            "INSERT INTO admob_reward_events "
+            "(transaction_id, user_id, session_id, ad_unit, reward_amount, "
+            " reward_item, ad_network, callback_timestamp_ms) "
+            "VALUES (%s, %s, %s, %s, %s, %s, %s, %s) "
+            "ON CONFLICT (transaction_id) DO NOTHING RETURNING transaction_id",
+            (transaction_id, uid, sid, values["ad_unit"],
+             _ADMOB_REWARD_AMOUNT, values.get("reward_item", ""),
+             values.get("ad_network"), callback_ms),
+        )
+        inserted = c.fetchone()
+        if inserted is None:
+            conn.commit()
+            return jsonify({"status": "already_processed"}), 200
+
+        result = _credit_rewarded_entitlement_tx(c, uid, transaction_id, _utcnow())
+        c.execute(
+            "UPDATE admob_reward_events SET credited_at=NOW() "
+            "WHERE transaction_id=%s",
+            (transaction_id,),
+        )
+        c.execute(
+            "UPDATE admob_reward_sessions SET status='credited', "
+            "credited_transaction_id=%s WHERE id=%s",
+            (transaction_id, sid),
+        )
+        conn.commit()
+        return jsonify({"status": "credited", **result}), 200
+    except Exception:
+        conn.rollback()
+        return jsonify({"error": "temporarily_unavailable"}), 503
+    finally:
+        conn.close()
+
+
+@app.route("/api/app/rewards/wallet", methods=["GET"])
+@require_app_auth
+def api_rewards_wallet():
+    """Read the active Rewarded V1 entitlement state.
+
+    Historical Stars tables are intentionally not read by this contract.
+    """
+    user_id = g.app_account["user_id"]
+    conn = get_conn()
+    try:
+        c = conn.cursor()
+        c.execute(
+            "SELECT user_id FROM accounts "
+            "WHERE user_id=%s AND deleted_at IS NULL",
+            (user_id,),
+        )
+        if c.fetchone() is None:
+            return _auth_json({"error": "unauthorized"}, 401)
+        state = _rewarded_state_tx(c, user_id)
+        return _auth_json({
+            "questions_available": state["questions_available"],
+            "progress": state["progress"],
+            "total_rewarded": state["total_rewarded"],
+            "minutes_awarded": state["minutes_awarded"],
+            "next_minutes_at": 10 - state["progress"],
+        }, 200)
+    finally:
+        conn.close()
+
+
+@app.route("/api/app/rewards/claim", methods=["POST"])
+@limiter.limit("30 per hour")
+@require_app_auth
+def api_rewards_claim():
+    """Réclame une récompense Étoiles pour une action DÉCLARÉE PAR LE CLIENT
+    (aucune preuve serveur indépendante possible). Identité = jeton Bearer.
+      body : { "action_key": "wake_completed" }
+    `action_key` hors whitelist -> 400. Montant TOUJOURS résolu côté serveur
+    (`reward_rules` via `award_stars`) : le body ne peut JAMAIS fournir de
+    montant. Idempotent (clé dérivée de (action_key, user_id, jour) —
+    fermer/réouvrir l'app, spam bouton, retry réseau, multi-device ne créditent
+    jamais deux fois)."""
+    # Engagement/content actions remain available, but no longer have a
+    # monetary-like reward or a claimable Stars side effect.
+    return _auth_json({"awarded": False, "reason": "reward_claims_disabled",
+                       "stars_awarded": 0}, 410)
+    data = request.get_json(silent=True) or {}
+    action_key = data.get("action_key")
+    if action_key not in _REWARDS_CLIENT_CLAIMABLE_ACTIONS:
+        return _auth_json({"error": "invalid_action"}, 400)
+    if action_key == "rewarded_ad_completed":
+        # Depuis l'activation SSV, le callback client ne constitue plus une
+        # preuve de visionnage. Le crédit est réservé au callback ECDSA signé
+        # par Google (`/admob/ssv`).
+        return _auth_json({"error": "admob_ssv_required"}, 409)
+
+    # Rewarded ads use a client-generated event key only as an idempotency
+    # handle. The SDK callback is required before this route is called, but
+    # Google SSV is not configured in this repository yet; this limitation is
+    # intentionally documented and the endpoint remains rate-limited.
+    idempotency_key = f"{action_key}:{user_id}:{_wellbeing_day(_utcnow())}"
+    now = _utcnow()
+    today = _wellbeing_day(now)
+    try:
+        result = award_stars(
+            user_id, action_key, source_id=None,
+            idempotency_key=idempotency_key, now=now,
+        )
+    except Exception as e:
+        print(f"[rewards] claim({action_key}) erreur {_user_hash(user_id)}: "
+              f"{type(e).__name__}")
+        return _auth_json({"error": "temporarily_unavailable"}, 503)
+
+    if not result.get("awarded") and result.get("reason") == "unknown_account":
+        return _auth_json({"error": "unauthorized"}, 401)
+    log_event(
+        "stars_awarded" if result.get("awarded") else "reward_claim_denied",
+        user_hash=_user_hash(user_id), rule_key=action_key,
+        reason=result.get("reason"),
+    )
+    return _auth_json(result, 200)
+
+
+# ============================================================
+# GROS CHANTIER AURYEL (Prompt 3/5) — CONSULTATION EXPRESS
+#   POST /api/app/rewards/express-consultation
+# ============================================================
+@app.route("/api/app/rewards/express-consultation", methods=["POST"])
+@limiter.limit("30 per hour")
+@require_app_auth
+def api_rewards_express_consultation():
+    """Débloque du temps de consultation contre des Étoiles. Identité = jeton
+    Bearer.
+      body : { "product_key": "express_consultation_10min",
+               "idempotency_key": "..." }
+    Aucun montant, coût ou durée fournis par le client — TOUT vient de
+    `express_products` (résolu par `purchase_express_consultation`).
+    `idempotency_key` OBLIGATOIRE et générée par le CLIENT, stable pour UNE
+    tentative d'achat (rejouée telle quelle sur un retry réseau / double
+    tap) : fermer/réouvrir l'app, spam bouton, retry, réponse perdue puis
+    retry -> une SEULE dépense, un SEUL crédit de temps.
+
+    Réponse succès :
+      {"success": true, "stars_spent", "stars_balance", "seconds_granted",
+       "balances": {...}}
+    Réponse refus (200, PAS une erreur HTTP — c'est un état métier normal) :
+      {"success": false, "reason": "insufficient_balance"|"product_disabled"
+       |"unknown_product", "stars_balance", "stars_cost"?}."""
+    return _auth_json({"error": "stars_economy_retired"}, 410)
+    data = request.get_json(silent=True) or {}
+    product_key = data.get("product_key")
+    idempotency_key = data.get("idempotency_key")
+    if not isinstance(product_key, str) or not product_key.strip():
+        return _auth_json({"error": "invalid_request"}, 400)
+    if not isinstance(idempotency_key, str) or not idempotency_key.strip():
+        return _auth_json({"error": "invalid_request"}, 400)
+    product_key = product_key.strip()
+    idempotency_key = idempotency_key.strip()[:200]
+
+    log_event("express_consultation_opened", user_hash=_user_hash(user_id),
+              product_key=product_key)
+    now = _utcnow()
+    try:
+        result = purchase_express_consultation(
+            user_id, product_key, idempotency_key, now=now
+        )
+    except Exception as e:
+        print(f"[rewards] express-consultation erreur {_user_hash(user_id)}: "
+              f"{type(e).__name__}")
+        return _auth_json({"error": "temporarily_unavailable"}, 503)
+
+    if not result.get("success") and result.get("reason") == "unknown_account":
+        return _auth_json({"error": "unauthorized"}, 401)
+
+    if result.get("success"):
+        log_event("express_consultation_purchased", user_hash=_user_hash(user_id),
+                   product_key=product_key, stars_spent=result.get("stars_spent"))
+    elif result.get("reason") == "insufficient_balance":
+        log_event("express_consultation_insufficient_stars",
+                  user_hash=_user_hash(user_id), product_key=product_key)
+    return _auth_json(result, 200)
+
+
+# ============================================================
+# GROS CHANTIER AURYEL (Prompt 3/5) — MINI-JEUX (session serveur générique)
+#   POST /api/app/minigame/start
+#   POST /api/app/minigame/finish
+# ============================================================
+@app.route("/api/app/minigame/start", methods=["POST"])
+@limiter.limit("60 per hour")
+@require_app_auth
+def api_minigame_start():
+    """Ouvre une session de mini-jeu serveur (Suite intuitive / Carte
+    cachée). Identité = jeton Bearer. body : { "game_key": "sequence_recall"
+    | "hidden_card" }. Ne débite/crédite rien."""
+    user_id = g.app_account["user_id"]
+    data = request.get_json(silent=True) or {}
+    game_key = data.get("game_key")
+    result = start_mini_game(user_id, game_key, now=_utcnow())
+    if result.get("error") == "invalid_game":
+        return _auth_json({"error": "invalid_game"}, 400)
+    if result.get("error") == "unknown_account":
+        return _auth_json({"error": "unauthorized"}, 401)
+    if "error" in result:
+        return _auth_json({"error": "temporarily_unavailable"}, 503)
+    log_event("mini_game_started", user_hash=_user_hash(user_id),
+              game_key=game_key)
+    return _auth_json(result, 200)
+
+
+@app.route("/api/app/minigame/finish", methods=["POST"])
+@limiter.limit("60 per hour")
+@require_app_auth
+def api_minigame_finish():
+    """Ferme une session de mini-jeu et attribue (ou non) la récompense
+    PARTAGÉE `mini_game_completed`. Identité = jeton Bearer.
+    body : { "session_id": "<uuid>" }. Le serveur calcule lui-même le
+    chrono ; aucune récompense fournie par le client."""
+    user_id = g.app_account["user_id"]
+    data = request.get_json(silent=True) or {}
+    session_id = data.get("session_id")
+    if not _is_uuid(session_id):
+        return _auth_json({"error": "session_not_found"}, 404)
+    result = finish_mini_game(user_id, session_id, now=_utcnow())
+    if result.get("status") == "not_found":
+        return _auth_json({"error": "session_not_found"}, 404)
+    return _auth_json(result, 200)
+
+
+# ============================================================
+# PROGRAMME BIEN-ÊTRE V1 — programme gratuit persistant de 30 jours.
+# Ce contrat remplace l'ancien parcours de 4 missions dans l'UI active. Les
+# anciennes tables/endpoints restent présents pour compatibilité historique,
+# mais ce programme ne crédite ni Étoiles ni temps de consultation.
+# ============================================================
+
+_WELLBEING_PROGRAM_DAYS = 30
+_WELLBEING_PROGRAM_ACTIONS_PER_DAY = 5
+_WELLBEING_PROGRAM_TIMEZONE = "Europe/Paris"
+
+
+def _wellbeing_program_today(now=None):
+    from zoneinfo import ZoneInfo
+    dt = now or _utcnow()
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    return dt.astimezone(ZoneInfo(_WELLBEING_PROGRAM_TIMEZONE)).date()
+
+
+def _wellbeing_program_day_number(started_at, today):
+    from zoneinfo import ZoneInfo
+    if started_at.tzinfo is None:
+        started_at = started_at.replace(tzinfo=timezone.utc)
+    start_date = started_at.astimezone(ZoneInfo(_WELLBEING_PROGRAM_TIMEZONE)).date()
+    elapsed = (today - start_date).days
+    return min(_WELLBEING_PROGRAM_DAYS, max(1, elapsed + 1))
+
+
+def _wellbeing_program_ebook(cur):
+    cur.execute(
+        "SELECT e.id, e.slug, e.title, e.subtitle, e.description, e.cover_url, "
+        "e.pdf_url, e.publication_date, e.month_label, e.version, e.active "
+        "FROM wellbeing_program_ebook_config c "
+        "LEFT JOIN wellbeing_ebooks e ON e.id=c.ebook_id "
+        "WHERE c.id=1"
+    )
+    row = cur.fetchone()
+    if row is None:
+        return None
+    if row[0] is not None:
+        return _wellbeing_ebook_dict(row)
+    return None
+
+
+def _wellbeing_ebook_dict(row):
+    return {
+        "id": row[0], "slug": row[1], "title": row[2], "subtitle": row[3],
+        "description": row[4], "cover_url": row[5], "pdf_url": row[6],
+        "publication_date": row[7].isoformat() if row[7] else None,
+        "month_label": row[8], "version": row[9], "active": bool(row[10]),
+    }
+
+
+def _wellbeing_ebook_media_url(stored_url, object_key):
+    """Resolve a stable R2 object key without persisting temporary URLs."""
     key = str(object_key or "").strip()
     base = os.environ.get("R2_PUBLIC_BASE_URL", "").strip().rstrip("/")
     if key.startswith("ebooks/") and base:
@@ -5747,25 +7315,116 @@ def _wellbeing_ebook_catalog(cur):
     result = []
     for row in cur.fetchall():
         result.append({
-            "id": row[0],
-            "slug": row[1],
-            "title": row[2],
-            "subtitle": row[3] or "",
-            "description": row[4],
-            "category": row[14] or "",
-            "display_author": row[15],
+            "id": row[0], "slug": row[1], "title": row[2],
+            "subtitle": row[3] or "", "description": row[4],
+            "category": row[14] or "", "display_author": row[15],
             "cover_url": _wellbeing_ebook_media_url(row[5], row[13]),
             "pdf_url": _wellbeing_ebook_media_url(row[6], row[12]),
             "publication_date": row[7].isoformat() if row[7] else None,
-            "month_label": row[8],
-            "version": row[9],
-            "active": bool(row[10]),
-            "featured": bool(row[11]),
-            "object_key": row[12],
-            "cover_key": row[13],
+            "month_label": row[8], "version": row[9],
+            "active": bool(row[10]), "featured": bool(row[11]),
+            "object_key": row[12], "cover_key": row[13],
             "sort_order": int(row[16] or 0),
         })
     return result
+
+
+def _wellbeing_program_payload(cur, user_id, now=None):
+    today = _wellbeing_program_today(now)
+    cur.execute(
+        "SELECT started_at, completed_at, reminder_enabled, reminder_type, "
+        "reminder_text FROM wellbeing_programs WHERE user_id=%s",
+        (str(user_id),),
+    )
+    program = cur.fetchone()
+    ebook = _wellbeing_program_ebook(cur)
+    if program is None:
+        return {"status": "not_started", "timezone": _WELLBEING_PROGRAM_TIMEZONE,
+                "ebook": ebook, "program": None, "today": None}
+
+    started_at, completed_at, reminder_enabled, reminder_type, reminder_text = program
+    day_number = _wellbeing_program_day_number(started_at, today)
+    cur.execute(
+        "SELECT day_number, local_date, completed_at "
+        "FROM wellbeing_program_days WHERE user_id=%s AND day_number=%s",
+        (str(user_id), day_number),
+    )
+    day = cur.fetchone()
+    cur.execute(
+        "SELECT day_number, action_slot, text_snapshot, category, "
+        "completed_at FROM wellbeing_program_actions "
+        "WHERE user_id=%s AND day_number=%s ORDER BY action_slot",
+        (str(user_id), day_number),
+    )
+    actions = [{"day_number": r[0], "action_slot": r[1], "text": r[2],
+                "category": r[3], "completed": r[4] is not None,
+                "completed_at": _ts_iso(r[4])} for r in cur.fetchall()]
+    completed_count = sum(1 for action in actions if action["completed"])
+    if day is not None and completed_count == _WELLBEING_PROGRAM_ACTIONS_PER_DAY:
+        cur.execute(
+            "UPDATE wellbeing_program_days SET completed_at=COALESCE(completed_at, %s) "
+            "WHERE user_id=%s AND day_number=%s",
+            (now or _utcnow(), str(user_id), day_number),
+        )
+    status = "completed" if completed_at is not None else "active"
+    cur.execute(
+        """SELECT COUNT(*) FROM wellbeing_program_days
+           WHERE user_id = %s AND EXISTS (
+             SELECT 1 FROM wellbeing_program_actions a
+             WHERE a.user_id = wellbeing_program_days.user_id
+               AND a.day_number = wellbeing_program_days.day_number
+               AND a.completed_at IS NOT NULL
+           )""",
+        (user_id,),
+    )
+    days_with_actions = int(cur.fetchone()[0] or 0)
+    cur.execute(
+        """SELECT COUNT(*) FROM wellbeing_program_actions
+           WHERE user_id = %s AND completed_at IS NOT NULL""",
+        (user_id,),
+    )
+    total_actions = int(cur.fetchone()[0] or 0)
+
+    return {
+        "status": status,
+        "timezone": _WELLBEING_PROGRAM_TIMEZONE,
+        "ebook": ebook,
+        "program": {
+            "started_at": _ts_iso(started_at),
+            "completed_at": _ts_iso(completed_at),
+            "reminder_enabled": bool(reminder_enabled),
+            "reminder_type": reminder_type,
+            "reminder_text": reminder_text,
+        },
+        "today": {
+            "day_number": day_number,
+            "date": today.isoformat(),
+            "completed_count": completed_count,
+            "completed": completed_count == _WELLBEING_PROGRAM_ACTIONS_PER_DAY,
+            "actions": actions,
+        },
+        "summary": {
+            "days_with_actions": days_with_actions,
+            "total_actions": total_actions,
+        },
+    }
+
+
+def _wellbeing_program_response(user_id, now=None):
+    conn = get_conn()
+    try:
+        c = conn.cursor()
+        payload = _wellbeing_program_payload(c, user_id, now=now)
+        conn.commit()
+        return payload
+    finally:
+        conn.close()
+
+
+@app.route("/api/app/wellbeing-program", methods=["GET"])
+@require_app_auth
+def api_wellbeing_program():
+    return _auth_json(_wellbeing_program_response(g.app_account["user_id"]), 200)
 
 
 @app.route("/api/app/wellbeing-ebooks", methods=["GET"])
@@ -5773,18 +7432,149 @@ def _wellbeing_ebook_catalog(cur):
 def api_wellbeing_ebooks():
     conn = get_conn()
     try:
-        return _auth_json({"ebooks": _wellbeing_ebook_catalog(conn.cursor())}, 200)
+        c = conn.cursor()
+        return _auth_json({"ebooks": _wellbeing_ebook_catalog(c)}, 200)
     except Exception:
-        print("[wellbeing-ebooks] lecture indisponible")
-        return _auth_json({"error": "content_temporarily_unavailable"}, 503)
+        return _auth_json({"error": "temporarily_unavailable"}, 503)
     finally:
         conn.close()
 
 
+@app.route("/api/app/wellbeing-program/start", methods=["POST"])
+@limiter.limit("10 per hour")
+@require_app_auth
+def api_wellbeing_program_start():
+    user_id = g.app_account["user_id"]
+    now = _utcnow()
+    conn = get_conn()
+    try:
+        c = conn.cursor()
+        c.execute(
+            "SELECT user_id FROM accounts WHERE user_id=%s AND deleted_at IS NULL FOR UPDATE",
+            (user_id,),
+        )
+        if c.fetchone() is None:
+            conn.rollback()
+            return _auth_json({"error": "unauthorized"}, 401)
+        c.execute("SELECT user_id FROM wellbeing_programs WHERE user_id=%s FOR UPDATE", (user_id,))
+        if c.fetchone() is None:
+            c.execute(
+                "INSERT INTO wellbeing_programs (user_id, started_at, updated_at) VALUES (%s, %s, %s)",
+                (user_id, now, now),
+            )
+            c.execute(
+                "INSERT INTO wellbeing_program_days (user_id, day_number, local_date) "
+                "SELECT %s, d, ((%s AT TIME ZONE 'Europe/Paris')::date + (d - 1)) "
+                "FROM generate_series(1, 30) AS d",
+                (user_id, now),
+            )
+            c.execute(
+                "INSERT INTO wellbeing_program_actions "
+                "(user_id, day_number, action_slot, advice_id, text_snapshot, category) "
+                "SELECT %s, d, s, a.id, a.text, a.category "
+                "FROM generate_series(1, 30) AS d "
+                "CROSS JOIN generate_series(1, 5) AS s "
+                "JOIN wellbeing_program_advice a ON a.id=((d-1)*5+s) "
+                "WHERE a.is_active=TRUE",
+                (user_id,),
+            )
+        conn.commit()
+        return _auth_json(_wellbeing_program_payload(c, user_id, now=now), 200)
+    except Exception:
+        conn.rollback()
+        return _auth_json({"error": "temporarily_unavailable"}, 503)
+    finally:
+        conn.close()
+
+
+@app.route("/api/app/wellbeing-program/day/<int:day_number>/action/<int:action_slot>", methods=["POST"])
+@limiter.limit("120 per hour")
+@require_app_auth
+def api_wellbeing_program_complete_action(day_number, action_slot):
+    user_id = g.app_account["user_id"]
+    now = _utcnow()
+    if not 1 <= day_number <= 30 or not 1 <= action_slot <= 5:
+        return _auth_json({"error": "invalid_action"}, 400)
+    conn = get_conn()
+    try:
+        c = conn.cursor()
+        c.execute(
+            "SELECT started_at, completed_at FROM wellbeing_programs "
+            "WHERE user_id=%s AND user_id IN (SELECT user_id FROM accounts WHERE deleted_at IS NULL) FOR UPDATE",
+            (user_id,),
+        )
+        program = c.fetchone()
+        if program is None:
+            conn.rollback()
+            return _auth_json({"error": "program_not_started"}, 409)
+        current_day = _wellbeing_program_day_number(program[0], _wellbeing_program_today(now))
+        if day_number != current_day:
+            conn.rollback()
+            return _auth_json({"error": "action_not_current"}, 409)
+        c.execute(
+            "UPDATE wellbeing_program_actions SET completed_at=COALESCE(completed_at, %s) "
+            "WHERE user_id=%s AND day_number=%s AND action_slot=%s",
+            (now, user_id, day_number, action_slot),
+        )
+        if c.rowcount != 1:
+            conn.rollback()
+            return _auth_json({"error": "invalid_action"}, 400)
+        c.execute(
+            "SELECT COUNT(*) FROM wellbeing_program_actions WHERE user_id=%s AND day_number=%s AND completed_at IS NOT NULL",
+            (user_id, day_number),
+        )
+        if c.fetchone()[0] == 5:
+            c.execute(
+                "UPDATE wellbeing_program_days SET completed_at=COALESCE(completed_at, %s) WHERE user_id=%s AND day_number=%s",
+                (now, user_id, day_number),
+            )
+            if day_number == 30:
+                c.execute(
+                    "UPDATE wellbeing_programs SET completed_at=COALESCE(completed_at, %s), updated_at=%s WHERE user_id=%s",
+                    (now, now, user_id),
+                )
+        conn.commit()
+        return _auth_json(_wellbeing_program_payload(c, user_id, now=now), 200)
+    except Exception:
+        conn.rollback()
+        return _auth_json({"error": "temporarily_unavailable"}, 503)
+    finally:
+        conn.close()
+
+
+@app.route("/api/app/wellbeing-program/reminder", methods=["POST"])
+@require_app_auth
+def api_wellbeing_program_reminder():
+    user_id = g.app_account["user_id"]
+    data = request.get_json(silent=True) or {}
+    enabled = data.get("enabled")
+    if not isinstance(enabled, bool):
+        return _auth_json({"error": "invalid_reminder_preference"}, 400)
+    now = _utcnow()
+    conn = get_conn()
+    try:
+        c = conn.cursor()
+        c.execute(
+            "UPDATE wellbeing_programs SET reminder_enabled=%s, reminder_type='wellbeing_daily', updated_at=%s WHERE user_id=%s",
+            (enabled, now, user_id),
+        )
+        if c.rowcount != 1:
+            conn.rollback()
+            return _auth_json({"error": "program_not_started"}, 409)
+        conn.commit()
+        return _auth_json(_wellbeing_program_payload(c, user_id, now=now), 200)
+    except Exception:
+        conn.rollback()
+        return _auth_json({"error": "temporarily_unavailable"}, 503)
+    finally:
+        conn.close()
+
+
+# ============================================================
 # PARCOURS BIEN-ÊTRE (J7) — GET  /api/app/wellbeing/progress
 #                           POST /api/app/wellbeing/mission
 # ============================================================
-# « Mon parcours bien-être » : 4 missions quotidiennes RÉELLES d'Auryel
+# « Mon parcours bien-être » : missions quotidiennes RÉELLES d'Auryel
 #   - pensee       : CONSULTER la Pensée du jour (ouvrir sa lecture / son
 #                    explication). AUCUNE trace serveur propre -> ENREGISTRÉE
 #                    dans wellbeing_mission_days (mission_id='pensee').
@@ -5796,10 +7586,11 @@ def api_wellbeing_ebooks():
 #   - moment       : séance « Ton Moment » aboutie. AUCUNE trace serveur ->
 #                    ENREGISTRÉE dans wellbeing_mission_days (mission_id='moment').
 #
-# Une JOURNÉE COMPLÉTÉE = les 4 missions accomplies le même jour calendaire
-# Europe/Paris. 2 missions DÉRIVÉES de traces serveur existantes (le client ne
-# peut pas les falsifier) + 2 missions ENREGISTRÉES (pensee / moment), 1 fois
-# par jour et par mission (PRIMARY KEY EN BASE).
+# Une JOURNÉE COMPLÉTÉE = les 3 missions Bien-être accomplies le même jour
+# calendaire Europe/Paris. Une mission dérivée de trace serveur existante
+# (consultation) + 2 missions enregistrées (pensee / moment), 1 fois par jour
+# et par mission (PRIMARY KEY EN BASE). Le Tarot est autonome et ne participe
+# jamais à une récompense Bien-être.
 #
 # Le parcours fonctionne par CYCLES de 30 journées COMPLÉTÉES (pas 30 jours
 # calendaires consécutifs — un jour manqué ne remet rien à zéro). À la 30e
@@ -5807,14 +7598,10 @@ def api_wellbeing_ebooks():
 # consultation, créditée dans accounts.purchased_seconds_remaining, UNE fois
 # par cycle (idempotence garantie EN BASE par wellbeing_cycle_rewards).
 #
-# RÉCONCILIATION SERVEUR — 3 des 4 missions se complètent via une action qui
-# N'appelle PAS forcément /api/app/wellbeing/mission (un tirage sauvé, un
-# message de consultation). `_reconcile_wellbeing_progress(user_id)` recalcule
-# la progression et crédite la récompense de cycle due, EXACTLY-ONCE. Il est
-# appelé depuis TOUS les points d'action réels : POST /api/app/wellbeing/mission
-# (pensee / moment), POST /api/tirages (tirage), POST /api/consultation/message
-# (consultation). L'utilisateur ne dépend JAMAIS de « revenir faire un POST
-# wellbeing » pour toucher sa récompense.
+# RÉCONCILIATION SERVEUR — les missions se complètent via des actions réelles.
+# `_reconcile_wellbeing_progress(user_id)` recalcule la progression et crédite
+# la récompense de cycle due, EXACTLY-ONCE. Il est appelé depuis les points
+# Bien-être et consultation ; le POST Tarot n'y participe jamais.
 #
 # Le SERVEUR est l'unique autorité : aucun compteur client n'est lu, la
 # progression et la récompense survivent à la fermeture de l'app, à la
@@ -5823,9 +7610,17 @@ def api_wellbeing_ebooks():
 # Wording : bien-être / expérience quotidienne UNIQUEMENT — jamais médical,
 # thérapeutique ou « dispositif de santé ».
 
-_WELLBEING_MISSIONS        = ("pensee", "tirage", "consultation", "moment")
+_WELLBEING_MISSIONS        = ("pensee", "consultation", "moment")
 # missions SANS trace serveur propre -> enregistrées explicitement, 1x/jour.
 _WELLBEING_LOCAL_MISSIONS  = ("pensee", "moment")
+# GROS CHANTIER AURYEL (Prompt 2/5) — ÉTOILES : réutilise TEL QUEL le signal
+# de mission bien-être existant (aucune nouvelle logique de détection créée)
+# pour créditer `daily_card_completed` / `meditation_completed`. Tarot et
+# consultation n'ont aucune règle Étoiles active.
+_STARS_RULE_FOR_MISSION = {
+    "pensee": "daily_card_completed",
+    "moment": "meditation_completed",
+}
 _WELLBEING_CYCLE_DAYS      = 30
 _WELLBEING_REWARD_SECONDS  = 900
 _WELLBEING_LEVELS = (
@@ -5871,7 +7666,6 @@ def _wellbeing_mission_dates(cur, user_id):
       pensee / moment  : ENREGISTRÉES -> wellbeing_mission_days (jamais
                          `share_reward_days` : la récompense partage J5 reste
                          totalement indépendante) ;
-      tirage           : DÉRIVÉE -> tirages.created_at ;
       consultation     : DÉRIVÉE -> consultations.last_activity_at.
     Chaque requête est un simple `SELECT ... WHERE user_id=%s` : l'intersection
     se fait en Python."""
@@ -5881,12 +7675,6 @@ def _wellbeing_mission_dates(cur, user_id):
         (user_id, "pensee"),
     )
     pensee = {r[0] for r in cur.fetchall()}
-    cur.execute(
-        "SELECT (created_at AT TIME ZONE 'Europe/Paris')::date "
-        "FROM tirages WHERE user_id=%s",
-        (user_id,),
-    )
-    tirage = {r[0] for r in cur.fetchall()}
     cur.execute(
         "SELECT (last_activity_at AT TIME ZONE 'Europe/Paris')::date "
         "FROM consultations WHERE user_id=%s AND last_activity_at IS NOT NULL",
@@ -5901,7 +7689,6 @@ def _wellbeing_mission_dates(cur, user_id):
     moment = {r[0] for r in cur.fetchall()}
     return {
         "pensee": pensee,
-        "tirage": tirage,
         "consultation": consultation,
         "moment": moment,
     }
@@ -5911,7 +7698,7 @@ def _reconcile_wellbeing_progress(user_id, now=None):
     """Réconcilie la progression du parcours bien-être et CRÉDITE les
     récompenses de cycle non encore accordées. À appeler depuis TOUT point
     d'action réel qui peut compléter une mission (POST wellbeing/mission,
-    POST /api/tirages, POST /api/consultation/message).
+    POST /api/consultation/message).
 
     Transaction courte DÉDIÉE (connexion propre) : `accounts ... FOR UPDATE`
     (même mutex par utilisateur que le moteur temps / la récompense partage),
@@ -5919,7 +7706,7 @@ def _reconcile_wellbeing_progress(user_id, now=None):
     (`wellbeing_cycle_rewards` PK + `ON CONFLICT DO NOTHING` + garde
     `rowcount == 1` avant le crédit).
 
-    NE LÈVE JAMAIS pour l'appelant : une action réelle (tirage sauvé, message
+    NE LÈVE JAMAIS pour l'appelant : une action réelle (mission ou message
     envoyé) ne doit pas échouer parce que la réconciliation a raté — le
     prochain déclencheur rattrapera. Retourne
     {"credited": bool, "credited_seconds": int, "completed_days_total": int}."""
@@ -5940,7 +7727,6 @@ def _reconcile_wellbeing_progress(user_id, now=None):
         per_mission = _wellbeing_mission_dates(c, user_id)
         completed_dates = (
             per_mission["pensee"]
-            & per_mission["tirage"]
             & per_mission["consultation"]
             & per_mission["moment"]
         )
@@ -6005,7 +7791,6 @@ def _wellbeing_progress_payload(cur, user_id, today):
     per_mission = _wellbeing_mission_dates(cur, user_id)
     completed_dates = (
         per_mission["pensee"]
-        & per_mission["tirage"]
         & per_mission["consultation"]
         & per_mission["moment"]
     )
@@ -6075,22 +7860,21 @@ def api_wellbeing_progress():
 def api_wellbeing_mission():
     """Enregistre l'accomplissement d'UNE mission du parcours pour AUJOURD'HUI
     (jour Europe/Paris). Identité = jeton Bearer, jamais le body.
-      body : { "mission_id": "pensee" | "tirage" | "consultation" | "moment" }
+      body : { "mission_id": "pensee" | "consultation" | "moment" }
 
     - `pensee` / `moment` (aucune trace serveur) : enregistrées dans
       wellbeing_mission_days, 1 fois par jour maximum (PRIMARY KEY EN BASE).
       `pensee` = l'utilisateur a CONSULTÉ la Pensée du jour (aucun lien avec la
       récompense de partage J5).
-    - `tirage` / `consultation` : missions DÉRIVÉES. Le serveur VÉRIFIE la trace
-      réelle du jour (tirages / consultations.last_activity_at). 409
+    - `consultation` : mission DÉRIVÉE. Le serveur VÉRIFIE la trace réelle du
+      jour (consultations.last_activity_at). 409
       `mission_action_missing` si l'action n'a pas eu lieu aujourd'hui — un
       booléen client arbitraire n'est jamais accepté.
 
     Après enregistrement, `_reconcile_wellbeing_progress` recalcule la
     progression et crédite +900 s si une nouvelle borne de 30 journées
-    complétées est atteinte, UNE SEULE fois par cycle. Le MÊME helper est
-    appelé depuis /api/tirages et /api/consultation/message : l'utilisateur
-    n'a jamais besoin de « repasser par ici » pour toucher sa récompense.
+    complétées est atteinte, UNE SEULE fois par cycle. Le Tarot n'appelle
+    jamais ce mécanisme.
 
     Réponse : payload de progression + { "reward": { "credited", "credited_seconds" } }.
     `credited` = true UNIQUEMENT si CETTE requête vient d'accorder le crédit."""
@@ -6116,6 +7900,7 @@ def api_wellbeing_mission():
             conn.rollback()
             return _auth_json({"error": "unauthorized"}, 401)
 
+        newly_recorded = False
         if mission_id in _WELLBEING_LOCAL_MISSIONS:
             c.execute(
                 "INSERT INTO wellbeing_mission_days "
@@ -6124,6 +7909,7 @@ def api_wellbeing_mission():
                 "ON CONFLICT (user_id, day_date, mission_id) DO NOTHING",
                 (user_id, today, mission_id, now),
             )
+            newly_recorded = (c.rowcount == 1)
         else:
             per_mission = _wellbeing_mission_dates(c, user_id)
             if today not in per_mission[mission_id]:
@@ -6140,6 +7926,31 @@ def api_wellbeing_mission():
         return _auth_json({"error": "temporarily_unavailable"}, 503)
     finally:
         conn.close()
+
+    # GROS CHANTIER AURYEL (Prompt 2/5) — ÉTOILES : `pensee` = signal existant
+    # « Carte du jour consultée » (aucun signal plus solide n'existe : ouvrir
+    # la feuille EST déjà la définition produit établie de cette mission,
+    # cf. audit du rapport) ; `moment` = signal existant « séance Méditation
+    # aboutie » (déclenché par MeditationScreen._markMomentDone à >= 90 % de
+    # lecture, JAMAIS au tap/lancement/swipe — code non touché dans ce lot).
+    # Fire-and-forget, non bloquant : `_STARS_RULE_FOR_MISSION.get(...)`
+    # renvoie None pour `consultation` (aucune règle Étoiles dans ce lot).
+    if newly_recorded:
+        stars_rule = _STARS_RULE_FOR_MISSION.get(mission_id)
+        if stars_rule is not None:
+            try:
+                sres = award_stars(
+                    user_id, stars_rule, source_id=None,
+                    idempotency_key=f"{stars_rule}:{user_id}:{today}", now=now,
+                )
+                log_event(
+                    "stars_awarded" if sres.get("awarded") else "reward_claim_denied",
+                    user_hash=_user_hash(user_id), rule_key=stars_rule,
+                    reason=sres.get("reason"),
+                )
+            except Exception as e:
+                print(f"[rewards] award_stars({stars_rule}) erreur "
+                      f"{_user_hash(user_id)}: {type(e).__name__}")
 
     # 2) Réconciliation + crédit éventuel — SEULE voie de crédit (helper unique).
     rec = _reconcile_wellbeing_progress(user_id, now)
@@ -6218,21 +8029,45 @@ def api_wellbeing_mission():
 #   la croissance de la table, la vraie expiration reste vérifiée à /complete).
 
 _MEMORY_DIFFICULTIES = {
-    "easy":   {"threshold_seconds": 20, "reward_seconds": 300,
+    "easy":   {"threshold_seconds": 20,
                "min_plausible_seconds": 4, "expiry_seconds": 600,  "pair_count": 4},
-    "medium": {"threshold_seconds": 40, "reward_seconds": 600,
+    "medium": {"threshold_seconds": 40,
                "min_plausible_seconds": 6, "expiry_seconds": 600,  "pair_count": 6},
-    "hard":   {"threshold_seconds": 80, "reward_seconds": 900,
+    "hard":   {"threshold_seconds": 80,
                "min_plausible_seconds": 9, "expiry_seconds": 900,  "pair_count": 8},
 }
 _MEMORY_ORDER = ("easy", "medium", "hard")
-_MEMORY_REWARD_WINDOW = timedelta(days=7)
-_MEMORY_MAX_WINDOW_SECONDS = sum(
-    d["reward_seconds"] for d in _MEMORY_DIFFICULTIES.values()
-)  # 1800 s = 30 min
+
+# GROS CHANTIER AURYEL (Prompt 3/5) — MIGRATION DE LA RÉCOMPENSE MEMORY :
+# le jeu (difficulté / seuil / plausibilité / expiration) est INCHANGÉ —
+# c'est toujours `memory_games` qui décide si la partie est GAGNÉE. Seule la
+# RÉCOMPENSE change : elle ne crédite plus `earned_seconds_remaining` (ancien
+# `reward_seconds` par difficulté, fenêtre glissante de 7 j PAR difficulté) —
+# elle crédite désormais la règle PARTAGÉE `mini_game_completed` via
+# `award_stars`, avec le MÊME plafond quotidien (toute la catégorie
+# mini-jeux, tous jeux confondus) que « Suite intuitive » / « Carte cachée ».
+# `memory_rewards` cesse de recevoir de nouvelles lignes (son historique
+# existant n'est PAS touché — cf. migration v50) : plus jamais de double
+# récompense temps + Étoiles pour une même partie.
 
 
-def _memory_finalized_payload(status, difficulty, elapsed, reward_seconds, outcome):
+def _reward_rule_lookup(rule_key):
+    """Lecture seule, connexion dédiée courte. (stars_amount, enabled,
+    daily_limit) ou None si la clé est inconnue."""
+    conn = get_conn()
+    try:
+        c = conn.cursor()
+        c.execute(
+            "SELECT stars_amount, enabled, daily_limit "
+            "FROM reward_rules WHERE rule_key=%s",
+            (rule_key,),
+        )
+        return c.fetchone()
+    finally:
+        conn.close()
+
+
+def _memory_finalized_payload(status, difficulty, elapsed, stars_reward, outcome):
     """Réponse d'une partie DÉJÀ finalisée (rejeu de /complete) : aucun crédit
     pour cet appel."""
     return {
@@ -6240,8 +8075,8 @@ def _memory_finalized_payload(status, difficulty, elapsed, reward_seconds, outco
         "difficulty": difficulty,
         "elapsed_seconds": int(elapsed or 0),
         "reward_credited": False,
-        "credited_seconds": 0,
-        "reward_seconds": int(reward_seconds or 0),
+        "stars_awarded": 0,
+        "stars_reward": int(stars_reward or 0),
         "outcome": outcome,
         "already_finalized": True,
     }
@@ -6294,13 +8129,15 @@ def api_memory_start():
         return _auth_json({"error": "temporarily_unavailable"}, 503)
     finally:
         conn.close()
+    rule = _reward_rule_lookup("mini_game_completed")
+    stars_reward = int(rule[0]) if rule and rule[1] else 0
     return _auth_json({
         "game_id": game_id,
         "difficulty": difficulty,
         "started_at": now.isoformat(),
         "expires_at": (now + timedelta(seconds=cfg["expiry_seconds"])).isoformat(),
         "threshold_seconds": cfg["threshold_seconds"],
-        "reward_seconds": cfg["reward_seconds"],
+        "stars_reward": stars_reward,
         "pair_count": cfg["pair_count"],
     }, 200)
 
@@ -6309,17 +8146,19 @@ def api_memory_start():
 @limiter.limit("60 per hour")
 @require_app_auth
 def api_memory_complete():
-    """Ferme une partie serveur et attribue (ou non) la récompense. Identité =
-    jeton Bearer. Body : { "game_id": "<uuid>" } — RIEN d'autre n'est lu, en
-    particulier aucun chrono ni aucune récompense fournis par le client.
+    """Ferme une partie serveur et attribue (ou non) la récompense Étoiles.
+    Identité = jeton Bearer. Body : { "game_id": "<uuid>" } — RIEN d'autre
+    n'est lu, en particulier aucun chrono ni aucune récompense fournis par
+    le client.
 
     Le serveur calcule lui-même `elapsed_seconds = now - started_at` (les deux
     horodatés côté serveur), applique le seuil de la difficulté ENREGISTRÉE à
-    l'ouverture, vérifie l'éligibilité 7 j, crédite
-    accounts.purchased_seconds_remaining EXACTLY-ONCE et marque la partie
-    terminée.
+    l'ouverture, puis — GROS CHANTIER AURYEL (Prompt 3/5) — crédite la règle
+    PARTAGÉE `mini_game_completed` via `award_stars` (plafond quotidien
+    commun à Memory / Suite intuitive / Carte cachée, PLUS de fenêtre 7 j
+    par difficulté ni de crédit de temps).
 
-    `outcome` ∈ 'rewarded' | 'time_limit_exceeded' | 'cooldown_active' |
+    `outcome` ∈ 'rewarded' | 'time_limit_exceeded' | 'daily_limit_reached' |
     'implausible_time' | 'expired'. `reward_credited` = true UNIQUEMENT si CET
     appel vient d'accorder le crédit."""
     user_id = g.app_account["user_id"]
@@ -6332,7 +8171,10 @@ def api_memory_complete():
     conn = get_conn()
     try:
         c = conn.cursor()
-        # mutex par utilisateur (même verrou que le moteur temps / J5 / J7).
+        # mutex par utilisateur (même verrou que le moteur temps / J5 / J7 /
+        # award_stars) — CE VERROU EST AUSSI CELUI QU'award_stars EXIGE côté
+        # appelant : il est déjà tenu quand `_award_stars_tx` est invoquée
+        # plus bas, dans la MÊME transaction.
         c.execute(
             "SELECT user_id FROM accounts "
             "WHERE user_id=%s AND deleted_at IS NULL FOR UPDATE",
@@ -6344,7 +8186,7 @@ def api_memory_complete():
 
         c.execute(
             "SELECT user_id, difficulty, started_at, status, elapsed_seconds, "
-            "       reward_seconds, outcome "
+            "       stars_awarded, outcome "
             "FROM memory_games WHERE game_id=%s",
             (game_id,),
         )
@@ -6352,17 +8194,19 @@ def api_memory_complete():
         if row is None or row[0] != user_id:
             conn.rollback()
             return _auth_json({"error": "game_not_found"}, 404)
-        _, difficulty, started_at, status, prev_elapsed, prev_reward, prev_outcome = row
+        _, difficulty, started_at, status, prev_elapsed, prev_stars, prev_outcome = row
         cfg = _MEMORY_DIFFICULTIES.get(difficulty)
         if cfg is None:
             conn.rollback()
             return _auth_json({"error": "game_not_found"}, 404)
+        rule = _reward_rule_lookup("mini_game_completed")
+        stars_reward = int(rule[0]) if rule and rule[1] else 0
 
         # déjà finalisée -> renvoie l'état stocké SANS re-créditer.
         if status != "active":
             conn.rollback()
             return _auth_json(_memory_finalized_payload(
-                status, difficulty, prev_elapsed, prev_reward, prev_outcome), 200)
+                status, difficulty, prev_elapsed, prev_stars, prev_outcome), 200)
 
         elapsed = int((now - started_at).total_seconds())
         if elapsed < 0:
@@ -6382,68 +8226,40 @@ def api_memory_complete():
                 "difficulty": difficulty,
                 "elapsed_seconds": elapsed,
                 "reward_credited": False,
-                "credited_seconds": 0,
-                "reward_seconds": cfg["reward_seconds"],
+                "stars_awarded": 0,
+                "stars_reward": stars_reward,
                 "outcome": "expired",
             }, 200)
 
-        # 2) DÉCISION DE RÉCOMPENSE.
+        # 2) DÉCISION DE RÉCOMPENSE — partie gagnée sous le seuil ET plausible
+        # -> tente `award_stars` (plafond quotidien PARTAGÉ par la catégorie
+        # mini-jeux, cf. migration v50/v49).
+        stars_awarded = 0
         credited = False
-        credited_seconds = 0
-        next_eligible_at = None
         if elapsed < cfg["min_plausible_seconds"]:
             outcome = "implausible_time"
         elif elapsed >= cfg["threshold_seconds"]:
             outcome = "time_limit_exceeded"
         else:
-            # sous le seuil ET plausible : reste l'éligibilité 7 j glissante.
-            c.execute(
-                "SELECT MAX(credited_at) FROM memory_rewards "
-                "WHERE user_id=%s AND difficulty=%s",
-                (user_id, difficulty),
+            today = _wellbeing_day(now)
+            award = _award_stars_tx(
+                c, user_id, "mini_game_completed", game_id,
+                f"mini_game_completed:{user_id}:{today}", now,
             )
-            mrow = c.fetchone()
-            last_credited_at = mrow[0] if mrow else None
-            if (last_credited_at is not None
-                    and (now - last_credited_at) < _MEMORY_REWARD_WINDOW):
-                outcome = "cooldown_active"
-                next_eligible_at = last_credited_at + _MEMORY_REWARD_WINDOW
+            if award.get("awarded"):
+                credited = True
+                stars_awarded = int(award.get("stars_awarded") or 0)
+                outcome = "rewarded"
             else:
-                c.execute(
-                    "INSERT INTO memory_rewards "
-                    "(game_id, user_id, difficulty, credited_at, credited_seconds) "
-                    "VALUES (%s, %s, %s, %s, %s) "
-                    "ON CONFLICT (game_id) DO NOTHING",
-                    (game_id, user_id, difficulty, now, cfg["reward_seconds"]),
-                )
-                if c.rowcount == 1:
-                    c.execute(
-                        "UPDATE accounts SET earned_seconds_remaining = "
-                        "COALESCE(earned_seconds_remaining, 0) + %s "
-                        "WHERE user_id=%s",
-                        (cfg["reward_seconds"], user_id),
-                    )
-                    _time_ledger_write(
-                        c, user_id,
-                        [("earned", cfg["reward_seconds"])],
-                        "reward_memory_game", game_id, now,
-                    )
-                    credited = True
-                    credited_seconds = cfg["reward_seconds"]
-                    outcome = "rewarded"
-                    next_eligible_at = now + _MEMORY_REWARD_WINDOW
-                else:
-                    # course perdue sur le MÊME game_id (déjà crédité ailleurs) :
-                    # on ne double jamais.
-                    outcome = "cooldown_active"
+                outcome = award.get("reason") or "daily_limit_reached"
 
         # 3) FINALISATION EXACTLY-ONCE.
         c.execute(
             "UPDATE memory_games SET status='completed', completed_at=%s, "
-            "elapsed_seconds=%s, reward_seconds=%s, reward_credited=%s, "
+            "elapsed_seconds=%s, stars_awarded=%s, reward_credited=%s, "
             "outcome=%s "
             "WHERE game_id=%s AND user_id=%s AND status='active'",
-            (now, elapsed, cfg["reward_seconds"], credited, outcome,
+            (now, elapsed, stars_awarded, credited, outcome,
              game_id, user_id),
         )
         if c.rowcount != 1:
@@ -6452,24 +8268,24 @@ def api_memory_complete():
             # tout annuler, y compris un éventuel crédit, ne rien re-créditer.
             conn.rollback()
             return _auth_json(_memory_finalized_payload(
-                "completed", difficulty, elapsed, cfg["reward_seconds"],
-                "cooldown_active"), 200)
+                "completed", difficulty, elapsed, stars_reward,
+                "already_finalized"), 200)
 
         conn.commit()
         if credited:
-            log_event("memory_reward_credited", user_hash=_user_hash(user_id))
-        payload = {
+            log_event("mini_game_daily_reward_awarded", user_hash=_user_hash(user_id),
+                      game_key="memory")
+        log_event("mini_game_completed", user_hash=_user_hash(user_id),
+                  game_key="memory", awarded=credited)
+        return _auth_json({
             "status": "completed",
             "difficulty": difficulty,
             "elapsed_seconds": elapsed,
             "reward_credited": credited,
-            "credited_seconds": credited_seconds,
-            "reward_seconds": cfg["reward_seconds"],
+            "stars_awarded": stars_awarded,
+            "stars_reward": stars_reward,
             "outcome": outcome,
-        }
-        if next_eligible_at is not None:
-            payload["next_eligible_at"] = next_eligible_at.isoformat()
-        return _auth_json(payload, 200)
+        }, 200)
     except Exception as e:
         conn.rollback()
         print(f"[memory] complete erreur {_user_hash(user_id)}: {type(e).__name__}")
@@ -6478,10 +8294,39 @@ def api_memory_complete():
         conn.close()
 
 
+def _mini_game_daily_status(cursor, user_id, now):
+    """Éligibilité du jour (PARTAGÉE par toute la catégorie mini-jeux) pour
+    la règle `mini_game_completed`. Retour :
+    (eligible_today: bool, stars_reward: int, next_reset_at: datetime|None).
+    LECTURE SEULE — n'accorde jamais de crédit."""
+    today = _wellbeing_day(now)
+    rule = _reward_rule_lookup("mini_game_completed")
+    stars_reward = int(rule[0]) if rule and rule[1] else 0
+    cursor.execute(
+        "SELECT 1 FROM daily_action_claims "
+        "WHERE user_id=%s AND action_key='mini_game_completed' AND claim_date=%s",
+        (str(user_id), today),
+    )
+    already = cursor.fetchone() is not None
+    next_reset_at = None
+    if already:
+        from zoneinfo import ZoneInfo
+        tomorrow_paris_midnight = datetime(
+            today.year, today.month, today.day, tzinfo=ZoneInfo("Europe/Paris")
+        ) + timedelta(days=1)
+        next_reset_at = tomorrow_paris_midnight.astimezone(timezone.utc)
+    return (not already, stars_reward, next_reset_at)
+
+
 @app.route("/api/app/memory/progress", methods=["GET"])
 @require_app_auth
 def api_memory_progress():
-    """État d'éligibilité 7 j de l'utilisateur authentifié, par difficulté.
+    """Éligibilité du « Défi du jour » (mini-jeux) — GROS CHANTIER AURYEL
+    (Prompt 3/5) : PARTAGÉE par toute la catégorie (Memory / Suite intuitive
+    / Carte cachée), plus de fenêtre 7 j par difficulté. Conservé sous ce
+    chemin (compat Flutter existant) : `threshold_seconds` / `pair_count`
+    par difficulté restent des paramètres de JEU (inchangés), distincts de
+    l'éligibilité de récompense (désormais journalière et partagée).
     LECTURE SEULE : n'ouvre aucune partie, N'ACCORDE JAMAIS de crédit."""
     user_id = g.app_account["user_id"]
     now = _utcnow()
@@ -6495,35 +8340,20 @@ def api_memory_progress():
         )
         if c.fetchone() is None:
             return _auth_json({"error": "unauthorized"}, 401)
-        difficulties = []
-        for name in _MEMORY_ORDER:
-            cfg = _MEMORY_DIFFICULTIES[name]
-            c.execute(
-                "SELECT MAX(credited_at) FROM memory_rewards "
-                "WHERE user_id=%s AND difficulty=%s",
-                (user_id, name),
-            )
-            mrow = c.fetchone()
-            last = mrow[0] if mrow else None
-            eligible = last is None or (now - last) >= _MEMORY_REWARD_WINDOW
-            next_at = None if last is None else last + _MEMORY_REWARD_WINDOW
-            remaining = 0
-            if not eligible and next_at is not None:
-                remaining = max(0, int((next_at - now).total_seconds()))
-            difficulties.append({
-                "difficulty": name,
-                "threshold_seconds": cfg["threshold_seconds"],
-                "reward_seconds": cfg["reward_seconds"],
-                "eligible_now": eligible,
-                "last_reward_at": last.isoformat() if last is not None else None,
-                "next_eligible_at": (next_at.isoformat()
-                                     if (next_at is not None and not eligible)
-                                     else None),
-                "remaining_seconds": remaining,
-            })
+        eligible_today, stars_reward, next_reset_at = _mini_game_daily_status(
+            c, user_id, now
+        )
+        difficulties = [{
+            "difficulty": name,
+            "threshold_seconds": _MEMORY_DIFFICULTIES[name]["threshold_seconds"],
+            "pair_count": _MEMORY_DIFFICULTIES[name]["pair_count"],
+        } for name in _MEMORY_ORDER]
         return _auth_json({
-            "window_days": 7,
-            "max_window_seconds": _MEMORY_MAX_WINDOW_SECONDS,
+            "eligible_today": eligible_today,
+            "stars_reward": stars_reward,
+            "next_reset_at": (
+                next_reset_at.isoformat() if next_reset_at is not None else None
+            ),
             "difficulties": difficulties,
         }, 200)
     finally:
@@ -6548,7 +8378,7 @@ _PUSH_LABEL_MAX   = 120
 # l'envoi FCM (Phase 3) et par le scheduler (Phase 4).
 _PUSH_CATEGORIES = (
     "daily_thought", "daily_meditation", "personal_guidance",
-    "weekly_sleep", "weekly_life_lesson",
+    "weekly_sleep", "weekly_life_lesson", "wellbeing_daily", "ebook_monthly",
 )
 
 
@@ -7092,6 +8922,58 @@ def _meditation_catalog_active_rows():
         conn.close()
 
 
+def _meditation_video_catalog_active_rows():
+    """Catalogue MP4 Méditations uniquement sous le préfixe R2 dédié."""
+    conn = get_conn()
+    try:
+        c = conn.cursor()
+        c.execute(
+            "SELECT id, slug, title, description, category, "
+            "       duration_seconds, video_url, thumbnail_url, "
+            "       sort_order, published_at, updated_at, version, r2_object_key "
+            "FROM meditation_video_catalog "
+            "WHERE is_active = TRUE "
+            "  AND (published_at IS NULL OR published_at <= NOW()) "
+            "  AND r2_object_key LIKE 'meditations/%' "
+            "ORDER BY sort_order ASC, id ASC"
+        )
+        return c.fetchall()
+    finally:
+        conn.close()
+
+
+def _api_content_meditation_videos():
+    rows = _meditation_video_catalog_active_rows()
+    basis = "|".join(
+        f"{r[0]}:{r[11]}:{r[10].isoformat() if r[10] else ''}"
+        for r in rows
+    )
+    tag = hashlib.sha256(basis.encode("utf-8")).hexdigest()[:32]
+    inm = request.headers.get("If-None-Match", "").strip().strip('"')
+    if inm and inm == tag:
+        resp = jsonify({})
+        resp.headers["ETag"] = f'"{tag}"'
+        resp.headers["Cache-Control"] = "no-cache"
+        return resp, 304
+    items = [{
+        "id": str(r[0]), "slug": r[1], "title": r[2],
+        "description": r[3] or "", "category": r[4] or "",
+        "duration_seconds": int(r[5]) if r[5] is not None else None,
+        "video_url": r[6], "thumbnail_url": r[7] or None,
+        "sort_order": int(r[8] or 0),
+        "published_at": _ts_iso(r[9]) if r[9] else None,
+        "version": int(r[11] or 1), "object_key": r[12],
+    } for r in rows]
+    resp = jsonify({
+        "version": _CONTENT_API_VERSION,
+        "catalog_version": tag,
+        "meditation_videos": items,
+    })
+    resp.headers["ETag"] = f'"{tag}"'
+    resp.headers["Cache-Control"] = "no-cache"
+    return resp, 200
+
+
 def _catalog_version_tag(rows):
     """Empreinte STABLE du catalogue servi : change dès qu'une entrée est
     ajoutée / retirée / éditée (version + updated_at). Sert d'ETag et de
@@ -7138,56 +9020,6 @@ def api_content_meditations():
         "version": _CONTENT_API_VERSION,
         "catalog_version": tag,
         "meditations": meditations,
-    })
-    resp.headers["ETag"] = f'"{tag}"'
-    resp.headers["Cache-Control"] = "no-cache"
-    return resp, 200
-
-
-# --- MP4 Méditations distantes (catalogue R2 strictement séparé) -----------
-def _meditation_video_catalog_active_rows():
-    """MP4 publiés provenant exclusivement des préfixes R2 Méditations."""
-    conn = get_conn()
-    try:
-        c = conn.cursor()
-        c.execute(
-            "SELECT id, slug, title, description, category, duration_seconds, "
-            "       video_url, thumbnail_url, sort_order, published_at, "
-            "       updated_at, version, r2_object_key "
-            "FROM meditation_video_catalog "
-            "WHERE is_active = TRUE "
-            "  AND (published_at IS NULL OR published_at <= NOW()) "
-            "  AND (r2_object_key LIKE 'méditations/%' "
-            "       OR r2_object_key LIKE 'meditations/%') "
-            "ORDER BY sort_order ASC, id ASC"
-        )
-        return c.fetchall()
-    finally:
-        conn.close()
-
-
-def _api_content_meditation_videos():
-    rows = _meditation_video_catalog_active_rows()
-    tag = _catalog_version_tag(rows)
-    inm = request.headers.get("If-None-Match", "").strip().strip('"')
-    if inm and inm == tag:
-        resp = jsonify({})
-        resp.headers["ETag"] = f'"{tag}"'
-        resp.headers["Cache-Control"] = "no-cache"
-        return resp, 304
-    items = [{
-        "id": str(r[0]), "slug": r[1], "title": r[2],
-        "description": r[3] or "", "category": r[4] or "",
-        "duration_seconds": int(r[5]) if r[5] is not None else None,
-        "video_url": r[6], "thumbnail_url": r[7] or None,
-        "sort_order": int(r[8] or 0),
-        "published_at": _ts_iso(r[9]) if r[9] else None,
-        "version": int(r[11] or 1), "object_key": r[12],
-    } for r in rows]
-    resp = jsonify({
-        "version": _CONTENT_API_VERSION,
-        "catalog_version": tag,
-        "meditation_videos": items,
     })
     resp.headers["ETag"] = f'"{tag}"'
     resp.headers["Cache-Control"] = "no-cache"
@@ -7371,6 +9203,60 @@ def api_content_relaxation_videos():
     return resp, 200
 
 
+def _wake_messages_active_rows():
+    """Lignes ACTIVES, triées (id) — lecture seule. Colonnes alignées pour
+    calculer une empreinte ETag simple (pas de `version`/`sort_order` : la
+    sélection côté client est aléatoire, pas séquentielle)."""
+    conn = get_conn()
+    try:
+        c = conn.cursor()
+        c.execute(
+            "SELECT id, text, audio_url, updated_at "
+            "FROM wake_messages WHERE is_active = TRUE ORDER BY id ASC"
+        )
+        return c.fetchall()
+    finally:
+        conn.close()
+
+
+@app.route("/api/app/content/wake-messages", methods=["GET"])
+@limiter.limit("60 per hour")
+@require_app_auth
+def api_content_wake_messages():
+    """Messages actifs du Réveil Auryel — lecture seule, même contrat que les
+    autres endpoints de contenu (ETag / If-None-Match -> 304). Réponse valide
+    et non bloquante même si la table est vide (`messages: []`) : l'app garde
+    alors son dernier cache local. `audio_url` peut être `null` (MP3 pas
+    encore généré) -> l'app utilise son repli TextToSpeech local, jamais un
+    appel TTS payant au moment où le réveil sonne."""
+    rows = _wake_messages_active_rows()
+    basis = "|".join(
+        f"{r[0]}:{r[3].isoformat() if r[3] else ''}" for r in rows
+    )
+    tag = hashlib.sha256(basis.encode("utf-8")).hexdigest()[:32]
+    inm = request.headers.get("If-None-Match", "").strip().strip('"')
+    if inm and inm == tag:
+        resp = jsonify({})
+        resp.headers["ETag"] = f'"{tag}"'
+        resp.headers["Cache-Control"] = "no-cache"
+        return resp, 304
+
+    messages = [{
+        "id": str(r[0]),
+        "text": r[1],
+        "audio_url": r[2] or None,
+    } for r in rows]
+
+    resp = jsonify({
+        "version": _CONTENT_API_VERSION,
+        "catalog_version": tag,
+        "messages": messages,
+    })
+    resp.headers["ETag"] = f'"{tag}"'
+    resp.headers["Cache-Control"] = "no-cache"
+    return resp, 200
+
+
 @app.route("/api/app/content/today", methods=["GET"])
 @limiter.limit("60 per hour")
 @require_app_auth
@@ -7456,8 +9342,20 @@ _ACCOUNT_DELETE_CHILD_TABLES = (
     "share_reward_days",
     "wellbeing_mission_days",
     "wellbeing_cycle_rewards",
+    "wellbeing_program_actions",
+    "wellbeing_program_days",
+    "wellbeing_programs",
     "memory_games",
     "memory_rewards",
+    "daily_action_claims",
+    "reward_transactions",
+    "admob_reward_events",
+    "admob_reward_sessions",
+    "reward_wallet",
+    "express_consultations",
+    "mini_game_sessions",
+    "rewarded_question_reservations",
+    "rewarded_entitlements",
     "notification_sends",
     "push_devices",
     "app_sessions",
@@ -9110,7 +11008,11 @@ def _reply_core(user, key, user_message, io, *, depuis_pub=False,
     # Réactivation possible ici si besoin, après validation conformité.
     user_after = io["reload"](key)
 
-    io["add_message"](key, "assistant", reply)
+    # Un fallback technique n'est pas une réponse conseiller : le chemin app
+    # laisse la route gérer la restauration de la question réservée et ne
+    # pollue pas l'historique avec ce message d'erreur fournisseur.
+    if not (channel == "app" and llm_last_outcome() == "fallback_failure"):
+        io["add_message"](key, "assistant", reply)
     log_event("bot_response_sent", phone_hash=io["hash_id"](key), guide=guide_key)
     return reply
 
@@ -10226,8 +12128,89 @@ def get_or_open_time_consultation_tx(cursor, user_id, preferred_advisor_id, now,
                                       "opened_new_advisor")
 
 
+def _reserve_rewarded_question_tx(cursor, user_id, idempotency_key, now):
+    """Reserve exactly one server-side question for a no-time message."""
+    uid = str(user_id)
+    key = str(idempotency_key or '').strip()[:200]
+    if not key:
+        return {"reserved": False, "reason": "missing_idempotency_key"}
+    cursor.execute(
+        "INSERT INTO rewarded_entitlements (user_id) VALUES (%s) "
+        "ON CONFLICT (user_id) DO NOTHING", (uid,))
+    cursor.execute(
+        "SELECT questions_available FROM rewarded_entitlements "
+        "WHERE user_id=%s FOR UPDATE", (uid,))
+    row = cursor.fetchone()
+    if row is None or int(row[0] or 0) <= 0:
+        return {"reserved": False, "reason": "no_question"}
+    cursor.execute(
+        "SELECT id, status FROM rewarded_question_reservations "
+        "WHERE user_id=%s AND idempotency_key=%s", (uid, key))
+    existing = cursor.fetchone()
+    if existing is not None:
+        if existing[1] == 'released':
+            cursor.execute(
+                "UPDATE rewarded_question_reservations SET status='reserved', "
+                "consumed_at=NULL, consultation_id=NULL WHERE id=%s",
+                (str(existing[0]),),
+            )
+            cursor.execute(
+                "UPDATE rewarded_entitlements SET questions_available="
+                "questions_available-1, updated_at=%s WHERE user_id=%s",
+                (now, uid),
+            )
+            return {"reserved": True, "reservation_id": str(existing[0]),
+                    "existing": True}
+        return {"reserved": existing[1] in ('reserved', 'consumed'),
+                "reservation_id": str(existing[0]), "existing": True}
+    reservation_id = str(uuid.uuid4())
+    cursor.execute(
+        "INSERT INTO rewarded_question_reservations "
+        "(id, user_id, idempotency_key, status, created_at) "
+        "VALUES (%s, %s, %s, 'reserved', %s)",
+        (reservation_id, uid, key, now),)
+    cursor.execute(
+        "UPDATE rewarded_entitlements SET questions_available="
+        "questions_available-1, updated_at=%s WHERE user_id=%s",
+        (now, uid),)
+    return {"reserved": True, "reservation_id": reservation_id, "existing": False}
+
+
+def _finish_rewarded_question(user_id, reservation_id, status, consultation_id=None):
+    if not reservation_id or status not in ('consumed', 'released'):
+        return
+    conn = get_conn()
+    try:
+        c = conn.cursor()
+        c.execute(
+            "SELECT user_id, status FROM rewarded_question_reservations "
+            "WHERE id=%s FOR UPDATE", (str(reservation_id),))
+        row = c.fetchone()
+        if row is None or str(row[0]) != str(user_id) or row[1] != 'reserved':
+            conn.commit()
+            return
+        c.execute(
+            "UPDATE rewarded_question_reservations SET status=%s, "
+            "consumed_at=CASE WHEN %s='consumed' THEN NOW() ELSE consumed_at END, "
+            "consultation_id=%s WHERE id=%s",
+            (status, status, str(consultation_id) if consultation_id else None,
+             str(reservation_id)),)
+        if status == 'released':
+            c.execute(
+                "UPDATE rewarded_entitlements SET questions_available="
+                "questions_available+1, updated_at=NOW() WHERE user_id=%s",
+                (str(user_id),))
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        conn.close()
+
+
 def _open_time_consultation_flow_tx(user_id, preferred_advisor_id, tirage_id, now,
-                                   target_consultation_id=None):
+                                   target_consultation_id=None,
+                                   rewarded_question_key=None):
     """TIMER-A.3c-2b/2c — PLOMBERIE transactionnelle complète du POST temps.
     UNE transaction, AUCUN LLM. Depuis A.3c-2c, c'est le SEUL chemin d'ouverture
     utilisé par api_consultation_message (`open_or_get_consultation` n'y est plus
@@ -10332,6 +12315,29 @@ def _open_time_consultation_flow_tx(user_id, preferred_advisor_id, tirage_id, no
 
         # 7. plus de temps -> time_exhausted.
         if snap["total_remaining_seconds"] <= 0:
+            reservation = (
+                _reserve_rewarded_question_tx(c, uid, rewarded_question_key, now)
+                if rewarded_question_key else {"reserved": False}
+            )
+            if reservation.get("reserved"):
+                if target_row is not None:
+                    sel = {"consultation_id": str(target_row[0]),
+                           "advisor_id": target_row[1], "phase": "question",
+                           "created": False}
+                else:
+                    sel = get_or_open_time_consultation_tx(
+                        c, uid, preferred_advisor_id, now, 1)
+                cid = sel["consultation_id"]
+                touched = _touch_consultation_activity_tx(c, cid, now)
+                conn.commit()
+                return {"status": "question", "consultation": {
+                    "id": cid, "advisor_id": sel["advisor_id"],
+                    "created": bool(sel["created"]), "phase": "question"},
+                    "time": {**snap, "window_active": False,
+                              "window_expires_at": None},
+                    "question_reservation_id": reservation.get("reservation_id"),
+                    "earned_available": 0, "quota_legacy": None,
+                    "tirage_attached": False}
             c.execute(
                 "SELECT COUNT(*) FROM earned_credits "
                 "WHERE user_id=%s AND consumed_at IS NULL",
@@ -10498,8 +12504,15 @@ def _open_time_consultation_flow_tx(user_id, preferred_advisor_id, tirage_id, no
 #   reste déterministe.
 # ============================================================
 
-FIRST_FREE_SECONDS = 3600
-PREMIUM_MONTHLY_SECONDS = 28800
+# GROS CHANTIER ÉCONOMIQUE (Prompt 1/5) — bienvenue alignée sur le nouveau
+# standard produit : 20 min (1200 s), plus 1 h. Cette constante N'EST PAS
+# actuellement lue par le moteur de débit (la valeur réellement créditée à
+# un compte vient du DEFAULT posé en base par la migration v48/v34 sur
+# `accounts.first_free_seconds_remaining`) : elle documente le standard
+# produit en vigueur pour tout code qui voudrait s'y référer. Voir
+# Migration v48 pour le détail de la migration des comptes existants.
+FIRST_FREE_SECONDS = 1200
+PREMIUM_MONTHLY_SECONDS = 14400
 ACTIVITY_GRACE_SECONDS = 300
 
 
@@ -10727,6 +12740,925 @@ def _debit_consultation_seconds_tx(cursor, user_id, seconds, now, ref_id=None):
     totals["unbilled_seconds"] = unbilled
     totals["exhausted"] = totals["total_remaining_seconds"] == 0
     return totals
+
+
+# ============================================================
+# GROS CHANTIER ÉCONOMIQUE (Prompt 1/5) — primitive GÉNÉRIQUE de crédit du
+# bucket `bonus` (colonne `accounts.earned_seconds_remaining`, bucket
+# ledger 'earned'). PAS encore d'appelant dans ce lot (aucune route,
+# aucun mini-jeu, aucune Étoile) : sert de FONDATION pour les prochains
+# chantiers (récompenses, parcours 30 jours, consultations express...).
+#
+# SÉCURITÉ — jamais exposée en HTTP : un endpoint qui accepterait un delta
+# choisi par le client permettrait de s'auto-créditer du temps. Seul du
+# code SERVEUR de confiance (règles produit, validation store, événements
+# internes) peut appeler cette fonction, avec un `seconds` qu'IL décide.
+#
+# IDEMPOTENCE — repose sur `time_ledger.idempotency_key` (migration v48,
+# index UNIQUE PARTIEL (user_id, idempotency_key) WHERE idempotency_key IS
+# NOT NULL) : la ligne de ledger est insérée AVANT toute mutation de solde
+# (`INSERT ... ON CONFLICT ... DO NOTHING`) ; si la clé existe déjà pour cet
+# utilisateur, 0 ligne insérée -> AUCUNE mutation de `earned_seconds_
+# remaining` (le solde n'est donc jamais recrédité deux fois pour la même
+# clé). C'est la SEULE primitive du fichier où le ledger est relu comme
+# condition de décision (jamais comme source du MONTANT du solde, qui reste
+# `accounts.earned_seconds_remaining`).
+# ============================================================
+
+
+def _credit_bonus_time_tx(cursor, user_id, seconds, reason, idempotency_key, now):
+    """Crédite `seconds` (> 0) dans `earned_seconds_remaining`, IDEMPOTENT sur
+    `idempotency_key`, sur un curseur DÉJÀ ouvert. `accounts` DOIT déjà être
+    verrouillé FOR UPDATE par l'appelant (même convention que
+    `_debit_consultation_seconds_tx` / `_resync_premium_entitlement_tx`).
+    Ni commit ni rollback ici.
+
+    Retour : {"credited": bool, "earned_remaining_seconds": int}.
+    `credited=False` -> `idempotency_key` déjà appliquée pour CET
+    utilisateur : solde inchangé, renvoie le solde ACTUEL (pas recalculé)."""
+    uid = str(user_id)
+    amount = _as_seconds(seconds)
+    if amount <= 0:
+        raise ValueError("credit_bonus_time: seconds must be > 0")
+    if not idempotency_key:
+        raise ValueError("credit_bonus_time: idempotency_key is required")
+
+    cursor.execute(
+        "INSERT INTO time_ledger "
+        "(id, user_id, bucket, delta_seconds, reason, ref_id, "
+        " idempotency_key, created_at) "
+        "VALUES (%s, %s, 'earned', %s, %s, NULL, %s, %s) "
+        "ON CONFLICT (user_id, idempotency_key) "
+        "WHERE idempotency_key IS NOT NULL DO NOTHING "
+        "RETURNING id",
+        (str(uuid.uuid4()), uid, amount, reason, str(idempotency_key), now),
+    )
+    inserted = cursor.fetchone() is not None
+
+    if not inserted:
+        cursor.execute(
+            "SELECT COALESCE(earned_seconds_remaining, 0) "
+            "FROM accounts WHERE user_id=%s",
+            (uid,),
+        )
+        row = cursor.fetchone()
+        return {
+            "credited": False,
+            "earned_remaining_seconds": int(row[0]) if row else 0,
+        }
+
+    cursor.execute(
+        "UPDATE accounts SET earned_seconds_remaining = "
+        "COALESCE(earned_seconds_remaining, 0) + %s "
+        "WHERE user_id=%s "
+        "RETURNING earned_seconds_remaining",
+        (amount, uid),
+    )
+    row = cursor.fetchone()
+    return {
+        "credited": True,
+        "earned_remaining_seconds": int(row[0]) if row else amount,
+    }
+
+
+def credit_bonus_time(user_id, seconds, reason, idempotency_key, now=None):
+    """Wrapper public de `_credit_bonus_time_tx` : UNE connexion, UNE
+    transaction, UN commit. Verrouille `accounts` FOR UPDATE (mutex par
+    utilisateur, compte absent/supprimé -> rollback + {"credited": False,
+    "reason": "unknown_account"}), délègue, commit, ferme sa connexion.
+
+    `reason` : étiquette libre pour l'audit (ex. 'share_reward',
+    'wellbeing_cycle', 'memory_game', futur 'stars_conversion'...).
+    `idempotency_key` : clé STABLE et UNIQUE PAR ÉVÉNEMENT métier (ex.
+    'share_reward:<user_id>:<jour>', 'memory_game:<session_id>') — c'est
+    l'APPELANT qui garantit qu'un même événement produit toujours la MÊME
+    clé, jamais une nouvelle."""
+    if now is None:
+        now = _utcnow()
+    uid = str(user_id)
+    conn = get_conn()
+    try:
+        c = conn.cursor()
+        c.execute(
+            "SELECT user_id FROM accounts "
+            "WHERE user_id=%s AND deleted_at IS NULL FOR UPDATE",
+            (uid,),
+        )
+        if c.fetchone() is None:
+            conn.rollback()
+            return {"credited": False, "reason": "unknown_account",
+                    "earned_remaining_seconds": 0}
+        result = _credit_bonus_time_tx(c, uid, seconds, reason, idempotency_key, now)
+        conn.commit()
+        return result
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        conn.close()
+
+
+# ============================================================
+# GROS CHANTIER AURYEL (Prompt 2/5) — ÉTOILES AURYEL : primitive centrale
+# `award_stars`. Monnaie interne virtuelle DISTINCTE du moteur temps
+# (accounts.*_seconds_remaining) : wallet, journal et règles propres
+# (migration v49). AUCUN endpoint HTTP n'accepte de montant : le SEUL
+# paramètre qui détermine combien d'Étoiles sont créditées est `rule_key`,
+# résolu contre `reward_rules` À L'INTÉRIEUR de `_award_stars_tx` — jamais
+# repassé par un appelant qui l'aurait lu lui-même.
+#
+# Verrouillage : même convention que le reste du fichier —
+#     accounts       FOR UPDATE   (mutex par utilisateur, pris par `award_stars`)
+# ->  reward_wallet  FOR UPDATE   (créée paresseusement, dans `_award_stars_tx`)
+# Anti-farming EN BASE (pas seulement applicatif), DEUX protections
+# indépendantes :
+#   1. `daily_action_claims` UNIQUE (user_id, action_key, claim_date) — pour
+#      toute règle avec `daily_limit` non NULL (les 5 actions quotidiennes de
+#      ce lot ont toutes daily_limit=1 ; le support d'un daily_limit > 1
+#      n'est pas nécessaire aujourd'hui et n'est donc pas implémenté — cf.
+#      rapport).
+#   2. `reward_transactions.idempotency_key` UNIQUE PARTIEL (même idiome que
+#      `time_ledger.idempotency_key`, migration v48) — protection
+#      supplémentaire, ESSENTIELLE pour les règles non quotidiennes (le jalon
+#      `streak_7_days`, jamais gardé par `daily_action_claims` puisque
+#      `daily_limit` y est NULL).
+# `award_stars` EXIGE un `idempotency_key` (comme `credit_bonus_time`) :
+# c'est TOUJOURS le serveur qui le construit de façon déterministe
+# (ex. f"{rule_key}:{user_id}:{jour}"), jamais un client.
+# ============================================================
+
+_STREAK_ELIGIBLE_RULE_KEYS = frozenset({
+    "wake_completed", "daily_card_completed", "tarot_completed",
+    "meditation_completed", "share_completed",
+})
+_STREAK_MILESTONE_DAYS = 7
+_STREAK_MILESTONE_RULE_KEY = "streak_7_days"
+
+
+def _wallet_balance_readonly(cursor, user_id):
+    """Solde actuel SANS verrou (utilisé uniquement pour les réponses
+    `awarded=False` où rien n'est modifié — ne jamais utiliser cette valeur
+    pour décider d'un crédit)."""
+    cursor.execute(
+        "SELECT stars_balance FROM reward_wallet WHERE user_id=%s",
+        (str(user_id),),
+    )
+    row = cursor.fetchone()
+    return int(row[0]) if row else 0
+
+
+STARS_MONTHLY_CONVERSION_LIMIT_MINUTES = 30
+STARS_MONTHLY_CONVERSION_LIMIT_SECONDS = (
+    STARS_MONTHLY_CONVERSION_LIMIT_MINUTES * 60
+)
+
+
+def _stars_conversion_month_bounds(now):
+    """Retourne les bornes UTC du mois calendaire de ``now``."""
+    if now.tzinfo is None:
+        now = now.replace(tzinfo=timezone.utc)
+    start = now.astimezone(timezone.utc).replace(
+        day=1, hour=0, minute=0, second=0, microsecond=0,
+    )
+    if start.month == 12:
+        end = start.replace(year=start.year + 1, month=1)
+    else:
+        end = start.replace(month=start.month + 1)
+    return start, end
+
+
+def _stars_converted_seconds_this_month_tx(cursor, user_id, now):
+    """Lit le temps déjà obtenu par conversions Étoiles ce mois-ci.
+
+    ``express_consultations`` est le ledger append-only des conversions
+    réussies. La requête est faite dans la transaction de l'achat, après le
+    verrou du compte, afin que le contrôle et le débit restent sérialisés.
+    """
+    month_start, next_month = _stars_conversion_month_bounds(now)
+    cursor.execute(
+        "SELECT COALESCE(SUM(seconds_granted), 0) "
+        "FROM express_consultations "
+        "WHERE user_id=%s AND status='completed' "
+        "AND created_at >= %s AND created_at < %s",
+        (str(user_id), month_start, next_month),
+    )
+    row = cursor.fetchone()
+    return int(row[0]) if row and row[0] is not None else 0
+
+
+def _stars_conversion_snapshot(cursor, user_id, now):
+    used_seconds = _stars_converted_seconds_this_month_tx(cursor, user_id, now)
+    remaining_seconds = max(
+        0, STARS_MONTHLY_CONVERSION_LIMIT_SECONDS - used_seconds,
+    )
+    return {
+        "minutes_converted_this_month": used_seconds // 60,
+        "monthly_minutes_limit": STARS_MONTHLY_CONVERSION_LIMIT_MINUTES,
+        "monthly_minutes_remaining": remaining_seconds // 60,
+    }
+
+
+def _bump_streak_tx(cursor, user_id, today, now):
+    """Incrémente le streak de jours actifs consécutifs (jour Europe/Paris,
+    `_wellbeing_day`) — appelée UNIQUEMENT depuis `_award_stars_tx` après un
+    crédit RÉEL (nouveau) sur une règle éligible, `reward_wallet` déjà
+    verrouillé FOR UPDATE par l'appelant dans la MÊME transaction.
+
+    Un jour est actif dès qu'UNE SEULE action quotidienne éligible est
+    créditée (pas besoin des 5) : si `last_active_reward_date` est déjà
+    aujourd'hui, une 2e action le même jour n'incrémente PAS une 2e fois.
+    Trou d'un jour (ou plus) -> reset à 1 (le jour courant compte comme jour
+    1 du nouveau streak, jamais 0). Au multiple de 7 : crédite
+    `streak_7_days` via `_award_stars_tx` récursif (clé `streak_7_days` PAS
+    dans `_STREAK_ELIGIBLE_RULE_KEYS` -> pas de réentrance)."""
+    cursor.execute(
+        "SELECT current_streak, best_streak, last_active_reward_date "
+        "FROM reward_wallet WHERE user_id=%s",
+        (str(user_id),),
+    )
+    row = cursor.fetchone()
+    current_streak = int(row[0]) if row and row[0] is not None else 0
+    best_streak = int(row[1]) if row and row[1] is not None else 0
+    last_date = row[2] if row else None
+
+    if last_date == today:
+        return  # une action éligible a DÉJÀ compté aujourd'hui.
+    if last_date is not None and (today - last_date).days == 1:
+        new_streak = current_streak + 1
+    else:
+        new_streak = 1  # 1er jour, ou trou -> reset (aujourd'hui = jour 1).
+    new_best = max(best_streak, new_streak)
+
+    cursor.execute(
+        "UPDATE reward_wallet SET current_streak=%s, best_streak=%s, "
+        "last_active_reward_date=%s WHERE user_id=%s",
+        (new_streak, new_best, today, str(user_id)),
+    )
+    log_event("streak_incremented", user_hash=_user_hash(user_id),
+              current_streak=new_streak)
+
+    if new_streak > 0 and new_streak % _STREAK_MILESTONE_DAYS == 0:
+        milestone = new_streak // _STREAK_MILESTONE_DAYS
+        milestone_result = _award_stars_tx(
+            cursor, user_id, _STREAK_MILESTONE_RULE_KEY, None,
+            f"{_STREAK_MILESTONE_RULE_KEY}:{user_id}:{milestone}", now,
+        )
+        if milestone_result.get("awarded"):
+            log_event("streak_reward_awarded", user_hash=_user_hash(user_id),
+                       streak=new_streak)
+
+
+def _award_stars_tx(cursor, user_id, rule_key, source_id, idempotency_key, now):
+    # Historical Stars remain queryable for migration/audit, but are inert in
+    # the active Free V1 product. Content and engagement endpoints continue to
+    # complete normally without creating new Stars transactions.
+    return {"awarded": False, "reason": "stars_economy_retired",
+            "stars_awarded": 0, "new_balance": None}
+
+    # Legacy implementation intentionally retained below for historical
+    # compatibility and audit reference; it is unreachable in V1.
+    """Crédite les Étoiles d'UNE règle, sur un curseur DÉJÀ ouvert. `accounts`
+    DOIT déjà être verrouillé FOR UPDATE par l'appelant (`award_stars`). Ni
+    commit ni rollback ici.
+
+    Retour : {"awarded": bool, "reason": str|None, "stars_awarded": int,
+    "new_balance": int}. `awarded=False` -> solde JAMAIS modifié ; `reason`
+    ∈ {"unknown_rule", "rule_disabled", "cooldown_active",
+    "daily_limit_reached", "idempotency_conflict"}."""
+    uid = str(user_id)
+    if not idempotency_key:
+        raise ValueError("award_stars: idempotency_key is required")
+    today = _wellbeing_day(now)  # même convention de jour que tout le fichier.
+
+    cursor.execute(
+        "SELECT stars_amount, enabled, daily_limit, cooldown_seconds "
+        "FROM reward_rules WHERE rule_key=%s",
+        (rule_key,),
+    )
+    rule = cursor.fetchone()
+    if rule is None:
+        return {"awarded": False, "reason": "unknown_rule", "stars_awarded": 0,
+                "new_balance": _wallet_balance_readonly(cursor, uid)}
+    stars_amount, enabled, daily_limit, cooldown_seconds = rule
+    stars_amount = int(stars_amount)
+    if not enabled:
+        return {"awarded": False, "reason": "rule_disabled", "stars_awarded": 0,
+                "new_balance": _wallet_balance_readonly(cursor, uid)}
+
+    if cooldown_seconds:
+        cursor.execute(
+            "SELECT MAX(created_at) FROM daily_action_claims "
+            "WHERE user_id=%s AND action_key=%s",
+            (uid, rule_key),
+        )
+        last = cursor.fetchone()[0]
+        if last is not None and (now - last).total_seconds() < cooldown_seconds:
+            return {"awarded": False, "reason": "cooldown_active",
+                    "stars_awarded": 0,
+                    "new_balance": _wallet_balance_readonly(cursor, uid)}
+
+    # Wallet créé paresseusement, puis verrouillé -> lecture du solde COURANT
+    # sous verrou (jamais avant).
+    cursor.execute(
+        "INSERT INTO reward_wallet (user_id, stars_balance, updated_at) "
+        "VALUES (%s, 0, %s) ON CONFLICT (user_id) DO NOTHING",
+        (uid, now),
+    )
+    cursor.execute(
+        "SELECT stars_balance FROM reward_wallet WHERE user_id=%s FOR UPDATE",
+        (uid,),
+    )
+    current_balance = int(cursor.fetchone()[0])
+
+    if daily_limit is not None:
+        # CORRECTIF ÉCONOMIE v2 (Prompt technique 1) — compte les
+        # réclamations DÉJÀ posées aujourd'hui pour cette règle AVANT
+        # d'insérer : un daily_limit=1 se comporte EXACTEMENT comme avant
+        # (0 claim -> autorisé, 1 claim -> refusé) ; un daily_limit=N (ex.
+        # `rewarded_ad_completed`=5) autorise N lignes distinctes par jour.
+        # Sûr sans verrou supplémentaire : `accounts` est déjà verrouillé
+        # FOR UPDATE par l'appelant (`award_stars`), donc tous les appels
+        # concurrents pour CE même utilisateur sont sérialisés — aucune
+        # course possible sur `claim_seq`. L'index UNIQUE
+        # (user_id, action_key, claim_date, claim_seq) reste un filet de
+        # sécurité en base, pas le seul rempart.
+        cursor.execute(
+            "SELECT COUNT(*) FROM daily_action_claims "
+            "WHERE user_id=%s AND action_key=%s AND claim_date=%s",
+            (uid, rule_key, today),
+        )
+        claims_today = int(cursor.fetchone()[0])
+        if claims_today >= daily_limit:
+            return {"awarded": False, "reason": "daily_limit_reached",
+                    "stars_awarded": 0, "new_balance": current_balance}
+        cursor.execute(
+            "INSERT INTO daily_action_claims "
+            "(id, user_id, action_key, claim_date, claim_seq, source_id, "
+            " stars_awarded, created_at) "
+            "VALUES (%s, %s, %s, %s, %s, %s, %s, %s) "
+            "ON CONFLICT (user_id, action_key, claim_date, claim_seq) "
+            "DO NOTHING RETURNING id",
+            (str(uuid.uuid4()), uid, rule_key, today, claims_today + 1,
+             str(source_id) if source_id is not None else None,
+             stars_amount, now),
+        )
+        if cursor.fetchone() is None:
+            return {"awarded": False, "reason": "daily_limit_reached",
+                    "stars_awarded": 0, "new_balance": current_balance}
+
+    new_balance = current_balance + stars_amount
+    metadata_json = None  # colonne réservée pour un futur métadonnées riche.
+    cursor.execute(
+        "INSERT INTO reward_transactions "
+        "(id, user_id, delta_stars, balance_after, type, reason, source_type, "
+        " source_id, idempotency_key, metadata, created_at) "
+        "VALUES (%s, %s, %s, %s, 'earn', %s, %s, %s, %s, %s, %s) "
+        "ON CONFLICT (user_id, idempotency_key) WHERE idempotency_key IS NOT NULL "
+        "DO NOTHING RETURNING id",
+        (str(uuid.uuid4()), uid, stars_amount, new_balance, rule_key,
+         "reward_rule", str(source_id) if source_id is not None else None,
+         str(idempotency_key), metadata_json, now),
+    )
+    if cursor.fetchone() is None:
+        # `idempotency_key` déjà utilisée : NE JAMAIS créditer deux fois. Ne
+        # devrait jamais arriver avec les appelants internes de ce fichier
+        # (clé toujours dérivée de (rule_key, user_id, jour) ou d'un jalon de
+        # streak unique) — filet de sécurité, pas un chemin normal.
+        return {"awarded": False, "reason": "idempotency_conflict",
+                "stars_awarded": 0, "new_balance": current_balance}
+
+    cursor.execute(
+        "UPDATE reward_wallet SET stars_balance=%s, updated_at=%s "
+        "WHERE user_id=%s",
+        (new_balance, now, uid),
+    )
+
+    if daily_limit is not None and rule_key in _STREAK_ELIGIBLE_RULE_KEYS:
+        _bump_streak_tx(cursor, uid, today, now)
+
+    return {"awarded": True, "reason": None, "stars_awarded": stars_amount,
+            "new_balance": new_balance}
+
+
+def award_stars(user_id, rule_key, source_id=None, idempotency_key=None,
+                 now=None):
+    """Wrapper public de `_award_stars_tx` : UNE connexion, UNE transaction,
+    UN commit. Verrouille `accounts` FOR UPDATE (mutex par utilisateur,
+    compte absent/supprimé -> rollback + {"awarded": False,
+    "reason": "unknown_account"}), délègue, commit, ferme sa connexion.
+
+    SEULE fonction du fichier qui doit créditer des Étoiles — jamais un
+    endpoint qui écrirait directement dans `reward_wallet`."""
+    if now is None:
+        now = _utcnow()
+    uid = str(user_id)
+    conn = get_conn()
+    try:
+        c = conn.cursor()
+        c.execute(
+            "SELECT user_id FROM accounts "
+            "WHERE user_id=%s AND deleted_at IS NULL FOR UPDATE",
+            (uid,),
+        )
+        if c.fetchone() is None:
+            conn.rollback()
+            return {"awarded": False, "reason": "unknown_account",
+                    "stars_awarded": 0, "new_balance": 0}
+        result = _award_stars_tx(c, uid, rule_key, source_id, idempotency_key, now)
+        conn.commit()
+        return result
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        conn.close()
+
+
+# ------------------------------------------------------------
+# Fondation pour un futur chantier (dépense d'Étoiles, ex. consultation
+# express — Prompt 3/5) : symétrique de `award_stars`, PAS exposée en HTTP
+# dans ce lot ("prévoir la fonction, ne pas encore l'exposer" — §8). Refuse
+# tout débit qui ferait passer le solde sous 0 (jamais négatif).
+# ------------------------------------------------------------
+
+
+def _debit_stars_tx(cursor, user_id, stars_amount, reason, idempotency_key, now):
+    """Débite `stars_amount` (> 0), IDEMPOTENT sur `idempotency_key`, sur un
+    curseur DÉJÀ ouvert. `accounts` DOIT déjà être verrouillé FOR UPDATE par
+    l'appelant. Ni commit ni rollback ici.
+
+    Retour : {"debited": bool, "reason": str|None, "new_balance": int}.
+    `reason="insufficient_balance"` si le solde est insuffisant (jamais de
+    solde négatif)."""
+    uid = str(user_id)
+    amount = int(stars_amount or 0)
+    if amount <= 0:
+        raise ValueError("_debit_stars_tx: stars_amount must be > 0")
+    if not idempotency_key:
+        raise ValueError("_debit_stars_tx: idempotency_key is required")
+
+    cursor.execute(
+        "INSERT INTO reward_wallet (user_id, stars_balance, updated_at) "
+        "VALUES (%s, 0, %s) ON CONFLICT (user_id) DO NOTHING",
+        (uid, now),
+    )
+    cursor.execute(
+        "SELECT stars_balance FROM reward_wallet WHERE user_id=%s FOR UPDATE",
+        (uid,),
+    )
+    current_balance = int(cursor.fetchone()[0])
+
+    # Rejeu d'un débit DÉJÀ appliqué (retry réseau, double tap...) : la clé
+    # d'idempotence existe déjà -> renvoyer le résultat ORIGINAL (succès,
+    # solde déjà débité), JAMAIS "insufficient_balance" — sinon un simple
+    # rejeu d'un débit qui a RÉUSSI la 1re fois pourrait se voir répondre à
+    # tort "solde insuffisant" une fois le solde déjà diminué. Vérifiée AVANT
+    # le contrôle de solde, pas seulement via l'INSERT ... ON CONFLICT
+    # ci-dessous (qui, lui, protège uniquement contre le double DÉBIT réel).
+    cursor.execute(
+        "SELECT balance_after FROM reward_transactions "
+        "WHERE user_id=%s AND idempotency_key=%s",
+        (uid, str(idempotency_key)),
+    )
+    already = cursor.fetchone()
+    if already is not None:
+        return {"debited": True, "reason": None,
+                "new_balance": int(already[0])}
+
+    if current_balance < amount:
+        return {"debited": False, "reason": "insufficient_balance",
+                "new_balance": current_balance}
+
+    new_balance = current_balance - amount
+    cursor.execute(
+        "INSERT INTO reward_transactions "
+        "(id, user_id, delta_stars, balance_after, type, reason, source_type, "
+        " source_id, idempotency_key, metadata, created_at) "
+        "VALUES (%s, %s, %s, %s, 'spend', %s, NULL, NULL, %s, NULL, %s) "
+        "ON CONFLICT (user_id, idempotency_key) WHERE idempotency_key IS NOT NULL "
+        "DO NOTHING RETURNING id",
+        (str(uuid.uuid4()), uid, -amount, new_balance, reason,
+         str(idempotency_key), now),
+    )
+    if cursor.fetchone() is None:
+        # Course concurrente extrêmement rare entre le SELECT ci-dessus et cet
+        # INSERT (2 requêtes simultanées avec la MÊME clé) : `accounts` déjà
+        # verrouillé FOR UPDATE par l'appelant sérialise normalement ce cas —
+        # filet de sécurité, jamais un double débit.
+        return {"debited": False, "reason": "idempotency_conflict",
+                "new_balance": current_balance}
+
+    cursor.execute(
+        "UPDATE reward_wallet SET stars_balance=%s, updated_at=%s "
+        "WHERE user_id=%s",
+        (new_balance, now, uid),
+    )
+    return {"debited": True, "reason": None, "new_balance": new_balance}
+
+
+def debit_stars(user_id, stars_amount, reason, idempotency_key, now=None):
+    """Wrapper public de `_debit_stars_tx` — même convention que
+    `award_stars`. Utilisée depuis `_purchase_express_consultation_tx`
+    (Prompt 3/5) — voir plus bas."""
+    if now is None:
+        now = _utcnow()
+    uid = str(user_id)
+    conn = get_conn()
+    try:
+        c = conn.cursor()
+        c.execute(
+            "SELECT user_id FROM accounts "
+            "WHERE user_id=%s AND deleted_at IS NULL FOR UPDATE",
+            (uid,),
+        )
+        if c.fetchone() is None:
+            conn.rollback()
+            return {"debited": False, "reason": "unknown_account",
+                    "new_balance": 0}
+        result = _debit_stars_tx(c, uid, stars_amount, reason, idempotency_key, now)
+        conn.commit()
+        return result
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        conn.close()
+
+
+# ============================================================
+# GROS CHANTIER AURYEL (Prompt 3/5) — CONSULTATION EXPRESS : dépenser des
+# Étoiles contre du temps de consultation. Compose DEUX primitives déjà
+# bâties comme fondations dans les lots précédents (`_debit_stars_tx` —
+# Prompt 2/5 — et `_credit_bonus_time_tx` — Prompt 1/5) dans UNE SEULE
+# transaction : c'est exactement le rôle pour lequel elles avaient été
+# préparées. Le temps accordé atterrit dans le bucket `earned` (bonus) —
+# AUCUN 5e bucket créé.
+#
+# Config SERVEUR (`express_products`) : `stars_cost` / `seconds_granted` /
+# `enabled` jamais fournis par le client — seul `product_key` (une clé de
+# catalogue, pas une valeur économique) vient de Flutter.
+#
+# IDEMPOTENCE — TROIS niveaux, du plus externe au plus interne :
+#   1. `express_consultations` UNIQUE (user_id, idempotency_key) : vérifiée
+#      EN PREMIER, avant tout débit. Un rejeu de la MÊME clé renvoie le
+#      résultat déjà enregistré tel quel, ne rejoue JAMAIS le débit/crédit.
+#   2. `_debit_stars_tx` idempotent sur une clé DÉRIVÉE (`<clé>:stars`).
+#   3. `_credit_bonus_time_tx` idempotent sur une clé DÉRIVÉE (`<clé>:time`).
+# Les niveaux 2/3 sont un FILET DE SÉCURITÉ (ne devraient jamais être
+# atteints en pratique grâce au niveau 1) — jamais un double débit même en
+# cas de bug d'appelant.
+#
+# Verrouillage : accounts FOR UPDATE (par `purchase_express_consultation`)
+# -> reward_wallet FOR UPDATE (dans `_debit_stars_tx`), MÊME ordre que le
+# reste du fichier. TOUT OU RIEN : la moindre exception fait rollback de
+# l'ensemble (débit ET crédit ET trace), jamais un débit sans crédit ni
+# l'inverse.
+# ============================================================
+
+
+def _express_product_public(cursor, product_key):
+    """Config LECTURE SEULE d'un produit express. Renvoie
+    (stars_cost, seconds_granted, enabled) ou None si la clé est inconnue."""
+    cursor.execute(
+        "SELECT stars_cost, seconds_granted, enabled "
+        "FROM express_products WHERE product_key=%s",
+        (product_key,),
+    )
+    return cursor.fetchone()
+
+
+def _purchase_express_consultation_tx(cursor, user_id, product_key,
+                                       idempotency_key, now):
+    """Sur un curseur DÉJÀ ouvert, `accounts` DÉJÀ verrouillé FOR UPDATE par
+    l'appelant. Ni commit ni rollback ici.
+
+    Retour : {"success": bool, "reason": str|None, "stars_spent": int,
+    "stars_balance": int, "seconds_granted": int, "balances": dict|None}.
+    `reason` ∈ {"unknown_product", "product_disabled",
+    "insufficient_balance"} quand `success=False`."""
+    uid = str(user_id)
+    if not idempotency_key:
+        raise ValueError(
+            "purchase_express_consultation: idempotency_key is required"
+        )
+
+    # Niveau 1 — rejeu EXACT de cette clé : renvoie le résultat déjà acquis,
+    # ne retouche RIEN (jamais un 2e débit/crédit pour la même intention).
+    cursor.execute(
+        "SELECT stars_spent, seconds_granted, status "
+        "FROM express_consultations WHERE user_id=%s AND idempotency_key=%s",
+        (uid, str(idempotency_key)),
+    )
+    existing = cursor.fetchone()
+    if existing is not None:
+        stars_spent, seconds_granted, status = existing
+        if status == "completed":
+            return {
+                "success": True, "reason": None,
+                "stars_spent": int(stars_spent),
+                "stars_balance": _wallet_balance_readonly(cursor, uid),
+                "seconds_granted": int(seconds_granted),
+                **_stars_conversion_snapshot(cursor, uid, now),
+                "balances": _get_time_snapshot_tx(cursor, uid, now),
+            }
+        # Statut non 'completed' inattendu (ne devrait jamais arriver : cette
+        # ligne n'est insérée qu'une fois tout réussi) — filet de sécurité.
+        return {"success": False, "reason": "previous_attempt_incomplete",
+                "stars_spent": 0, "stars_balance": _wallet_balance_readonly(cursor, uid),
+                "seconds_granted": 0, **_stars_conversion_snapshot(cursor, uid, now),
+                "balances": None}
+
+    product = _express_product_public(cursor, product_key)
+    if product is None:
+        return {"success": False, "reason": "unknown_product",
+                "stars_spent": 0, "stars_balance": _wallet_balance_readonly(cursor, uid),
+                "seconds_granted": 0, **_stars_conversion_snapshot(cursor, uid, now),
+                "balances": None}
+    stars_cost, seconds_granted, enabled = product
+    stars_cost = int(stars_cost)
+    seconds_granted = int(seconds_granted)
+    if not enabled:
+        return {"success": False, "reason": "product_disabled",
+                "stars_spent": 0, "stars_balance": _wallet_balance_readonly(cursor, uid),
+                "seconds_granted": 0, **_stars_conversion_snapshot(cursor, uid, now),
+                "balances": None}
+
+    monthly_conversion = _stars_conversion_snapshot(cursor, uid, now)
+    remaining_seconds = monthly_conversion["monthly_minutes_remaining"] * 60
+    if seconds_granted > remaining_seconds:
+        return {
+            "success": False,
+            "reason": "monthly_conversion_limit_reached",
+            "stars_spent": 0,
+            "stars_balance": _wallet_balance_readonly(cursor, uid),
+            "seconds_granted": 0,
+            **monthly_conversion,
+            "balances": None,
+        }
+
+    debit = _debit_stars_tx(
+        cursor, uid, stars_cost, "express_consultation_stars",
+        f"{idempotency_key}:stars", now,
+    )
+    if not debit["debited"]:
+        return {"success": False, "reason": debit["reason"],
+                "stars_spent": 0, "stars_balance": debit["new_balance"],
+                "seconds_granted": 0, **monthly_conversion,
+                "balances": None}
+
+    credit = _credit_bonus_time_tx(
+        cursor, uid, seconds_granted, "express_consultation_stars",
+        f"{idempotency_key}:time", now,
+    )
+    # `credit["credited"]` DOIT être True ici (clé dérivée jamais utilisée
+    # avant, on vient de vérifier qu'aucune ligne express_consultations
+    # n'existait pour `idempotency_key`) — filet de sécurité uniquement.
+
+    cursor.execute(
+        "INSERT INTO express_consultations "
+        "(id, user_id, stars_spent, seconds_granted, status, "
+        " idempotency_key, created_at) "
+        "VALUES (%s, %s, %s, %s, 'completed', %s, %s)",
+        (str(uuid.uuid4()), uid, stars_cost, seconds_granted,
+         str(idempotency_key), now),
+    )
+
+    return {
+        "success": True, "reason": None,
+        "stars_spent": stars_cost,
+        "stars_balance": debit["new_balance"],
+        "seconds_granted": seconds_granted,
+        **{
+            **monthly_conversion,
+            "minutes_converted_this_month": (
+                monthly_conversion["minutes_converted_this_month"]
+                + seconds_granted // 60
+            ),
+            "monthly_minutes_remaining": max(
+                0,
+                monthly_conversion["monthly_minutes_remaining"]
+                - seconds_granted // 60,
+            ),
+        },
+        "balances": _get_time_snapshot_tx(cursor, uid, now),
+    }
+
+
+def purchase_express_consultation(user_id, product_key, idempotency_key,
+                                   now=None):
+    """Wrapper public : UNE connexion, UNE transaction, UN commit. Verrouille
+    `accounts` FOR UPDATE (compte absent/supprimé -> rollback +
+    {"success": False, "reason": "unknown_account"}), délègue à
+    `_purchase_express_consultation_tx`, commit, ferme sa connexion."""
+    if now is None:
+        now = _utcnow()
+    uid = str(user_id)
+    conn = get_conn()
+    try:
+        c = conn.cursor()
+        c.execute(
+            "SELECT user_id FROM accounts "
+            "WHERE user_id=%s AND deleted_at IS NULL FOR UPDATE",
+            (uid,),
+        )
+        if c.fetchone() is None:
+            conn.rollback()
+            return {"success": False, "reason": "unknown_account",
+                    "stars_spent": 0, "stars_balance": 0,
+                    "seconds_granted": 0, "balances": None}
+        result = _purchase_express_consultation_tx(
+            c, uid, product_key, idempotency_key, now
+        )
+        conn.commit()
+        return result
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        conn.close()
+
+
+# ============================================================
+# GROS CHANTIER AURYEL (Prompt 3/5) — MINI-JEUX : session serveur GÉNÉRIQUE,
+# partagée par les 2 NOUVEAUX jeux (Suite intuitive / Carte cachée). MÊME
+# idiome que `memory_games` (déjà existante, réutilisée telle quelle pour le
+# jeu Memory — cf. modification de `api_memory_complete`) : `start` crée une
+# session imprévisible (`session_id` = uuid4), `finish` la ferme
+# EXACTLY-ONCE (`UPDATE ... WHERE status='active'` + garde `rowcount==1`).
+#
+# ANTI-TRIVIAL-REPEAT (pas un anti-cheat niveau banque, juste empêcher
+# l'appel `finish` trivialement répété depuis le client) : un plancher de
+# temps plausible par jeu (`min_plausible_seconds`) — start->finish plus
+# rapide que ce plancher ne peut jamais représenter une vraie partie jouée ;
+# une expiration (`expiry_seconds`) périme les sessions abandonnées.
+#
+# RÉCOMPENSE : les 2 jeux ET Memory créditent tous la MÊME règle
+# `mini_game_completed` via `award_stars`, avec une clé d'idempotence
+# dérivée du JOUR (pas de la session) -> le plafond quotidien de
+# `daily_action_claims` est PARTAGÉ par la catégorie entière (jamais deux
+# jeux différents ne créditent le même jour).
+# ============================================================
+
+_MINI_GAMES = {
+    "sequence_recall": {"min_plausible_seconds": 3, "expiry_seconds": 300},
+    "hidden_card":     {"min_plausible_seconds": 2, "expiry_seconds": 300},
+}
+
+
+def start_mini_game(user_id, game_key, now=None):
+    """Ouvre une session de mini-jeu SERVEUR. Identité = appelant (déjà
+    authentifié plus haut). Ne débite/crédite rien. Renvoie
+    {"session_id", "game_key", "started_at", "expires_at"} ou
+    {"error": "invalid_game"} / {"error": "unknown_account"}."""
+    if game_key not in _MINI_GAMES:
+        return {"error": "invalid_game"}
+    if now is None:
+        now = _utcnow()
+    cfg = _MINI_GAMES[game_key]
+    uid = str(user_id)
+    session_id = str(uuid.uuid4())
+    conn = get_conn()
+    try:
+        c = conn.cursor()
+        c.execute(
+            "SELECT user_id FROM accounts "
+            "WHERE user_id=%s AND deleted_at IS NULL FOR UPDATE",
+            (uid,),
+        )
+        if c.fetchone() is None:
+            conn.rollback()
+            return {"error": "unknown_account"}
+        # housekeeping : périme les sessions actives de plus de 24 h de CE
+        # user (même idiome que memory_games.start).
+        c.execute(
+            "UPDATE mini_game_sessions SET status='expired' "
+            "WHERE user_id=%s AND status='active' AND started_at < %s",
+            (uid, now - timedelta(hours=24)),
+        )
+        c.execute(
+            "INSERT INTO mini_game_sessions "
+            "(id, user_id, game_key, started_at, status, created_at) "
+            "VALUES (%s, %s, %s, %s, 'active', %s)",
+            (session_id, uid, game_key, now, now),
+        )
+        conn.commit()
+    except Exception as e:
+        conn.rollback()
+        print(f"[minigame] start erreur {_user_hash(uid)}: {type(e).__name__}")
+        return {"error": "temporarily_unavailable"}
+    finally:
+        conn.close()
+    return {
+        "session_id": session_id,
+        "game_key": game_key,
+        "started_at": now.isoformat(),
+        "expires_at": (now + timedelta(seconds=cfg["expiry_seconds"])).isoformat(),
+    }
+
+
+def finish_mini_game(user_id, session_id, now=None):
+    """Ferme une session de mini-jeu et attribue (ou non) la récompense
+    Étoiles partagée `mini_game_completed`. Retour :
+    {"status": "completed"|"expired"|"not_found", "outcome": str|None,
+    "awarded": bool, "stars_awarded": int, "new_balance": int|None}."""
+    if now is None:
+        now = _utcnow()
+    uid = str(user_id)
+    conn = get_conn()
+    try:
+        c = conn.cursor()
+        c.execute(
+            "SELECT user_id FROM accounts "
+            "WHERE user_id=%s AND deleted_at IS NULL FOR UPDATE",
+            (uid,),
+        )
+        if c.fetchone() is None:
+            conn.rollback()
+            return {"status": "not_found", "outcome": None, "awarded": False,
+                    "stars_awarded": 0, "new_balance": None}
+
+        c.execute(
+            "SELECT user_id, game_key, started_at, status "
+            "FROM mini_game_sessions WHERE id=%s",
+            (session_id,),
+        )
+        row = c.fetchone()
+        if row is None or row[0] != uid:
+            conn.rollback()
+            return {"status": "not_found", "outcome": None, "awarded": False,
+                    "stars_awarded": 0, "new_balance": None}
+        _, game_key, started_at, status = row
+        cfg = _MINI_GAMES.get(game_key)
+        if cfg is None:
+            conn.rollback()
+            return {"status": "not_found", "outcome": None, "awarded": False,
+                    "stars_awarded": 0, "new_balance": None}
+
+        if status != "active":
+            # déjà finalisée (rejeu de /finish) -> AUCUNE récompense, jamais
+            # deux fois pour la même session.
+            conn.rollback()
+            return {"status": status, "outcome": "already_finalized",
+                    "awarded": False, "stars_awarded": 0, "new_balance": None}
+
+        elapsed = int((now - started_at).total_seconds())
+        if elapsed < 0:
+            elapsed = 0
+
+        if elapsed > cfg["expiry_seconds"]:
+            c.execute(
+                "UPDATE mini_game_sessions SET status='expired', "
+                "completed_at=%s WHERE id=%s AND user_id=%s AND status='active'",
+                (now, session_id, uid),
+            )
+            conn.commit()
+            return {"status": "expired", "outcome": "expired", "awarded": False,
+                    "stars_awarded": 0, "new_balance": None}
+
+        implausible = elapsed < cfg["min_plausible_seconds"]
+
+        c.execute(
+            "UPDATE mini_game_sessions SET status='completed', completed_at=%s "
+            "WHERE id=%s AND user_id=%s AND status='active'",
+            (now, session_id, uid),
+        )
+        if c.rowcount != 1:
+            # course concurrente (2 /finish simultanés sur la même session) :
+            # l'autre a gagné, aucune récompense ici.
+            conn.rollback()
+            return {"status": "completed", "outcome": "already_finalized",
+                    "awarded": False, "stars_awarded": 0, "new_balance": None}
+
+        if implausible:
+            conn.commit()
+            return {"status": "completed", "outcome": "implausible_time",
+                    "awarded": False, "stars_awarded": 0, "new_balance": None}
+
+        today = _wellbeing_day(now)
+        award = _award_stars_tx(
+            c, uid, "mini_game_completed", session_id,
+            f"mini_game_completed:{uid}:{today}", now,
+        )
+        conn.commit()
+        if award.get("awarded"):
+            log_event("mini_game_daily_reward_awarded", user_hash=_user_hash(uid),
+                      game_key=game_key)
+        log_event("mini_game_completed", user_hash=_user_hash(uid),
+                  game_key=game_key, awarded=award.get("awarded"))
+        return {
+            "status": "completed",
+            "outcome": "rewarded" if award.get("awarded") else award.get("reason"),
+            "awarded": bool(award.get("awarded")),
+            "stars_awarded": int(award.get("stars_awarded") or 0),
+            "new_balance": award.get("new_balance"),
+        }
+    except Exception as e:
+        conn.rollback()
+        print(f"[minigame] finish erreur {_user_hash(uid)}: {type(e).__name__}")
+        return {"status": "error", "outcome": None, "awarded": False,
+                "stars_awarded": 0, "new_balance": None}
+    finally:
+        conn.close()
 
 
 def _consultation_time_row(cursor, consultation_id):
@@ -13505,8 +16437,28 @@ try:
 except ValueError:
     _BILLING_REVERIFY_MIN_AGE_HOURS = 24
 
-# Statuts considérés « droit actif » à re-contrôler.
-_BILLING_ACTIVE_STATUSES = ("active", "billing_retry", "grace_period", "paused")
+# Statuts Google à re-contrôler périodiquement (BUG CORRIGÉ — voir audit
+# abonnement : ce filtre comparait autrefois `mobile_subscriptions.status` à
+# un vocabulaire inventé ("active", "billing_retry", "grace_period",
+# "paused") qui ne correspond à AUCUNE valeur réellement écrite en base. Pour
+# 'google_play', `status` est TOUJOURS le `subscriptionState` brut renvoyé
+# par Google (`_google_normalize`, ex. "SUBSCRIPTION_STATE_ACTIVE") : le
+# filtre précédent ne sélectionnait donc jamais aucune ligne réelle — le cron
+# tournait à vide en production (`checked: 0` systématique).
+#
+# Correction (Option 1 — le cron reconnaît les vraies valeurs Google) :
+# on réutilise directement _GP_ENTITLING_STATES (déjà la référence pour
+# _google_entitled — ACTIVE / IN_GRACE_PERIOD / CANCELED-tant-que-
+# expires_at>now), auquel on ajoute ON_HOLD et PAUSED : ces deux états ne
+# donnent PAS droit à Premium mais peuvent encore ÉVOLUER côté Google
+# (reprise de paiement, reprise après pause) sans qu'aucune notification ne
+# nous prévienne — ils méritent donc d'être revérifiés. EXPIRED / PENDING /
+# UNSPECIFIED sont terminaux ou pas-encore-entitled : rien à revérifier tant
+# qu'un client ne relance pas un verify lui-même.
+_BILLING_REVERIFY_STATUSES = _GP_ENTITLING_STATES | frozenset({
+    "SUBSCRIPTION_STATE_ON_HOLD",
+    "SUBSCRIPTION_STATE_PAUSED",
+})
 
 
 def _billing_reverify_revoke(user_id, sub_id, status_label, now):
@@ -13549,8 +16501,7 @@ def _billing_reverify_revoke(user_id, sub_id, status_label, now):
 # ============================================================
 # CRON — SYNCHRONISATION AUTOMATIQUE CLOUDFLARE R2 -> catalogues média.
 # ============================================================
-# Toutes les ~15 min : liste méditations/*.mp3, meditations/*.mp4 et
-# relaxation-videos/*.mp4 dans
+# Toutes les ~15 min : liste méditations/*.mp3 et relaxation-videos/*.mp4 dans
 # R2 (API S3, paginée), crée UNE ligne de catalogue par NOUVEL objet, adopte
 # sans doublon les lignes déjà importées. Additif : rien n'est jamais supprimé.
 # Auth : secret constant-time (R2_SYNC_CRON_SECRET, repli PUSH_CRON_SECRET /
@@ -13593,10 +16544,8 @@ def cron_r2_media_sync():
               status=result.get("status"),
               audio=result.get("audio_objects", 0),
               video=result.get("video_objects", 0),
-              meditation_video=result.get("meditation_video_objects", 0),
               new_a=result.get("new_audio", 0),
               new_v=result.get("new_videos", 0),
-              new_mv=result.get("new_meditation_videos", 0),
               adopt_a=result.get("adopted_audio", 0),
               adopt_v=result.get("adopted_videos", 0),
               missing=result.get("missing_objects", 0),
@@ -13608,15 +16557,15 @@ def cron_r2_media_sync():
         "dry_run": bool(dry_run),
         "audio_objects": result.get("audio_objects", 0),
         "video_objects": result.get("video_objects", 0),
-        "meditation_video_objects": result.get("meditation_video_objects", 0),
         "new_audio": result.get("new_audio", 0),
         "new_videos": result.get("new_videos", 0),
-        "new_meditation_videos": result.get("new_meditation_videos", 0),
         "adopted_audio": result.get("adopted_audio", 0),
         "adopted_videos": result.get("adopted_videos", 0),
-        "adopted_meditation_videos": result.get("adopted_meditation_videos", 0),
         "updated_audio": result.get("updated_audio", 0),
         "updated_videos": result.get("updated_videos", 0),
+        "meditation_video_objects": result.get("meditation_video_objects", 0),
+        "new_meditation_videos": result.get("new_meditation_videos", 0),
+        "adopted_meditation_videos": result.get("adopted_meditation_videos", 0),
         "updated_meditation_videos": result.get("updated_meditation_videos", 0),
         "invalid_objects": result.get("invalid_objects", 0),
         "missing_objects": result.get("missing_objects", 0),
@@ -13648,7 +16597,7 @@ def cron_billing_reverify():
             "  AND (last_verified_at IS NULL OR last_verified_at < %s) "
             "ORDER BY last_verified_at ASC NULLS FIRST "
             "LIMIT %s",
-            (list(_BILLING_ACTIVE_STATUSES), cutoff, _BILLING_REVERIFY_BATCH),
+            (list(_BILLING_REVERIFY_STATUSES), cutoff, _BILLING_REVERIFY_BATCH),
         )
         rows = c.fetchall()
     finally:

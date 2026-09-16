@@ -16,6 +16,7 @@ CREATE TABLE IF NOT EXISTS tirages (
     card_keys       JSONB        NOT NULL,
     advisor_id      TEXT         NULL,
     consultation_id UUID         NULL,
+    draw_date       DATE         NULL,
     created_at      TIMESTAMPTZ  NOT NULL DEFAULT NOW()
 );
 

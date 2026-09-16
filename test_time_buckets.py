@@ -162,8 +162,7 @@ check(A._time_totals(-5, -5, -5, -5)["total_remaining_seconds"] == 0,
 # ===========================================================================
 _share = inspect.getsource(A.api_rewards_daily_share)
 _wb = inspect.getsource(A._reconcile_wellbeing_progress)
-_mem = inspect.getsource(A.api_memory_complete)
-for name, src in (("share", _share), ("wellbeing", _wb), ("memory", _mem)):
+for name, src in (("share", _share), ("wellbeing", _wb)):
     body = "\n".join(l for l in src.splitlines() if not l.lstrip().startswith("#"))
     credits_earned = "earned_seconds_remaining =" in body or "earned_seconds_remaining=" in body
     credits_purchased = ("purchased_seconds_remaining =" in body
@@ -171,6 +170,21 @@ for name, src in (("share", _share), ("wellbeing", _wb), ("memory", _mem)):
     check(credits_earned and not credits_purchased,
           f"1 récompense {name} crédite earned, jamais purchased")
     check('_time_ledger_write(' in src, f"1 récompense {name} trace le time_ledger")
+
+# GROS CHANTIER AURYEL (Prompt 3/5) — Memory NE crédite PLUS earned/time_ledger
+# (migration additive : la récompense Memory est désormais Étoiles, via
+# award_stars/_award_stars_tx -> reward_wallet/reward_transactions, jamais
+# les buckets de temps). Anciennement testée dans la boucle ci-dessus ; testée
+# ici pour la raison INVERSE, et exhaustivement dans
+# test_app_memory_rewards.py (section 9 bis).
+_mem = inspect.getsource(A.api_memory_complete)
+check("earned_seconds_remaining" not in _mem,
+      "1bis Memory NE crédite PLUS earned_seconds_remaining (Étoiles désormais, "
+      "jamais temps + Étoiles à la fois)")
+check("_time_ledger_write(" not in _mem,
+      "1ter Memory n'écrit plus dans time_ledger")
+check("award_stars" in _mem or "_award_stars_tx" in _mem,
+      "1quater Memory crédite via award_stars/_award_stars_tx (Étoiles)")
 
 # ===========================================================================
 # 2. Renouvellement Premium ne remet PAS earned / purchased à zéro

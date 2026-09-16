@@ -7,7 +7,7 @@ Routes / helper testés :
     GET  /api/app/wellbeing/progress
     POST /api/app/wellbeing/mission
     _reconcile_wellbeing_progress(user_id)   (= la SEULE voie de crédit ;
-        appelée aussi depuis POST /api/tirages et POST /api/consultation/message)
+        appelée depuis les missions Bien-être et POST /api/consultation/message)
 
 100 % local : psycopg2 mocké, get_conn -> fausse DB en mémoire modélisant
 wellbeing_mission_days (pensee + moment) / tirages / consultations /
@@ -247,8 +247,8 @@ check(("/api/app/wellbeing/progress", "GET") in _rules,
 check(("/api/app/wellbeing/mission", "POST") in _rules,
       "0b POST /api/app/wellbeing/mission enregistrée")
 check("_reconcile_wellbeing_progress("
-      in inspect.getsource(A.api_tirages_create),
-      "0c POST /api/tirages appelle _reconcile_wellbeing_progress")
+      not in inspect.getsource(A.api_tirages_create),
+      "0c POST /api/tirages ne déclenche aucune récompense Bien-être")
 check("_reconcile_wellbeing_progress("
       in inspect.getsource(A.api_consultation_message),
       "0d POST /api/consultation/message appelle _reconcile_wellbeing_progress")
@@ -277,13 +277,13 @@ check((UID1, _FAKE_TODAY["d"], "pensee") in _MISSION,
 # 2. Partager SANS consulter la Pensée -> pensee NON complétée
 # ===========================================================================
 _reset_db(); _as(UID1)
-# les 3 autres missions du jour sont faites, mais pas `pensee`
-_seed_derived_day(UID1, _FAKE_TODAY["d"])          # tirage + consultation
+# les 2 autres missions du jour sont faites, mais pas `pensee`
+_CONSULT.add((UID1, _FAKE_TODAY["d"]))
 _MISSION.add((UID1, _FAKE_TODAY["d"], "moment"))   # moment
 j = _get().get_json()
 check(j["today"]["missions"][0]["completed"] is False,
       "2a pensee reste À FAIRE tant qu'elle n'est pas consultée")
-check(j["today"]["completed"] is False, "2b 3/4 -> journée non complétée")
+check(j["today"]["completed"] is False, "2b 2/3 -> journée non complétée")
 check(j["completed_days_total"] == 0, "2c aucune journée ajoutée")
 
 # ===========================================================================
@@ -291,14 +291,14 @@ check(j["completed_days_total"] == 0, "2c aucune journée ajoutée")
 # ===========================================================================
 _reset_db(); _as(UID1)
 r = _post("tirage")
-check(r.status_code == 409 and r.get_json().get("error") == "mission_action_missing",
-      "3 POST {tirage} sans tirage sauvé aujourd'hui -> 409 mission_action_missing")
+check(r.status_code == 400 and r.get_json().get("error") == "invalid_mission",
+      "3 Tarot autonome : tirage n'est pas une mission Bien-être")
 r = _post("humeur")
 check(r.status_code == 400 and r.get_json().get("error") == "invalid_mission",
       "4 mission_id inconnu -> 400 invalid_mission")
 
 # ===========================================================================
-# 5. 4/4 le même jour = +1 journée
+# 5. 3/3 le même jour = +1 journée
 # ===========================================================================
 _reset_db(); _as(UID1)
 today = _FAKE_TODAY["d"]
@@ -306,7 +306,7 @@ _seed_derived_day(UID1, today)
 _post("pensee")
 j = _post("moment").get_json()
 check(j["today"]["completed"] is True and j["completed_days_total"] == 1,
-      "5 pensee + moment + (tirage/consultation dérivés) -> journée complétée, +1")
+      "5 pensee + moment + consultation dérivés -> journée complétée, +1")
 
 # ===========================================================================
 # 6. idempotence des missions
@@ -336,30 +336,29 @@ check(j["today"]["completed"] is True and j["completed_days_total"] == 1,
       "7c GET reflète la journée complétée sans nouveau POST wellbeing")
 
 # ===========================================================================
-# 8. « 4e mission = TIRAGE » : idem, via /api/tirages -> _reconcile
+# 8. Le Tarot ne complète jamais une journée Bien-être et ne déclenche aucun crédit
 # ===========================================================================
 _reset_db(); _as(UID1)
 _MISSION.add((UID1, today, "pensee"))
 _MISSION.add((UID1, today, "moment"))
-_CONSULT.add((UID1, today))
-check(_get().get_json()["completed_days_total"] == 0, "8a 3/4 -> pas encore de journée")
+check(_get().get_json()["completed_days_total"] == 0, "8a 2/3 -> pas encore de journée")
 _TIRAGE.add((UID1, today))                 # tirage sauvé
 rec = _reconcile(UID1)
-check(rec["completed_days_total"] == 1, "8b tirage = 4e mission -> journée complète")
+check(rec["completed_days_total"] == 0 and rec["credited"] is False
+      and _ACCOUNTS[UID1]["earned"] == 0,
+      "8b tirage seul n'est ni une mission ni une récompense")
 
 # ===========================================================================
-# 9. 30e journée complétée par CHAQUE type de 4e action -> +900 s IMMÉDIATEMENT
+# 9. 30e journée complétée par chaque mission Bien-être -> +900 s IMMÉDIATEMENT
 # ===========================================================================
 def _cycle30_via(fourth):
     _reset_db(); _as(UID1)
     _seed_full_days(UID1, 29)               # 29 journées déjà complétées
-    # aujourd'hui : 3 missions faites, la 4e = `fourth`
+    # aujourd'hui : 2 missions faites, la 3e = `fourth`
     if fourth != "pensee":
         _MISSION.add((UID1, today, "pensee"))
     if fourth != "moment":
         _MISSION.add((UID1, today, "moment"))
-    if fourth != "tirage":
-        _TIRAGE.add((UID1, today))
     if fourth != "consultation":
         _CONSULT.add((UID1, today))
     # exécution de la 4e action
@@ -369,8 +368,6 @@ def _cycle30_via(fourth):
     if fourth == "moment":
         rj = _post("moment").get_json()
         return rj["reward"], _ACCOUNTS[UID1]["earned"], rj
-    if fourth == "tirage":
-        _TIRAGE.add((UID1, today))
     if fourth == "consultation":
         _CONSULT.add((UID1, today))
     rec = _reconcile(UID1)
@@ -378,7 +375,7 @@ def _cycle30_via(fourth):
             _ACCOUNTS[UID1]["earned"], _get().get_json())
 
 
-for _who in ("consultation", "tirage", "pensee", "moment"):
+for _who in ("consultation", "pensee", "moment"):
     reward, purchased, prog = _cycle30_via(_who)
     ok = (reward["credited"] is True and reward["credited_seconds"] == 900
           and purchased == 900 and prog["completed_days_total"] == 30)
@@ -506,8 +503,8 @@ check(set(j.keys()) == {
 }, "17a GET : clés du contrat exactes")
 check(set(j["today"].keys()) == {"date", "missions", "completed"}
       and [m["id"] for m in j["today"]["missions"]]
-      == ["pensee", "tirage", "consultation", "moment"],
-      "17b today : date/missions/completed + 4 missions ordonnées")
+      == ["pensee", "consultation", "moment"],
+      "17b today : date/missions/completed + 3 missions ordonnées")
 
 # ---------------------------------------------------------------------------
 print("-" * 60)
