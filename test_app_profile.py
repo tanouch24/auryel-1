@@ -254,8 +254,10 @@ A.get_or_create_app_profile(UID1)
 _src = inspect.getsource(A.get_user)
 _get_user_keys = set(re.findall(r'"([a-z_0-9]+)"\s*:\s*row\[', _src))
 _d = A._app_profile_to_user_dict(A.get_app_profile(UID1), account={"email": "s@example.com"})
-check(set(_d.keys()) == _get_user_keys and len(_get_user_keys) > 60,
-      f"11 dict adapté = mêmes clés que get_user() ({len(_get_user_keys)} clés)")
+check(_get_user_keys <= set(_d.keys())
+      and {"onboarding_profile_status", "profile_self_description"} <= set(_d.keys())
+      and len(_get_user_keys) > 60,
+      f"11 dict adapté = clés get_user() + profil onboarding ({len(_get_user_keys)} clés legacy)")
 
 # 12. get_system_prompt sans KeyError
 _prompt = A.get_system_prompt(_d, _d["guide"])
