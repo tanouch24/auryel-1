@@ -423,6 +423,10 @@ def get_conn():
     except Exception:
         return psycopg2.connect(DATABASE_URL)
 
+class CriticalSchemaMigrationError(RuntimeError):
+    """Migration critique échouée : le serveur ne doit pas démarrer invalide."""
+
+
 def init_db():
     conn = get_conn()
     c = conn.cursor()
@@ -2115,6 +2119,22 @@ def init_db():
     except Exception as e:
         conn.rollback()
         print(f"Migration v46 (r2 media sync): {e}")
+
+    # Migration v47 — CATALOGUE MP4 MÉDITATIONS R2. Additif : catalogue
+    # distinct des audios et des vidéos d'ambiance du Réveil.
+    try:
+        migration_path = os.path.join(
+            os.path.dirname(__file__), "migrations", "035_meditation_video_catalog.sql"
+        )
+        with open(migration_path, "r", encoding="utf-8") as migration_file:
+            c.execute(migration_file.read())
+        conn.commit()
+    except Exception as e:
+        conn.rollback()
+        conn.close()
+        raise CriticalSchemaMigrationError(
+            "Migration v47 (catalogue vidéo Méditations) échouée"
+        ) from e
 
     conn.close()
 
@@ -6994,6 +7014,8 @@ def api_content_meditations():
     """Catalogue distant des méditations — entrées actives et publiées, contrat
     JSON versionné. Supporte ETag / If-None-Match : renvoie 304 si le client a
     déjà la version courante."""
+    if request.args.get("media") == "video":
+        return _api_content_meditation_videos()
     rows = _meditation_catalog_active_rows()
     tag = _catalog_version_tag(rows)
     inm = request.headers.get("If-None-Match", "").strip().strip('"')
@@ -7021,6 +7043,55 @@ def api_content_meditations():
         "version": _CONTENT_API_VERSION,
         "catalog_version": tag,
         "meditations": meditations,
+    })
+    resp.headers["ETag"] = f'"{tag}"'
+    resp.headers["Cache-Control"] = "no-cache"
+    return resp, 200
+
+
+# --- MP4 Méditations distantes (catalogue R2 strictement séparé) -----------
+def _meditation_video_catalog_active_rows():
+    """MP4 publiés provenant exclusivement du préfixe R2 meditations/."""
+    conn = get_conn()
+    try:
+        c = conn.cursor()
+        c.execute(
+            "SELECT id, slug, title, description, category, duration_seconds, "
+            "       video_url, thumbnail_url, sort_order, published_at, "
+            "       updated_at, version, r2_object_key "
+            "FROM meditation_video_catalog "
+            "WHERE is_active = TRUE "
+            "  AND (published_at IS NULL OR published_at <= NOW()) "
+            "  AND r2_object_key LIKE 'meditations/%' "
+            "ORDER BY sort_order ASC, id ASC"
+        )
+        return c.fetchall()
+    finally:
+        conn.close()
+
+
+def _api_content_meditation_videos():
+    rows = _meditation_video_catalog_active_rows()
+    tag = _catalog_version_tag(rows)
+    inm = request.headers.get("If-None-Match", "").strip().strip('"')
+    if inm and inm == tag:
+        resp = jsonify({})
+        resp.headers["ETag"] = f'"{tag}"'
+        resp.headers["Cache-Control"] = "no-cache"
+        return resp, 304
+    items = [{
+        "id": str(r[0]), "slug": r[1], "title": r[2],
+        "description": r[3] or "", "category": r[4] or "",
+        "duration_seconds": int(r[5]) if r[5] is not None else None,
+        "video_url": r[6], "thumbnail_url": r[7] or None,
+        "sort_order": int(r[8] or 0),
+        "published_at": _ts_iso(r[9]) if r[9] else None,
+        "version": int(r[11] or 1), "object_key": r[12],
+    } for r in rows]
+    resp = jsonify({
+        "version": _CONTENT_API_VERSION,
+        "catalog_version": tag,
+        "meditation_videos": items,
     })
     resp.headers["ETag"] = f'"{tag}"'
     resp.headers["Cache-Control"] = "no-cache"
@@ -13320,7 +13391,8 @@ def _billing_reverify_revoke(user_id, sub_id, status_label, now):
 # ============================================================
 # CRON — SYNCHRONISATION AUTOMATIQUE CLOUDFLARE R2 -> catalogues média.
 # ============================================================
-# Toutes les ~15 min : liste méditations/*.mp3 et relaxation-videos/*.mp4 dans
+# Toutes les ~15 min : liste méditations/*.mp3, meditations/*.mp4 et
+# relaxation-videos/*.mp4 dans
 # R2 (API S3, paginée), crée UNE ligne de catalogue par NOUVEL objet, adopte
 # sans doublon les lignes déjà importées. Additif : rien n'est jamais supprimé.
 # Auth : secret constant-time (R2_SYNC_CRON_SECRET, repli PUSH_CRON_SECRET /
@@ -13363,8 +13435,10 @@ def cron_r2_media_sync():
               status=result.get("status"),
               audio=result.get("audio_objects", 0),
               video=result.get("video_objects", 0),
+              meditation_video=result.get("meditation_video_objects", 0),
               new_a=result.get("new_audio", 0),
               new_v=result.get("new_videos", 0),
+              new_mv=result.get("new_meditation_videos", 0),
               adopt_a=result.get("adopted_audio", 0),
               adopt_v=result.get("adopted_videos", 0),
               missing=result.get("missing_objects", 0),
@@ -13376,12 +13450,16 @@ def cron_r2_media_sync():
         "dry_run": bool(dry_run),
         "audio_objects": result.get("audio_objects", 0),
         "video_objects": result.get("video_objects", 0),
+        "meditation_video_objects": result.get("meditation_video_objects", 0),
         "new_audio": result.get("new_audio", 0),
         "new_videos": result.get("new_videos", 0),
+        "new_meditation_videos": result.get("new_meditation_videos", 0),
         "adopted_audio": result.get("adopted_audio", 0),
         "adopted_videos": result.get("adopted_videos", 0),
+        "adopted_meditation_videos": result.get("adopted_meditation_videos", 0),
         "updated_audio": result.get("updated_audio", 0),
         "updated_videos": result.get("updated_videos", 0),
+        "updated_meditation_videos": result.get("updated_meditation_videos", 0),
         "invalid_objects": result.get("invalid_objects", 0),
         "missing_objects": result.get("missing_objects", 0),
         "errors": result.get("errors", 0),

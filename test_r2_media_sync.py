@@ -61,13 +61,18 @@ class FakeR2:
 class FakeDB:
     def __init__(self):
         self.meds = []       # dicts
+        self.mvs = []        # MP4 méditations
         self.vids = []
         self.state = None
         self.lock_held = False
         self.lock_available = True
 
     def table(self, name):
-        return self.meds if name == "meditation_catalog" else self.vids
+        if name == "meditation_catalog":
+            return self.meds
+        if name == "meditation_video_catalog":
+            return self.mvs
+        return self.vids
 
 
 class Cur:
@@ -122,20 +127,30 @@ class Cur:
             self._rows = [(m["r2_object_key"],) for m in db.meds if m.get("r2_object_key")]
         elif s.startswith("SELECT r2_object_key FROM relaxation_video_catalog WHERE r2_object_key IS NOT NULL"):
             self._rows = [(v["r2_object_key"],) for v in db.vids if v.get("r2_object_key")]
+        elif s.startswith("SELECT r2_object_key FROM meditation_video_catalog WHERE r2_object_key IS NOT NULL"):
+            self._rows = [(v["r2_object_key"],) for v in db.mvs if v.get("r2_object_key")]
         elif s.startswith("SELECT COALESCE(MAX(sort_order), 0) + 1 FROM meditation_catalog"):
             self._one = (max([m["sort_order"] for m in db.meds], default=0) + 1,)
         elif s.startswith("SELECT COALESCE(MAX(sort_order), 0) + 1 FROM relaxation_video_catalog"):
             self._one = (max([v["sort_order"] for v in db.vids], default=0) + 1,)
+        elif s.startswith("SELECT COALESCE(MAX(sort_order), 0) + 1 FROM meditation_video_catalog"):
+            self._one = (max([v["sort_order"] for v in db.mvs], default=0) + 1,)
         elif s.startswith("SELECT 1 FROM meditation_catalog WHERE slug ="):
             self._one = (1,) if any(m["slug"] == p[0] for m in db.meds) else None
         elif s.startswith("SELECT 1 FROM relaxation_video_catalog WHERE slug ="):
             self._one = (1,) if any(v["slug"] == p[0] for v in db.vids) else None
+        elif s.startswith("SELECT 1 FROM meditation_video_catalog WHERE slug ="):
+            self._one = (1,) if any(v["slug"] == p[0] for v in db.mvs) else None
         elif s.startswith("UPDATE meditation_catalog SET r2_last_seen_at = %s WHERE r2_object_key = %s"):
             for m in db.meds:
                 if m.get("r2_object_key") == p[1]:
                     m["r2_last_seen_at"] = p[0]
         elif s.startswith("UPDATE relaxation_video_catalog SET r2_last_seen_at = %s WHERE r2_object_key = %s"):
             for v in db.vids:
+                if v.get("r2_object_key") == p[1]:
+                    v["r2_last_seen_at"] = p[0]
+        elif s.startswith("UPDATE meditation_video_catalog SET r2_last_seen_at = %s WHERE r2_object_key = %s"):
+            for v in db.mvs:
                 if v.get("r2_object_key") == p[1]:
                     v["r2_last_seen_at"] = p[0]
         elif s.startswith("SELECT id FROM meditation_catalog WHERE r2_object_key IS NULL AND (audio_url = %s OR slug = %s)"):
@@ -148,6 +163,11 @@ class Cur:
             hit = next((v for v in db.vids if not v.get("r2_object_key")
                         and (v["video_url"] == url or v["slug"] == slug)), None)
             self._one = (hit["id"],) if hit else None
+        elif s.startswith("SELECT id FROM meditation_video_catalog WHERE r2_object_key IS NULL AND (video_url = %s OR slug = %s)"):
+            url, slug = p
+            hit = next((v for v in db.mvs if not v.get("r2_object_key")
+                        and (v["video_url"] == url or v["slug"] == slug)), None)
+            self._one = (hit["id"],) if hit else None
         elif s.startswith("UPDATE meditation_catalog SET r2_object_key = %s, r2_last_seen_at = %s WHERE id = %s"):
             key, seen, mid = p
             for m in db.meds:
@@ -157,6 +177,12 @@ class Cur:
         elif s.startswith("UPDATE relaxation_video_catalog SET r2_object_key = %s, r2_last_seen_at = %s WHERE id = %s"):
             key, seen, vid = p
             for v in db.vids:
+                if v["id"] == vid and not v.get("r2_object_key"):
+                    v["r2_object_key"] = key
+                    v["r2_last_seen_at"] = seen
+        elif s.startswith("UPDATE meditation_video_catalog SET r2_object_key = %s, r2_last_seen_at = %s WHERE id = %s"):
+            key, seen, vid = p
+            for v in db.mvs:
                 if v["id"] == vid and not v.get("r2_object_key"):
                     v["r2_object_key"] = key
                     v["r2_last_seen_at"] = seen
@@ -190,6 +216,22 @@ class Cur:
                     video_url=url, thumbnail_url=None, category=cat, tags=[],
                     sort_order=sort_o, is_active=True, published_at=None,
                     r2_object_key=key, r2_last_seen_at=seen, version=1))
+                self._one = (vid,)
+        elif s.startswith("INSERT INTO meditation_video_catalog"):
+            (vid, slug, title, desc, cat, dur, url, sort_o, key, seen) = p
+            existing = next((v for v in db.mvs if v.get("r2_object_key") == key), None)
+            if existing:
+                existing["r2_last_seen_at"] = seen
+                self._one = (existing["id"],)
+            else:
+                if any(v["slug"] == slug for v in db.mvs):
+                    raise AssertionError("slug déjà pris (contrainte UNIQUE)")
+                db.mvs.append(dict(
+                    id=vid, slug=slug, title=title, description=desc,
+                    category=cat, duration_seconds=dur, video_url=url,
+                    thumbnail_url=None, sort_order=sort_o, is_active=True,
+                    published_at=None, r2_object_key=key,
+                    r2_last_seen_at=seen, version=1))
                 self._one = (vid,)
         elif s.startswith("INSERT INTO r2_sync_state"):
             db.state = {

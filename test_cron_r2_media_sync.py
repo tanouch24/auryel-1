@@ -130,7 +130,9 @@ check(r.status_code == 200 and j["status"] == "success"
 check(set(j.keys()) == {
     "status", "dry_run", "audio_objects", "video_objects", "new_audio",
     "new_videos", "adopted_audio", "adopted_videos", "updated_audio",
-    "updated_videos", "invalid_objects", "missing_objects", "errors"},
+    "updated_videos", "meditation_video_objects", "new_meditation_videos",
+    "adopted_meditation_videos", "updated_meditation_videos",
+    "invalid_objects", "missing_objects", "errors"},
     "3b réponse = compteurs uniquement (aucune clé sensible, aucun credential)")
 check("secret" not in "".join(k.lower() for k in j.keys()),
       "3c aucune clé « secret » dans la réponse")
@@ -176,6 +178,9 @@ check("CREATE UNIQUE INDEX IF NOT EXISTS" in _seg
       "6c index UNIQUE PARTIEL sur r2_object_key (garantie DB anti-doublon)")
 check("CREATE TABLE IF NOT EXISTS r2_sync_state" in _seg,
       "6d table r2_sync_state (IF NOT EXISTS)")
+check("035_meditation_video_catalog.sql" in _src
+      and "Migration v47" in _src,
+      "6g migration 035 catalogue MP4 Méditations intégrée")
 for _forbidden in ("DROP TABLE", "TRUNCATE", "DELETE FROM", "DROP COLUMN"):
     check(_forbidden not in _seg, f"6e aucune opération destructrice : {_forbidden!r}")
 check("REFERENCES accounts" not in _seg,

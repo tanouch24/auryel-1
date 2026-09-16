@@ -9,6 +9,7 @@ Principe produit : Nathanyel dépose un fichier dans R2, il apparaît dans l'app
 sous ~15 min, sans release, sans script manuel.
 
     R2  méditations/*.mp3        -> 1 ligne meditation_catalog
+    R2  meditations/*.mp4        -> 1 ligne meditation_video_catalog
     R2  relaxation-videos/*.mp4  -> 1 ligne relaxation_video_catalog
 
 RÈGLE ABSOLUE : 1 MP3 = 1 méditation, 1 MP4 = 1 visuel. Une vidéo ne crée
@@ -38,6 +39,7 @@ from datetime import datetime, timezone
 
 # Préfixes EXACTS dans le bucket. Le premier contient réellement un « é ».
 AUDIO_PREFIX = "méditations/"
+MEDITATION_VIDEO_PREFIX = "meditations/"
 VIDEO_PREFIX = "relaxation-videos/"
 
 _R2_ENDPOINT_TMPL = "https://{account_id}.r2.cloudflarestorage.com"
@@ -324,9 +326,13 @@ class R2MediaCatalogSync:
             "dry_run": bool(dry_run),
             "started_at": started.isoformat(),
             "audio_objects": 0, "video_objects": 0,
+            "meditation_video_objects": 0,
             "new_audio": 0, "new_videos": 0,
+            "new_meditation_videos": 0,
             "adopted_audio": 0, "adopted_videos": 0,
+            "adopted_meditation_videos": 0,
             "updated_audio": 0, "updated_videos": 0,
+            "updated_meditation_videos": 0,
             "invalid_objects": 0, "missing_objects": 0,
             "missing": [], "errors": 0, "status": "success",
         }
@@ -343,11 +349,20 @@ class R2MediaCatalogSync:
                     return result
 
             audio_keys, inv_a = self._collect(AUDIO_PREFIX, "mp3")
+            meditation_video_keys, inv_mv = self._collect(
+                MEDITATION_VIDEO_PREFIX, "mp4"
+            )
             video_keys, inv_v = self._collect(VIDEO_PREFIX, "mp4")
             result["audio_objects"] = len(audio_keys)
             result["video_objects"] = len(video_keys)
-            result["invalid_objects"] = inv_a + inv_v
+            result["meditation_video_objects"] = len(meditation_video_keys)
+            result["invalid_objects"] = inv_a + inv_mv + inv_v
 
+            self._sync_kind(
+                c, result, dry_run, kind="meditation_videos",
+                table="meditation_video_catalog", url_col="video_url",
+                keys=meditation_video_keys, derive=self._derive_video_row,
+            )
             self._sync_kind(
                 c, result, dry_run, kind="audio", table="meditation_catalog",
                 url_col="audio_url", keys=audio_keys, derive=self._derive_audio_row,
@@ -476,7 +491,7 @@ class R2MediaCatalogSync:
                          row["category"], int(row["duration_seconds"] or 0),
                          row["url"], next_order, key, result["started_at"]),
                     )
-                else:
+                elif table == "relaxation_video_catalog":
                     c.execute(
                         "INSERT INTO relaxation_video_catalog "
                         "(id, slug, title, description, video_url, "
@@ -492,6 +507,22 @@ class R2MediaCatalogSync:
                         (new_id, slug, row["title"], row["description"],
                          row["url"], row["category"], next_order, key,
                          result["started_at"]),
+                    )
+                else:
+                    c.execute(
+                        "INSERT INTO meditation_video_catalog "
+                        "(id, slug, title, description, category, "
+                        " duration_seconds, video_url, thumbnail_url, sort_order, "
+                        " is_active, published_at, r2_object_key, r2_last_seen_at, "
+                        " created_at, updated_at, version) "
+                        "VALUES (%s, %s, %s, %s, %s, %s, %s, NULL, %s, TRUE, "
+                        "        NULL, %s, %s, NOW(), NOW(), 1) "
+                        "ON CONFLICT (r2_object_key) DO UPDATE "
+                        "  SET r2_last_seen_at = EXCLUDED.r2_last_seen_at "
+                        "RETURNING id",
+                        (new_id, slug, row["title"], row["description"],
+                         row["category"], row["duration_seconds"], row["url"],
+                         next_order, key, result["started_at"]),
                     )
                 next_order += 1
             except Exception as exc:
