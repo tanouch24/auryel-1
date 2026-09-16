@@ -9127,6 +9127,15 @@ def _exercise_catalog_active_rows(category=None):
         conn.close()
 
 
+def _exercise_image_url(slug):
+    """Resolve the deterministic public R2 object for one exercise."""
+    base = os.environ.get("R2_PUBLIC_BASE_URL", "").strip().rstrip("/")
+    if not base or not slug:
+        return None
+    key = f"exercise-images/{slug}_01.webp"
+    return f"{base}/{_url_quote(key, safe='/')}"
+
+
 @app.route("/api/app/content/exercises", methods=["GET"])
 @limiter.limit("60 per hour")
 @require_app_auth
@@ -9152,6 +9161,7 @@ def api_content_exercises():
         "description": r[4] or "", "duration_seconds": int(r[5]),
         "level": r[6], "steps": r[7], "precautions": r[8] or "",
         "sort_order": int(r[9]), "version": int(r[10] or 1),
+        "image_url": _exercise_image_url(r[1]),
     } for r in rows]
     return jsonify({
         "version": _CONTENT_API_VERSION,

@@ -52,6 +52,7 @@ class Connection:
 
 
 def main():
+    os.environ["R2_PUBLIC_BASE_URL"] = "https://r2.example.test/public"
     migration = open(
         "migrations/036_exercise_catalog.sql", encoding="utf-8"
     ).read()
@@ -59,11 +60,22 @@ def main():
     assert re.search(r"steps\s+JSONB\s+NOT NULL", migration)
     assert "CHECK (duration_seconds > 0)" in migration
     assert migration.count("::uuid,") == 50
+    slugs = re.findall(r"::uuid, '([^']+)'", migration)
+    assert len(slugs) == 50
+    assert all(
+        A._exercise_image_url(slug).startswith(
+            "https://r2.example.test/public/exercise-images/"
+        )
+        and A._exercise_image_url(slug).endswith("_01.webp")
+        for slug in slugs
+    )
     for category in ("breathing", "relaxation", "stretching", "mobility", "sleep"):
         assert migration.count(f"'{category}'") == 10
     assert "tarot" not in migration.lower()
     assert "reward" not in migration.lower()
     assert not re.search(r"\b(guérit|traite|soigne|élimine l.anxiété)\b", migration, re.I)
+    assert "jambes-légères-au-lit_01.webp" not in migration
+    assert "jambes-legères-au-lit" in migration
     init_source = open("auryel_bot.py", encoding="utf-8").read()
     assert '"036_exercise_catalog.sql"' in init_source
     assert '@app.route("/api/app/content/exercises", methods=["GET"])' in init_source
@@ -90,9 +102,24 @@ def main():
     assert response.status_code == 200
     assert [x["slug"] for x in body["exercises"]] == ["souffle", "pause"]
     assert body["exercises"][0]["steps"][0]["seconds"] == 60
+    assert body["exercises"][0]["image_url"] == (
+        "https://r2.example.test/public/exercise-images/souffle_01.webp"
+    )
     assert client.get(
         "/api/app/content/exercises?category=breathing", headers=headers
     ).get_json()["exercises"][0]["category"] == "breathing"
+    unicode_rows = [
+        ("id-unicode", "jambes-legères-au-lit", "Jambes légères au lit", "sleep", "Desc", 120,
+         "débutant", [{"order": 1, "title": "Observer", "instruction": "Respire", "seconds": 60}],
+         "", 42, 1, now),
+    ]
+    A.get_conn = lambda: Connection(unicode_rows)
+    unicode_body = client.get(
+        "/api/app/content/exercises", headers=headers
+    ).get_json()
+    assert unicode_body["exercises"][0]["image_url"].endswith(
+        "exercise-images/jambes-leg%C3%A8res-au-lit_01.webp"
+    )
     assert client.get(
         "/api/app/content/exercises?category=unknown", headers=headers
     ).status_code == 400
