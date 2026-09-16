@@ -2136,6 +2136,22 @@ def init_db():
             "Migration v47 (catalogue vidéo Méditations) échouée"
         ) from e
 
+    # Migration v48 — CATALOGUE EXERCICES BIEN-ÊTRE V1. Additif : table et
+    # contenu éditorial initial, indépendants des catalogues média existants.
+    try:
+        migration_path = os.path.join(
+            os.path.dirname(__file__), "migrations", "036_exercise_catalog.sql"
+        )
+        with open(migration_path, "r", encoding="utf-8") as migration_file:
+            c.execute(migration_file.read())
+        conn.commit()
+    except Exception as e:
+        conn.rollback()
+        conn.close()
+        raise CriticalSchemaMigrationError(
+            "Migration v48 (catalogue exercices Bien-être) échouée"
+        ) from e
+
     conn.close()
 
 def reset_db():
@@ -7097,6 +7113,68 @@ def _api_content_meditation_videos():
     resp.headers["ETag"] = f'"{tag}"'
     resp.headers["Cache-Control"] = "no-cache"
     return resp, 200
+
+
+# --- Exercices Bien-être V1 (catalogue serveur dédié) ----------------------
+_EXERCISE_CATEGORIES = {
+    "breathing", "relaxation", "stretching", "mobility", "sleep"
+}
+
+
+def _exercise_catalog_active_rows(category=None):
+    """Exercices actifs et publiés, dans un ordre éditorial stable."""
+    conn = get_conn()
+    try:
+        c = conn.cursor()
+        sql = (
+            "SELECT id, slug, title, category, description, duration_seconds, "
+            "       level, steps, precautions, sort_order, version, updated_at "
+            "FROM exercise_catalog "
+            "WHERE is_active = TRUE "
+            "  AND (published_at IS NULL OR published_at <= NOW())"
+        )
+        params = ()
+        if category is not None:
+            sql += " AND category = %s"
+            params = (category,)
+        sql += " ORDER BY category ASC, sort_order ASC, id ASC"
+        c.execute(sql, params)
+        return c.fetchall()
+    finally:
+        conn.close()
+
+
+@app.route("/api/app/content/exercises", methods=["GET"])
+@limiter.limit("60 per hour")
+@require_app_auth
+def api_content_exercises():
+    """Catalogue des exercices Bien-être V1, actif et publié uniquement."""
+    category = request.args.get("category")
+    if category is not None:
+        category = category.strip().lower()
+        if category not in _EXERCISE_CATEGORIES:
+            return jsonify({"error": "invalid_category"}), 400
+    try:
+        rows = _exercise_catalog_active_rows(category)
+    except Exception:
+        print("[content-exercises] lecture indisponible")
+        return jsonify({"error": "content_temporarily_unavailable"}), 503
+
+    basis = "|".join(
+        f"{r[0]}:{r[10]}:{r[11].isoformat() if r[11] else ''}" for r in rows
+    )
+    tag = hashlib.sha256(basis.encode("utf-8")).hexdigest()[:32]
+    exercises = [{
+        "id": str(r[0]), "slug": r[1], "title": r[2], "category": r[3],
+        "description": r[4] or "", "duration_seconds": int(r[5]),
+        "level": r[6], "steps": r[7], "precautions": r[8] or "",
+        "sort_order": int(r[9]), "version": int(r[10] or 1),
+    } for r in rows]
+    return jsonify({
+        "version": _CONTENT_API_VERSION,
+        "catalog_version": tag,
+        "exercises": exercises,
+    }), 200
 
 
 # --- Vidéos apaisantes distantes (ambiance visuelle muette des méditations) ---
