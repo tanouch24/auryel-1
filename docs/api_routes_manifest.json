@@ -32,6 +32,7 @@
     { "method": "GET",    "path": "/api/app/content/exercises" },
     { "method": "GET",    "path": "/api/app/content/relaxation-videos" },
     { "method": "GET",    "path": "/api/app/content/today" },
+    { "method": "GET",    "path": "/api/app/wellbeing-ebooks" },
 
     { "method": "POST",   "path": "/api/app/rewards/daily-share" },
     { "method": "GET",    "path": "/api/app/rewards/share-progress" },

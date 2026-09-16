@@ -1,4 +1,5 @@
 import os, time, requests, threading, psycopg2, stripe, re, random, hmac, hashlib, unicodedata, secrets, html, uuid
+from urllib.parse import quote as _url_quote
 from datetime import datetime, date, timezone, timedelta
 from flask import Flask, request, jsonify, session, redirect, g
 from flask_cors import CORS
@@ -2150,6 +2151,23 @@ def init_db():
         conn.close()
         raise CriticalSchemaMigrationError(
             "Migration v48 (catalogue exercices Bien-être) échouée"
+        ) from e
+
+    # Migration v49 — CATALOGUE DYNAMIQUE DES EBOOKS BIEN-ÊTRE. Additif :
+    # conserve les éventuelles lignes legacy et ajoute uniquement les
+    # métadonnées nécessaires à un catalogue extensible piloté par R2.
+    try:
+        migration_path = os.path.join(
+            os.path.dirname(__file__), "migrations", "037_wellbeing_ebook_catalog.sql"
+        )
+        with open(migration_path, "r", encoding="utf-8") as migration_file:
+            c.execute(migration_file.read())
+        conn.commit()
+    except Exception as e:
+        conn.rollback()
+        conn.close()
+        raise CriticalSchemaMigrationError(
+            "Migration v49 (catalogue ebooks Bien-être) échouée"
         ) from e
 
     conn.close()
@@ -5702,6 +5720,67 @@ def api_rewards_share_progress():
 
 
 # ============================================================
+# CATALOGUE EBOOKS BIEN-ÊTRE — source serveur dynamique, sans plafond de volume
+def _wellbeing_ebook_media_url(stored_url, object_key):
+    """Résout une clé R2 stable en URL publique, sans exposer de secret.
+
+    Les lignes legacy continuent d'utiliser leur URL existante. Les nouvelles
+    lignes doivent privilégier une clé sous `ebooks/`; la clé est encodée une
+    seule fois pour le CDN public.
+    """
+    key = str(object_key or "").strip()
+    base = os.environ.get("R2_PUBLIC_BASE_URL", "").strip().rstrip("/")
+    if key.startswith("ebooks/") and base:
+        return f"{base}/{_url_quote(key, safe='/')}"
+    return stored_url
+
+
+def _wellbeing_ebook_catalog(cur):
+    cur.execute(
+        "SELECT id, slug, title, subtitle, description, cover_url, pdf_url, "
+        "publication_date, month_label, version, active, featured, "
+        "object_key, cover_key, category, display_author, sort_order "
+        "FROM wellbeing_ebooks "
+        "WHERE active=TRUE AND publication_date <= CURRENT_DATE "
+        "ORDER BY sort_order ASC, publication_date DESC, featured DESC, id DESC"
+    )
+    result = []
+    for row in cur.fetchall():
+        result.append({
+            "id": row[0],
+            "slug": row[1],
+            "title": row[2],
+            "subtitle": row[3] or "",
+            "description": row[4],
+            "category": row[14] or "",
+            "display_author": row[15],
+            "cover_url": _wellbeing_ebook_media_url(row[5], row[13]),
+            "pdf_url": _wellbeing_ebook_media_url(row[6], row[12]),
+            "publication_date": row[7].isoformat() if row[7] else None,
+            "month_label": row[8],
+            "version": row[9],
+            "active": bool(row[10]),
+            "featured": bool(row[11]),
+            "object_key": row[12],
+            "cover_key": row[13],
+            "sort_order": int(row[16] or 0),
+        })
+    return result
+
+
+@app.route("/api/app/wellbeing-ebooks", methods=["GET"])
+@require_app_auth
+def api_wellbeing_ebooks():
+    conn = get_conn()
+    try:
+        return _auth_json({"ebooks": _wellbeing_ebook_catalog(conn.cursor())}, 200)
+    except Exception:
+        print("[wellbeing-ebooks] lecture indisponible")
+        return _auth_json({"error": "content_temporarily_unavailable"}, 503)
+    finally:
+        conn.close()
+
+
 # PARCOURS BIEN-ÊTRE (J7) — GET  /api/app/wellbeing/progress
 #                           POST /api/app/wellbeing/mission
 # ============================================================
