@@ -448,7 +448,7 @@ class R2MediaCatalogSync:
         slug, title, category, _tech = d
         return {
             "slug": slug, "title": title, "category": category,
-            "description": None, "duration_seconds": None,
+            "description": "", "duration_seconds": None,
             "url": public_url(self._base_url, key), "image_or_thumb": None,
         }
 

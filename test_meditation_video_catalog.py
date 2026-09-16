@@ -82,6 +82,8 @@ def main():
     assert result["meditation_video_objects"] == 3
     assert result["new_meditation_videos"] == 3
     assert result["video_objects"] == 1
+    video_row = sync._derive_video_row("méditations/video-001.mp4")
+    assert video_row["description"] == ""
 
     known_sync = R.R2MediaCatalogSync(
         lambda: _KnownMeditationConn(), _R2(),
