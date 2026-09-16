@@ -2929,6 +2929,22 @@ def init_db():
             "Migration v61 (tirage du jour) échouée"
         ) from e
 
+    # Migration v62 — catalogue MP4 Méditations R2. Catalogue distinct des
+    # audios de meditation_catalog et des médias du Réveil.
+    try:
+        migration_path = os.path.join(
+            os.path.dirname(__file__), "migrations", "035_meditation_video_catalog.sql"
+        )
+        with open(migration_path, "r", encoding="utf-8") as migration_file:
+            c.execute(migration_file.read())
+        conn.commit()
+    except Exception as e:
+        conn.rollback()
+        conn.close()
+        raise CriticalSchemaMigrationError(
+            "Migration v62 (catalogue vidéo Méditations) échouée"
+        ) from e
+
     conn.close()
 
 def reset_db():
@@ -8660,6 +8676,58 @@ def _meditation_catalog_active_rows():
         conn.close()
 
 
+def _meditation_video_catalog_active_rows():
+    """Catalogue MP4 Méditations uniquement sous le préfixe R2 dédié."""
+    conn = get_conn()
+    try:
+        c = conn.cursor()
+        c.execute(
+            "SELECT id, slug, title, description, category, "
+            "       duration_seconds, video_url, thumbnail_url, "
+            "       sort_order, published_at, updated_at, version, r2_object_key "
+            "FROM meditation_video_catalog "
+            "WHERE is_active = TRUE "
+            "  AND (published_at IS NULL OR published_at <= NOW()) "
+            "  AND r2_object_key LIKE 'meditations/%' "
+            "ORDER BY sort_order ASC, id ASC"
+        )
+        return c.fetchall()
+    finally:
+        conn.close()
+
+
+def _api_content_meditation_videos():
+    rows = _meditation_video_catalog_active_rows()
+    basis = "|".join(
+        f"{r[0]}:{r[11]}:{r[10].isoformat() if r[10] else ''}"
+        for r in rows
+    )
+    tag = hashlib.sha256(basis.encode("utf-8")).hexdigest()[:32]
+    inm = request.headers.get("If-None-Match", "").strip().strip('"')
+    if inm and inm == tag:
+        resp = jsonify({})
+        resp.headers["ETag"] = f'"{tag}"'
+        resp.headers["Cache-Control"] = "no-cache"
+        return resp, 304
+    items = [{
+        "id": str(r[0]), "slug": r[1], "title": r[2],
+        "description": r[3] or "", "category": r[4] or "",
+        "duration_seconds": int(r[5]) if r[5] is not None else None,
+        "video_url": r[6], "thumbnail_url": r[7] or None,
+        "sort_order": int(r[8] or 0),
+        "published_at": _ts_iso(r[9]) if r[9] else None,
+        "version": int(r[11] or 1), "object_key": r[12],
+    } for r in rows]
+    resp = jsonify({
+        "version": _CONTENT_API_VERSION,
+        "catalog_version": tag,
+        "meditation_videos": items,
+    })
+    resp.headers["ETag"] = f'"{tag}"'
+    resp.headers["Cache-Control"] = "no-cache"
+    return resp, 200
+
+
 def _catalog_version_tag(rows):
     """Empreinte STABLE du catalogue servi : change dès qu'une entrée est
     ajoutée / retirée / éditée (version + updated_at). Sert d'ETag et de
@@ -8677,6 +8745,8 @@ def api_content_meditations():
     """Catalogue distant des méditations — entrées actives et publiées, contrat
     JSON versionné. Supporte ETag / If-None-Match : renvoie 304 si le client a
     déjà la version courante."""
+    if request.args.get("media") == "video":
+        return _api_content_meditation_videos()
     rows = _meditation_catalog_active_rows()
     tag = _catalog_version_tag(rows)
     inm = request.headers.get("If-None-Match", "").strip().strip('"')

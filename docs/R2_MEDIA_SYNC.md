@@ -6,7 +6,7 @@ iOS, aucun changement Flutter.**
 
 ---
 
-## Pour AJOUTER UNE MÉDITATION
+## Pour AJOUTER UNE MÉDITATION AUDIO (catalogue historique)
 
 1. Préparer un fichier **`.mp3`** correctement nommé (voir conventions plus bas).
 2. L'**uploader dans le dossier** `méditations/` du bucket `auryel-meditations`
@@ -14,7 +14,18 @@ iOS, aucun changement Flutter.**
 3. Attendre **~15 min maximum** (le cron passe toutes les 15 minutes).
 4. La méditation apparaît **dans la bibliothèque** de l'app.
 
-## Pour AJOUTER UN VISUEL
+## Pour AJOUTER UNE MÉDITATION VIDÉO
+
+1. Préparer un fichier **`.mp4`**.
+2. L'uploader dans le préfixe `meditations/` du bucket.
+3. Attendre le prochain passage du cron (environ 15 minutes).
+4. Le fichier est ajouté au catalogue `meditation_video_catalog` et servi par
+   `GET /api/app/content/meditations?media=video`.
+
+Le titre est dérivé du nom du fichier lorsqu'aucune métadonnée éditoriale
+n'est encore disponible.
+
+## Pour AJOUTER UN VISUEL RÉVEIL (catalogue historique)
 
 1. Préparer un fichier **`.mp4`**.
 2. L'**uploader dans le dossier** `relaxation-videos/`.
@@ -28,8 +39,10 @@ iOS, aucun changement Flutter.**
 
 ## Règle absolue
 
-**1 MP3 = 1 méditation. 1 MP4 = 1 visuel.**
-Une vidéo ne crée **jamais** une méditation. Une méditation n'est **jamais**
+**1 MP3 = 1 méditation audio. 1 MP4 `meditations/` = 1 méditation vidéo.
+1 MP4 `relaxation-videos/` = 1 visuel Réveil.**
+Les préfixes sont strictement indépendants. Une vidéo ne crée **jamais** une
+méditation audio. Une méditation n'est **jamais**
 dupliquée parce que plusieurs vidéos existent. Les deux catalogues sont
 totalement séparés (aucun produit cartésien).
 
@@ -79,7 +92,7 @@ objets de taille 0.
 
 | Élément | Détail |
 |---|---|
-| **Détection** | API S3 de R2, `ListObjectsV2` **paginé** (supporte > 1000 objets), préfixes `méditations/` et `relaxation-videos/`. **Jamais** de parsing d'une page HTML publique. |
+| **Détection** | API S3 de R2, `ListObjectsV2` **paginé** (supporte > 1000 objets), préfixes `méditations/`, `meditations/` et `relaxation-videos/`. **Jamais** de parsing d'une page HTML publique. |
 | **URL publique** | `<R2_PUBLIC_BASE_URL>/<clé d'objet URL-encodée>` — le `é` de `méditations/` est percent-encodé (`m%C3%A9ditations/…`), identique au format déjà en base. |
 | **Anti-doublon** | colonne `r2_object_key` **UNIQUE** (index partiel `WHERE r2_object_key IS NOT NULL`) sur chaque catalogue. `INSERT … ON CONFLICT (r2_object_key)` → rejouer le sync, ou deux crons qui se chevauchent, ne crée **jamais** de doublon. |
 | **Concurrence** | verrou consultatif Postgres (`pg_try_advisory_lock`) : une seconde exécution simultanée sort proprement (`already_running`). |
