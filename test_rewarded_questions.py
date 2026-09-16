@@ -25,17 +25,25 @@ class RewardedQuestionsContractTest(unittest.TestCase):
         self.assertIn('ON CONFLICT (transaction_id) DO NOTHING', SRC)
 
     def test_nine_ads_stay_at_nine(self):
-        self.assertIn('progress %= 10', SRC)
+        self.assertIn('residual = next_progress % 10', SRC)
 
     def test_tenth_ad_credits_question_and_five_minutes(self):
         self.assertIn('credited_minutes = completed * 5', SRC)
         self.assertIn('completed * 300', SRC)
 
+    def test_active_admob_contract_is_one_consultation_question(self):
+        self.assertIn('_ADMOB_REWARD_AMOUNT = 1', SRC)
+        self.assertIn('_ADMOB_REWARD_ITEM = "consultation_question"', SRC)
+
+    def test_progress_transition_keeps_questions_and_residual_progress(self):
+        self.assertIn('_apply_rewarded_entitlement_credit', SRC)
+        self.assertIn('residual = next_progress % 10', SRC)
+
     def test_progress_resets_after_tenth(self):
-        self.assertIn('progress %= 10', SRC)
+        self.assertIn('residual = next_progress % 10', SRC)
 
     def test_twentieth_ad_supports_two_paliers(self):
-        self.assertIn('completed = progress // 10', SRC)
+        self.assertIn('completed = next_progress // 10', SRC)
 
     def test_questions_are_server_persistent(self):
         self.assertIn('CREATE TABLE IF NOT EXISTS rewarded_entitlements', SQL)

@@ -5492,30 +5492,15 @@ def api_consultation_message():
         if flow.get("question_reservation_id"):
             _finish_rewarded_question(user_id, flow["question_reservation_id"], "released")
         raise
-    if flow.get("question_reservation_id"):
-        _finish_rewarded_question(
-            user_id, flow["question_reservation_id"], "consumed", consultation_id=cid)
-
-    # PARCOURS BIEN-ÊTRE (J7) — un message de consultation abouti (status "ok"
-    # ci-dessus) peut compléter la mission `consultation` du jour et donc une
-    # journée entière : réconciliation + crédit éventuel de la récompense de
-    # cycle. HORS de la transaction du flow, dans sa propre transaction courte,
-    # JAMAIS bloquante pour la réponse chat.
-    _reconcile_wellbeing_progress(user_id, now)
-
-    # Identifiant STABLE de la réponse assistant qui vient d'être persistée —
-    # cible de « Signaler cette réponse » (POST /api/app/ai/report). Champ
-    # ADDITIF : les anciens consommateurs qui lisent reply/consultation/time/
-    # quota ne sont pas affectés. None si la persistance n'a rien écrit.
-    assistant_message_id = _latest_assistant_message_id(user_id, cid)
-
-    # SÉCURITÉ IA (G.4) — ÉCHEC TOTAL des fournisseurs LLM : l'utilisateur ne
-    # doit pas payer le temps perdu à cause de ça. Le moteur de temps N'EST PAS
-    # touché : on ajoute un CRÉDIT compensatoire de _LLM_FAILURE_CREDIT_SECONDS
-    # dans `earned_seconds_remaining`, tracé au time_ledger, dans sa propre
-    # transaction courte. `llm_status` est renvoyé au client.
+    # Une panne totale des fournisseurs ne constitue pas une réponse
+    # conseiller utilisable : la question réservée doit rester disponible.
+    # Le fallback technique n'est pas persisté sur le chemin app (voir
+    # `_reply_core`) et le temps perdu reçoit le crédit compensatoire existant.
     llm_status = llm_last_outcome()
     if llm_status == "fallback_failure":
+        if flow.get("question_reservation_id"):
+            _finish_rewarded_question(
+                user_id, flow["question_reservation_id"], "released")
         try:
             _cc = get_conn()
             try:
@@ -5535,6 +5520,27 @@ def api_consultation_message():
             log_event("llm_total_failure_credit", user_hash=_user_hash(user_id))
         except Exception as e:
             print(f"[llm] crédit compensatoire échec ({type(e).__name__})")
+        return _auth_json({
+            "error": "consultation_temporarily_unavailable",
+            "llm_status": llm_status,
+        }, 503)
+
+    if flow.get("question_reservation_id"):
+        _finish_rewarded_question(
+            user_id, flow["question_reservation_id"], "consumed", consultation_id=cid)
+
+    # PARCOURS BIEN-ÊTRE (J7) — un message de consultation abouti (status "ok"
+    # ci-dessus) peut compléter la mission `consultation` du jour et donc une
+    # journée entière : réconciliation + crédit éventuel de la récompense de
+    # cycle. HORS de la transaction du flow, dans sa propre transaction courte,
+    # JAMAIS bloquante pour la réponse chat.
+    _reconcile_wellbeing_progress(user_id, now)
+
+    # Identifiant STABLE de la réponse assistant qui vient d'être persistée —
+    # cible de « Signaler cette réponse » (POST /api/app/ai/report). Champ
+    # ADDITIF : les anciens consommateurs qui lisent reply/consultation/time/
+    # quota ne sont pas affectés. None si la persistance n'a rien écrit.
+    assistant_message_id = _latest_assistant_message_id(user_id, cid)
 
     _st = {"time_snapshot": flow["time"],
            "window_active": flow["time"]["window_active"],
@@ -6611,10 +6617,11 @@ _ADMOB_REWARDED_AD_UNIT = "ca-app-pub-9787163762873138/6173561021"
 _ADMOB_REWARDED_AD_UNIT_FORMS = frozenset(
     {_ADMOB_REWARDED_AD_UNIT, _ADMOB_REWARDED_AD_UNIT.rsplit("/", 1)[1]}
 )
-# The AdMob dashboard still sends the legacy reward payload. It is validated
-# for authenticity and unit identity, but it never becomes Stars in V1.
-_ADMOB_REWARD_AMOUNT = 12
-_ADMOB_REWARD_ITEM = os.environ.get("ADMOB_REWARDED_REWARD_ITEM", "stars")
+# Rewarded Consultation V1 is the only active AdMob entitlement. These values
+# are server-owned: an environment override cannot turn the callback into
+# Stars or another product.
+_ADMOB_REWARD_AMOUNT = 1
+_ADMOB_REWARD_ITEM = "consultation_question"
 _ADMOB_SESSION_TTL = timedelta(hours=24)
 
 
@@ -6655,18 +6662,18 @@ def _credit_rewarded_entitlement_tx(cursor, user_id, transaction_id, now):
            FROM rewarded_entitlements WHERE user_id=%s FOR UPDATE""", (uid,)
     )
     q, progress, total, minutes = cursor.fetchone()
-    q = int(q or 0) + 1
-    total = int(total or 0) + 1
-    progress = int(progress or 0) + 1
-    completed = progress // 10
-    progress %= 10
+    state = _apply_rewarded_entitlement_credit(q, progress, total, minutes)
+    q = state["questions_available"]
+    progress = state["progress"]
+    total = state["total_rewarded"]
+    minutes = state["minutes_awarded"]
+    completed = state["completed_paliers"]
     credited_minutes = completed * 5
     if credited_minutes:
         _credit_bonus_time_tx(
             cursor, uid, completed * 300, "rewarded_10_ads",
             f"rewarded-pallet:{transaction_id}", now,
         )
-        minutes = int(minutes or 0) + credited_minutes
     cursor.execute(
         """UPDATE rewarded_entitlements
            SET questions_available=%s, rewarded_progress=%s,
@@ -6677,6 +6684,24 @@ def _credit_rewarded_entitlement_tx(cursor, user_id, transaction_id, now):
     return {"questions_available": q, "progress": progress,
             "total_rewarded": total, "minutes_awarded": int(minutes or 0),
             "credited_minutes": credited_minutes}
+
+
+def _apply_rewarded_entitlement_credit(questions_available, progress,
+                                       total_rewarded, minutes_awarded):
+    """Pure state transition for one validated Rewarded callback."""
+    questions = max(0, int(questions_available or 0)) + 1
+    total = max(0, int(total_rewarded or 0)) + 1
+    next_progress = max(0, int(progress or 0)) + 1
+    completed = next_progress // 10
+    residual = next_progress % 10
+    minutes = max(0, int(minutes_awarded or 0)) + completed * 5
+    return {
+        "questions_available": questions,
+        "progress": residual,
+        "total_rewarded": total,
+        "minutes_awarded": minutes,
+        "completed_paliers": completed,
+    }
 
 
 @app.route("/api/app/rewards/admob/session", methods=["POST"])
@@ -10700,7 +10725,11 @@ def _reply_core(user, key, user_message, io, *, depuis_pub=False,
     # Réactivation possible ici si besoin, après validation conformité.
     user_after = io["reload"](key)
 
-    io["add_message"](key, "assistant", reply)
+    # Un fallback technique n'est pas une réponse conseiller : le chemin app
+    # laisse la route gérer la restauration de la question réservée et ne
+    # pollue pas l'historique avec ce message d'erreur fournisseur.
+    if not (channel == "app" and llm_last_outcome() == "fallback_failure"):
+        io["add_message"](key, "assistant", reply)
     log_event("bot_response_sent", phone_hash=io["hash_id"](key), guide=guide_key)
     return reply
 
