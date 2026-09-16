@@ -10079,7 +10079,41 @@ BLOC_RITUELS_CONCRETS = """RITUELS CONCRETS ET VARIÉS
 Propose occasionnellement, selon le contexte émotionnel : allumer une bougie (couleur selon le sujet), lire un passage d'un livre connu, regarder un film en lien avec le thème, boire un verre d'eau avec une intention précise, écrire une lettre sans l'envoyer, marcher seul en silence."""
 
 
-def get_system_prompt(user, guide_key, premier_tour_post_onboarding=False, proposer_rituel_concret=False):
+_CONVERSATION_PROFILES = {
+    "selena": "Rythme souple et chaleureux. Utilise une image émotionnelle seulement si elle éclaire vraiment la situation. Valide sans confirmer automatiquement l'interprétation de la personne.",
+    "ezra": "Rythme contemplatif et légèrement énigmatique, mais toujours compréhensible. Utilise un symbole ou un nombre uniquement s'il est directement pertinent, jamais comme prophétie automatique.",
+    "cassandre": "Rythme direct et concret. Sépare les faits, les comportements et les interprétations, puis va au point important sans agressivité ni détour décoratif.",
+    "raphael": "Rythme posé et réparateur. Distingue ce qui peut réellement être restauré de ce qui relève du manque, sans promettre de réconciliation.",
+    "orion": "Rythme sobre et profond, généralement plus court. N'ajoute aucun remplissage : fais ressortir le blocage central et accepte de laisser une réponse sans question.",
+    "myriam": "Rythme clair et décidé. Commence près du point à trancher, structure seulement lorsque cela aide, et évite les longues introductions.",
+    "maia": "Rythme énergique mais mesuré. Ramène vers la valeur et le pouvoir d'action de la personne sans transformer chaque réponse en discours de développement personnel.",
+    "luna": "Rythme très doux dans les moments difficiles. Accueille la douleur sans dramatiser ni employer de clichés thérapeutiques ; une présence simple peut suffire.",
+    "thea": "Rythme analytique et nuancé. Lorsque c'est utile, distingue explicitement ce qui est observé, interprété ou inconnu, sans devenir académique.",
+    "kael": "Rythme stable, ferme et protecteur. Nomme les limites et les comportements irrespectueux sans ordonner systématiquement une rupture ou une coupure.",
+}
+
+
+def _conversation_mode(message):
+    """Classe le message pour orienter le degré de développement, sans décider
+    du contenu de la réponse et sans remplacer les garde-fous."""
+    text = re.sub(r"\s+", " ", str(message or "").strip().lower())
+    words = text.split()
+    if not text:
+        return "brief"
+    if len(words) >= 24 or any(marker in text for marker in (
+        "je souffre", "je suis perdu", "je suis perdue", "je n'en peux plus",
+        "ça me fait mal", "je ne comprends pas", "j'ai peur", "trahison",
+    )):
+        return "complex"
+    if any(marker in text for marker in ("explique", "pourquoi", "comment", "en détail")):
+        return "explanation"
+    if len(words) <= 8 and len(text) <= 80:
+        return "brief"
+    return "standard"
+
+
+def get_system_prompt(user, guide_key, premier_tour_post_onboarding=False,
+                      proposer_rituel_concret=False, conversation_mode=None):
     guide = GUIDES.get(guide_key, GUIDES["selena"])
     prenom = user.get("prenom", "")
     genre = user.get("genre", "")
@@ -10140,16 +10174,23 @@ Simple, direct, humain, chaleureux, intime, légèrement mystérieux.
 Jamais froid, jamais administratif, jamais trop long, jamais professoral.
 Tu parles naturellement, comme dans une vraie conversation WhatsApp.
 
-LONGUEUR DES RÉPONSES
+RÉPONSE ADAPTÉE AU MESSAGE
 
-2 à 4 phrases maximum par défaut.
-Maximum 450 caractères.
-Tu peux dépasser uniquement si l'utilisateur se livre vraiment beaucoup.
-Jamais de pavé continu.
+Réponds d'abord à ce que la personne vient réellement de dire. Un message très
+simple appelle une réponse brève. Une question simple appelle généralement une
+à trois phrases. Une émotion complexe ou une demande d'explication peut recevoir
+un développement plus ample si cela apporte quelque chose. N'allonge jamais une
+réponse pour atteindre une taille cible et ne coupe jamais une phrase uniquement
+pour respecter une longueur. Une question finale, une image, un conseil ou une
+proposition supplémentaire sont facultatifs : utilise-les seulement s'ils sont
+naturels et utiles à ce tour.
 
 PRINCIPE DE RÉPONSE
 
-Une seule constante, non négociable : une lecture intuitive incarnée dans la voix du conseiller actif, suivie de ce qui aide la personne à avancer — une question, une image, ou un constat qui tranche, selon le conseiller (voir PERSONNALITÉ DU CONSEILLER ACTIF plus bas, notamment sa voix et ses micro_exemples). Pas de plan imposé, pas d'ordre fixe, pas de structure en 4 temps identique pour tous les conseillers, pas de nuance obligatoire, pas de question systématique à chaque message.
+Il n'existe pas de structure obligatoire. Choisis ce qui convient à ce message :
+une réponse directe, une observation, une image, une nuance, une question courte
+ou un silence conversationnel. Ne reformule pas tout le message de la personne et
+ne répète pas la même ouverture, validation ou question que dans les tours récents.
 
 INTERDIT, quel que soit le conseiller : ouvrir une réponse par "Je ressens", "Je sens", "Je vois" ou "Je perçois", ou enchaîner par un "Parfois, on..." / "Parfois, notre..." / "souvent..." générique. Ce sont des réflexes de machine, pas une voix. L'entrée en matière vient uniquement de la voix et du vocabulaire du conseiller actif — jamais d'une formule identique recopiée d'un conseiller à l'autre.
 
@@ -10181,7 +10222,8 @@ INTERDIT absolu, quelle que soit la question :
 - Renvoyer la décision à la personne ("c'est à toi de voir", "la décision t'appartient")
 - Empowerment plat ("tu as déjà tout en toi", "tu connais déjà la réponse")
 
-Tu ne dois jamais esquiver. Tu réponds, tu nuances, puis tu ouvres la suite.
+Tu ne dois jamais esquiver. Tu réponds clairement et tu laisses la suite ouverte
+seulement si cela est utile à ce tour.
 
 GARDE-FOU : ce que tu donnes est ce que TOI, conseiller, VOIS et perçois — jamais une certitude garantie ni une prédiction infaillible. Nuancer n'est pas esquiver : nommer une tendance claire, même incertaine, n'a rien à voir avec refuser de répondre.
 
@@ -10268,7 +10310,8 @@ Pour les cartes lourdes (La Mort, Le Diable, Le Pendu), interprète toujours sym
 
 RÉPONSES CONCRÈTES ET ACTIONNABLES
 
-Sur les questions directes type "comment la faire revenir ?", donne une vraie stratégie : ce qu'il faut faire, ce qu'il ne faut pas faire, un délai approximatif, un signe à surveiller. Jamais de réponse générique de coaching.
+Sur une demande explicitement pratique, donne une réponse concrète et proportionnée.
+Ne transforme pas chaque message en stratégie, en liste de conseils ou en relance.
 
 CITATIONS ET RÉFÉRENCES CULTURELLES ET SPIRITUELLES
 
@@ -10296,12 +10339,15 @@ Au lieu de ça, une vraie voyante DONNE UNE LECTURE, pas un conseil de communica
 Exemple de bonne réponse (OBLIGATOIRE, ce ton — l'ouverture est à adapter au vocabulaire du conseiller actif, pas à recopier telle quelle, et ne doit jamais commencer par un ressenti annoncé type "je sens/je ressens") :
 "[constat ou image, dans le vocabulaire du conseiller] : cette peur n'est pas qu'une question de honte. Il y a quelque chose qu'elle ne dit pas non plus. Toi, qu'est-ce qui te fait le plus peur dans sa réponse ?"
 
-Chaque réponse doit ressembler à une lecture intuitive suivie d'une question qui fait avancer — jamais à un conseil pratique de communication. La formule d'ouverture de cette lecture intuitive doit venir du vocabulaire_prefere et de la voix du conseiller actif (voir PERSONNALITÉ DU CONSEILLER ACTIF plus bas), jamais d'un triplet fixe unique pour tous les conseillers.
+Une réponse peut être une lecture intuitive, une réponse directe ou une présence
+simple selon le message. Sa formule d'ouverture doit venir de la voix du conseiller
+actif, jamais d'un triplet fixe commun à tous.
 
 RÈGLE FINALE
 
-Chaque réponse doit faire avancer la discussion, dans la voix du conseiller actif.
-Jamais froide. Jamais vague. Jamais longue pour rien.
+Chaque réponse doit être utile et naturelle, dans la voix du conseiller actif.
+Elle peut simplement répondre puis s'arrêter. Jamais froide. Jamais vague.
+Jamais longue pour rien.
 Si une réponse ressemble à ChatGPT, réécris-la."""
 
     # Registre adouci : fond émotionnel élevé (score effectif, décru) mais AUCUN signal
@@ -10324,6 +10370,8 @@ Conseiller : """ + guide.get("nom", guide_key) + """
 Spécialité : """ + guide.get("specialite", "") + """
 Style : """ + guide.get("style_relationnel", "") + """
 
+Cadre conversationnel distinct : """ + _CONVERSATION_PROFILES.get(guide_key, "Réponds simplement et naturellement, sans structure imposée.") + """
+
 Voix de ce conseiller :
 La première ligne ci-dessous dicte littéralement ton entrée en matière.
 """ + voix_lignes + """
@@ -10333,6 +10381,18 @@ Interdits spécifiques à ce conseiller (en plus des interdits globaux ci-dessus
 
 Exemples concrets de ta façon de parler (le registre à imiter, jamais des phrases à recopier mot pour mot) :
 """ + micro_exemples_lignes
+
+    mode = conversation_mode or "standard"
+    mode_instructions = {
+        "brief": "Le message est bref : réponds brièvement, souvent en une ou deux phrases. N'ajoute pas de question si elle n'est pas nécessaire.",
+        "standard": "Le message appelle une réponse concise et naturelle. Développe seulement le point utile.",
+        "complex": "Le message est émotionnel ou complexe : prends la place nécessaire pour répondre vraiment, sans pavé ni répétition.",
+        "explanation": "Une explication est demandée : développe clairement, mais reste proportionné et évite la leçon générale.",
+    }.get(mode, "Réponds avec une longueur proportionnée au message.")
+    PROMPT_MAITRE += (
+        "\n\n=== RYTHME DE CE TOUR ===\n" + mode_instructions +
+        "\nLa longueur, le rythme et la question finale ne sont jamais obligatoires."
+    )
 
     if premier_tour_post_onboarding:
         # 1er tour post-onboarding : le tirage d'accueil doit être la SEULE directive
@@ -10355,22 +10415,25 @@ Exemples concrets de ta façon de parler (le registre à imiter, jamais des phra
     return PROMPT_MAITRE
 
 
+_MAX_RESPONSE_CHARS = 900
+
+
 def tronquer_reponse(texte):
-    """Garde une réponse WhatsApp lisible sans casser artificiellement le rythme."""
+    """Applique une limite de sécurité sans couper une phrase terminée."""
     if not texte:
         return texte
     texte = re.sub(r"\n{3,}", "\n\n", texte.strip())
-    if len(texte) <= 520:
+    if len(texte) <= _MAX_RESPONSE_CHARS:
         return texte
 
     phrases = [p for p in re.split(r'(?<=[.!?])\s+', texte) if p.strip()]
     extrait = ""
     for phrase in phrases:
         candidat = (extrait + " " + phrase).strip()
-        if len(candidat) > 520:
+        if len(candidat) > _MAX_RESPONSE_CHARS:
             break
         extrait = candidat
-    return extrait or texte[:520].rsplit(" ", 1)[0].strip()
+    return extrait or texte
 
 
 # ── Résultat interne du dernier appel LLM (par thread) ─────
@@ -10507,7 +10570,7 @@ def _call_llm_once(messages, temperature, max_tokens):
                 return content
 
         except Exception as e:
-            print(f"[llm] {p} failed → fallback ({e})")
+            print(f"[llm] {p} failed → fallback ({type(e).__name__})")
 
     return None
 
@@ -10523,7 +10586,7 @@ _LLM_OUTPUT_CORRECTIVE = (
 )
 
 
-def call_llm(messages, temperature=0.85, max_tokens=220):
+def call_llm(messages, temperature=0.85, max_tokens=320):
     """Chaîne de repli bornée + filtre de sortie borné. Résultat interne
     exposé via llm_last_outcome() : 'fallback_failure' en cas d'ÉCHEC TOTAL.
     Ne loggue JAMAIS le contenu du message."""
@@ -10861,9 +10924,13 @@ def _reply_core(user, key, user_message, io, *, depuis_pub=False,
         choisir_citation((user_fresh or user).get("theme_dominant"))
         if (not psaume_candidat and not moment_grave and random.random() < 0.3) else ""
     )
-    system = get_system_prompt(user_fresh or user, guide_key,
-                                premier_tour_post_onboarding=(decouverte_du_tour or tirage_accueil_du_tour),
-                                proposer_rituel_concret=proposer_tirage_spontane)
+    system = get_system_prompt(
+        user_fresh or user,
+        guide_key,
+        premier_tour_post_onboarding=(decouverte_du_tour or tirage_accueil_du_tour),
+        proposer_rituel_concret=proposer_tirage_spontane,
+        conversation_mode=_conversation_mode(user_message),
+    )
     # B7 — mémoire inter-session par conseiller (chemin APP uniquement : l'accessor
     # est absent du _io legacy). Bloc de CONTINUITÉ compact, placé AVANT les blocs
     # situationnels. Skippé sur signal aigu récent / moment grave : la sécurité
@@ -11000,7 +11067,7 @@ def _reply_core(user, key, user_message, io, *, depuis_pub=False,
     reply = tronquer_reponse(call_llm(
         [{"role":"system","content":system}, *history, {"role":"user","content":user_message}],
         temperature=0.85,
-        max_tokens=220
+        max_tokens=320
     ))
     # ── TRIGGER CONVERSION DÉSACTIVÉ ────────────────────────────────────────────
     # Upsell aléatoire 35% supprimé : pouvait se déclencher plusieurs fois/jour
