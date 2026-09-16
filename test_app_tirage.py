@@ -380,6 +380,27 @@ for bad in ("0", "51", "-1", "abc"):
 check(client.get("/api/tirages?before=pas-une-date", headers=_hdr()).status_code == 400,
       "6z before invalide -> 400")
 
+# --- J -> J+1 : le serveur ouvre un nouveau tirage sans écraser l'historique ---
+FAKE_TIRAGES.clear()
+_real_utcnow = A._utcnow
+_clock = [datetime(2026, 9, 15, 21, 30, tzinfo=timezone.utc)]
+A._utcnow = lambda: _clock[0]
+_as(UID1)
+_j_row, _j_created = A.save_tirage(
+    UID1, ["le_fou", "la_lune", "le_soleil"], "maia")
+_j_retry, _j_retry_created = A.save_tirage(
+    UID1, ["le_monde", "la_mort", "l_etoile"], "maia")
+_clock[0] = datetime(2026, 9, 16, 00, 30, tzinfo=timezone.utc)
+_j1_row, _j1_created = A.save_tirage(
+    UID1, ["le_monde", "la_mort", "l_etoile"], "maia")
+A._utcnow = _real_utcnow
+check(_j_created is True and _j_retry_created is False
+      and _j_retry["id"] == _j_row["id"],
+      "6aa même jour : retry = même tirage, sans nouveau tirage")
+check(_j1_created is True and _j1_row["id"] != _j_row["id"]
+      and len(FAKE_TIRAGES) == 2,
+      "6ab jour suivant : nouveau tirage, historique J conservé")
+
 # ===========================================================================
 # 7. POST /api/consultation/message  — ordre & injection (flux TEMPS monkeypatché)
 # ===========================================================================

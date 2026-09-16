@@ -499,6 +499,10 @@ _WAKE_MESSAGES_SEED = (
 )
 
 
+class CriticalSchemaMigrationError(RuntimeError):
+    """A critical schema guarantee is unavailable; startup must stop."""
+
+
 def init_db():
     conn = get_conn()
     c = conn.cursor()
@@ -2920,7 +2924,10 @@ def init_db():
         conn.commit()
     except Exception as e:
         conn.rollback()
-        print(f"Migration v61 (tirage du jour): {e}")
+        conn.close()
+        raise CriticalSchemaMigrationError(
+            "Migration v61 (tirage du jour) échouée"
+        ) from e
 
     conn.close()
 
@@ -3504,6 +3511,8 @@ def get_jours_absence(phone):
 
 try:
     init_db()
+except CriticalSchemaMigrationError:
+    raise
 except Exception as e:
     print(f"[init_db] Warning: {e}")
 
@@ -6334,11 +6343,7 @@ def api_tirages_create():
     row, created = save_tirage(user_id, keys, advisor_id)
     if not created:
         return _auth_json(_tirage_public(row), 200)
-    # PARCOURS BIEN-ÊTRE (J7) — un tirage sauvegardé peut compléter la mission
-    # `tirage` (dérivée de tirages.created_at) et donc une journée entière : on
-    # réconcilie la progression et on crédite la récompense de cycle si due.
-    # Transaction courte dédiée, JAMAIS bloquante pour le 201.
-    _reconcile_wellbeing_progress(user_id)
+    # Le Tarot est autonome : il ne déclenche aucune récompense Bien-être.
     return _auth_json(_tirage_public(row), 201)
 
 
@@ -7307,7 +7312,7 @@ def api_wellbeing_program_reminder():
 # PARCOURS BIEN-ÊTRE (J7) — GET  /api/app/wellbeing/progress
 #                           POST /api/app/wellbeing/mission
 # ============================================================
-# « Mon parcours bien-être » : 4 missions quotidiennes RÉELLES d'Auryel
+# « Mon parcours bien-être » : missions quotidiennes RÉELLES d'Auryel
 #   - pensee       : CONSULTER la Pensée du jour (ouvrir sa lecture / son
 #                    explication). AUCUNE trace serveur propre -> ENREGISTRÉE
 #                    dans wellbeing_mission_days (mission_id='pensee').
@@ -7319,10 +7324,11 @@ def api_wellbeing_program_reminder():
 #   - moment       : séance « Ton Moment » aboutie. AUCUNE trace serveur ->
 #                    ENREGISTRÉE dans wellbeing_mission_days (mission_id='moment').
 #
-# Une JOURNÉE COMPLÉTÉE = les 4 missions accomplies le même jour calendaire
-# Europe/Paris. 2 missions DÉRIVÉES de traces serveur existantes (le client ne
-# peut pas les falsifier) + 2 missions ENREGISTRÉES (pensee / moment), 1 fois
-# par jour et par mission (PRIMARY KEY EN BASE).
+# Une JOURNÉE COMPLÉTÉE = les 3 missions Bien-être accomplies le même jour
+# calendaire Europe/Paris. Une mission dérivée de trace serveur existante
+# (consultation) + 2 missions enregistrées (pensee / moment), 1 fois par jour
+# et par mission (PRIMARY KEY EN BASE). Le Tarot est autonome et ne participe
+# jamais à une récompense Bien-être.
 #
 # Le parcours fonctionne par CYCLES de 30 journées COMPLÉTÉES (pas 30 jours
 # calendaires consécutifs — un jour manqué ne remet rien à zéro). À la 30e
@@ -7330,14 +7336,10 @@ def api_wellbeing_program_reminder():
 # consultation, créditée dans accounts.purchased_seconds_remaining, UNE fois
 # par cycle (idempotence garantie EN BASE par wellbeing_cycle_rewards).
 #
-# RÉCONCILIATION SERVEUR — 3 des 4 missions se complètent via une action qui
-# N'appelle PAS forcément /api/app/wellbeing/mission (un tirage sauvé, un
-# message de consultation). `_reconcile_wellbeing_progress(user_id)` recalcule
-# la progression et crédite la récompense de cycle due, EXACTLY-ONCE. Il est
-# appelé depuis TOUS les points d'action réels : POST /api/app/wellbeing/mission
-# (pensee / moment), POST /api/tirages (tirage), POST /api/consultation/message
-# (consultation). L'utilisateur ne dépend JAMAIS de « revenir faire un POST
-# wellbeing » pour toucher sa récompense.
+# RÉCONCILIATION SERVEUR — les missions se complètent via des actions réelles.
+# `_reconcile_wellbeing_progress(user_id)` recalcule la progression et crédite
+# la récompense de cycle due, EXACTLY-ONCE. Il est appelé depuis les points
+# Bien-être et consultation ; le POST Tarot n'y participe jamais.
 #
 # Le SERVEUR est l'unique autorité : aucun compteur client n'est lu, la
 # progression et la récompense survivent à la fermeture de l'app, à la
@@ -7346,15 +7348,13 @@ def api_wellbeing_program_reminder():
 # Wording : bien-être / expérience quotidienne UNIQUEMENT — jamais médical,
 # thérapeutique ou « dispositif de santé ».
 
-_WELLBEING_MISSIONS        = ("pensee", "tirage", "consultation", "moment")
+_WELLBEING_MISSIONS        = ("pensee", "consultation", "moment")
 # missions SANS trace serveur propre -> enregistrées explicitement, 1x/jour.
 _WELLBEING_LOCAL_MISSIONS  = ("pensee", "moment")
 # GROS CHANTIER AURYEL (Prompt 2/5) — ÉTOILES : réutilise TEL QUEL le signal
 # de mission bien-être existant (aucune nouvelle logique de détection créée)
-# pour créditer `daily_card_completed` / `meditation_completed`. `tirage`
-# n'est pas ici : sa règle Étoiles (`tarot_completed`) est créditée depuis
-# POST /api/tirages (signal serveur DÉRIVÉ, encore plus fiable qu'une
-# déclaration mission). `consultation` n'a pas de règle Étoiles dans ce lot.
+# pour créditer `daily_card_completed` / `meditation_completed`. Tarot et
+# consultation n'ont aucune règle Étoiles active.
 _STARS_RULE_FOR_MISSION = {
     "pensee": "daily_card_completed",
     "moment": "meditation_completed",
@@ -7404,7 +7404,6 @@ def _wellbeing_mission_dates(cur, user_id):
       pensee / moment  : ENREGISTRÉES -> wellbeing_mission_days (jamais
                          `share_reward_days` : la récompense partage J5 reste
                          totalement indépendante) ;
-      tirage           : DÉRIVÉE -> tirages.created_at ;
       consultation     : DÉRIVÉE -> consultations.last_activity_at.
     Chaque requête est un simple `SELECT ... WHERE user_id=%s` : l'intersection
     se fait en Python."""
@@ -7414,12 +7413,6 @@ def _wellbeing_mission_dates(cur, user_id):
         (user_id, "pensee"),
     )
     pensee = {r[0] for r in cur.fetchall()}
-    cur.execute(
-        "SELECT (created_at AT TIME ZONE 'Europe/Paris')::date "
-        "FROM tirages WHERE user_id=%s",
-        (user_id,),
-    )
-    tirage = {r[0] for r in cur.fetchall()}
     cur.execute(
         "SELECT (last_activity_at AT TIME ZONE 'Europe/Paris')::date "
         "FROM consultations WHERE user_id=%s AND last_activity_at IS NOT NULL",
@@ -7434,7 +7427,6 @@ def _wellbeing_mission_dates(cur, user_id):
     moment = {r[0] for r in cur.fetchall()}
     return {
         "pensee": pensee,
-        "tirage": tirage,
         "consultation": consultation,
         "moment": moment,
     }
@@ -7444,7 +7436,7 @@ def _reconcile_wellbeing_progress(user_id, now=None):
     """Réconcilie la progression du parcours bien-être et CRÉDITE les
     récompenses de cycle non encore accordées. À appeler depuis TOUT point
     d'action réel qui peut compléter une mission (POST wellbeing/mission,
-    POST /api/tirages, POST /api/consultation/message).
+    POST /api/consultation/message).
 
     Transaction courte DÉDIÉE (connexion propre) : `accounts ... FOR UPDATE`
     (même mutex par utilisateur que le moteur temps / la récompense partage),
@@ -7452,7 +7444,7 @@ def _reconcile_wellbeing_progress(user_id, now=None):
     (`wellbeing_cycle_rewards` PK + `ON CONFLICT DO NOTHING` + garde
     `rowcount == 1` avant le crédit).
 
-    NE LÈVE JAMAIS pour l'appelant : une action réelle (tirage sauvé, message
+    NE LÈVE JAMAIS pour l'appelant : une action réelle (mission ou message
     envoyé) ne doit pas échouer parce que la réconciliation a raté — le
     prochain déclencheur rattrapera. Retourne
     {"credited": bool, "credited_seconds": int, "completed_days_total": int}."""
@@ -7473,7 +7465,6 @@ def _reconcile_wellbeing_progress(user_id, now=None):
         per_mission = _wellbeing_mission_dates(c, user_id)
         completed_dates = (
             per_mission["pensee"]
-            & per_mission["tirage"]
             & per_mission["consultation"]
             & per_mission["moment"]
         )
@@ -7538,7 +7529,6 @@ def _wellbeing_progress_payload(cur, user_id, today):
     per_mission = _wellbeing_mission_dates(cur, user_id)
     completed_dates = (
         per_mission["pensee"]
-        & per_mission["tirage"]
         & per_mission["consultation"]
         & per_mission["moment"]
     )
@@ -7608,22 +7598,21 @@ def api_wellbeing_progress():
 def api_wellbeing_mission():
     """Enregistre l'accomplissement d'UNE mission du parcours pour AUJOURD'HUI
     (jour Europe/Paris). Identité = jeton Bearer, jamais le body.
-      body : { "mission_id": "pensee" | "tirage" | "consultation" | "moment" }
+      body : { "mission_id": "pensee" | "consultation" | "moment" }
 
     - `pensee` / `moment` (aucune trace serveur) : enregistrées dans
       wellbeing_mission_days, 1 fois par jour maximum (PRIMARY KEY EN BASE).
       `pensee` = l'utilisateur a CONSULTÉ la Pensée du jour (aucun lien avec la
       récompense de partage J5).
-    - `tirage` / `consultation` : missions DÉRIVÉES. Le serveur VÉRIFIE la trace
-      réelle du jour (tirages / consultations.last_activity_at). 409
+    - `consultation` : mission DÉRIVÉE. Le serveur VÉRIFIE la trace réelle du
+      jour (consultations.last_activity_at). 409
       `mission_action_missing` si l'action n'a pas eu lieu aujourd'hui — un
       booléen client arbitraire n'est jamais accepté.
 
     Après enregistrement, `_reconcile_wellbeing_progress` recalcule la
     progression et crédite +900 s si une nouvelle borne de 30 journées
-    complétées est atteinte, UNE SEULE fois par cycle. Le MÊME helper est
-    appelé depuis /api/tirages et /api/consultation/message : l'utilisateur
-    n'a jamais besoin de « repasser par ici » pour toucher sa récompense.
+    complétées est atteinte, UNE SEULE fois par cycle. Le Tarot n'appelle
+    jamais ce mécanisme.
 
     Réponse : payload de progression + { "reward": { "credited", "credited_seconds" } }.
     `credited` = true UNIQUEMENT si CETTE requête vient d'accorder le crédit."""
@@ -7683,8 +7672,7 @@ def api_wellbeing_mission():
     # aboutie » (déclenché par MeditationScreen._markMomentDone à >= 90 % de
     # lecture, JAMAIS au tap/lancement/swipe — code non touché dans ce lot).
     # Fire-and-forget, non bloquant : `_STARS_RULE_FOR_MISSION.get(...)`
-    # renvoie None pour `tirage`/`consultation` (pas de règle Étoiles ici,
-    # gérées ailleurs : /api/tirages et pas du tout pour `consultation`).
+    # renvoie None pour `consultation` (aucune règle Étoiles dans ce lot).
     if newly_recorded:
         stars_rule = _STARS_RULE_FOR_MISSION.get(mission_id)
         if stars_rule is not None:
