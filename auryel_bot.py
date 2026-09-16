@@ -2908,6 +2908,20 @@ def init_db():
         conn.rollback()
         print(f"Migration v60 (Rewarded questions): {e}")
 
+    # Migration v61 — tirage du jour idempotent. Additive : les anciennes
+    # lignes restent intactes ; les nouvelles portent le jour Europe/Paris et
+    # sont protégées par une unicité serveur (user_id, draw_date).
+    try:
+        migration_path = os.path.join(
+            os.path.dirname(__file__), "migrations", "034_tirages_daily_idempotency.sql"
+        )
+        with open(migration_path, "r", encoding="utf-8") as migration_file:
+            c.execute(migration_file.read())
+        conn.commit()
+    except Exception as e:
+        conn.rollback()
+        print(f"Migration v61 (tirage du jour): {e}")
+
     conn.close()
 
 def reset_db():
@@ -6133,26 +6147,74 @@ def _tirage_public(row):
     }
 
 
+def _tirage_day_bounds(draw_date):
+    """Bornes UTC du jour calendaire Europe/Paris [start, end)."""
+    from zoneinfo import ZoneInfo
+    paris = ZoneInfo("Europe/Paris")
+    start = datetime.combine(draw_date, datetime.min.time(), tzinfo=paris)
+    return start.astimezone(timezone.utc), (start + timedelta(days=1)).astimezone(timezone.utc)
+
+
+def _tirage_row_from_db_tuple(row):
+    return {"id": row[0], "user_id": row[1], "card_keys": row[2],
+            "advisor_id": row[3], "consultation_id": row[4],
+            "draw_date": row[5], "created_at": row[6]}
+
+
+def _get_daily_tirage_cursor(cursor, user_id, draw_date):
+    start, end = _tirage_day_bounds(draw_date)
+    cursor.execute(
+        "SELECT id, user_id, card_keys, advisor_id, consultation_id, draw_date, created_at "
+        "FROM tirages WHERE user_id=%s AND "
+        "(draw_date=%s OR (draw_date IS NULL AND created_at >= %s AND created_at < %s)) "
+        "ORDER BY created_at ASC LIMIT 1",
+        (str(user_id), draw_date, start, end),
+    )
+    row = cursor.fetchone()
+    return _tirage_row_from_db_tuple(row) if row else None
+
+
 def save_tirage(user_id, card_keys, advisor_id=None):
-    """INSERT d'un tirage. card_keys DOIT être déjà validé (3 clés canoniques,
-    ordre = ordre de sélection). Retourne le dict row inséré. Aucun crédit,
-    aucun LLM, aucune consultation."""
-    tid = str(uuid.uuid4())
+    """Crée ou retrouve le tirage du jour du compte.
+
+    card_keys DOIT être déjà validé. La décision du jour est serveur-side,
+    Europe/Paris ; un rejeu (même ou autre payload) renvoie le tirage existant.
+    Retourne (row, created). Aucun crédit, LLM ou consultation n'est consommé.
+    """
     now = _utcnow()
+    draw_date = _wellbeing_day(now)
+    tid = str(uuid.uuid4())
     conn = get_conn()
     try:
         c = conn.cursor()
+        existing = _get_daily_tirage_cursor(c, user_id, draw_date)
+        if existing is not None:
+            conn.rollback()
+            return existing, False
         c.execute(
-            "INSERT INTO tirages (id, user_id, card_keys, advisor_id, consultation_id, created_at) "
-            "VALUES (%s, %s, %s::jsonb, %s, NULL, %s)",
-            (tid, str(user_id), _json.dumps(list(card_keys)), advisor_id, now),
+            "INSERT INTO tirages "
+            "(id, user_id, card_keys, advisor_id, consultation_id, draw_date, created_at) "
+            "VALUES (%s, %s, %s::jsonb, %s, NULL, %s, %s)",
+            (tid, str(user_id), _json.dumps(list(card_keys)), advisor_id, draw_date, now),
         )
         conn.commit()
+    except Exception as e:
+        conn.rollback()
+        # Deux appareils peuvent passer la lecture initiale simultanément ;
+        # l'index unique devient alors l'arbitre, puis on renvoie le gagnant.
+        if getattr(e, "pgcode", None) != "23505":
+            raise
+        c = conn.cursor()
+        existing = _get_daily_tirage_cursor(c, user_id, draw_date)
+        if existing is None:
+            raise
+        return existing, False
     finally:
         try: conn.close()
         except Exception: pass
     return {"id": tid, "user_id": str(user_id), "card_keys": list(card_keys),
-            "advisor_id": advisor_id, "consultation_id": None, "created_at": now}
+            "advisor_id": advisor_id, "consultation_id": None,
+            "draw_date": draw_date, "created_at": now}, True
 
 
 def get_tirage(user_id, tirage_id):
@@ -6173,7 +6235,7 @@ def get_tirage(user_id, tirage_id):
     if not r:
         return None
     return {"id": r[0], "user_id": r[1], "card_keys": r[2], "advisor_id": r[3],
-            "consultation_id": r[4], "created_at": r[5]}
+            "consultation_id": r[4], "draw_date": None, "created_at": r[5]}
 
 
 def list_tirages(user_id, limit=20, before=None):
@@ -6269,32 +6331,14 @@ def api_tirages_create():
         return _auth_json({"error": "unauthorized"}, 401)
     advisor_id = profile.get("guide") or None   # dérivé du profil app, jamais du body
 
-    row = save_tirage(user_id, keys, advisor_id)
+    row, created = save_tirage(user_id, keys, advisor_id)
+    if not created:
+        return _auth_json(_tirage_public(row), 200)
     # PARCOURS BIEN-ÊTRE (J7) — un tirage sauvegardé peut compléter la mission
     # `tirage` (dérivée de tirages.created_at) et donc une journée entière : on
     # réconcilie la progression et on crédite la récompense de cycle si due.
     # Transaction courte dédiée, JAMAIS bloquante pour le 201.
     _reconcile_wellbeing_progress(user_id)
-    # GROS CHANTIER AURYEL (Prompt 2/5) — ÉTOILES : `tarot_completed`. Signal
-    # SERVEUR dérivé (ce tirage vient d'être sauvegardé, `row["id"]` = preuve),
-    # encore plus fiable qu'une déclaration client — `daily_action_claims`
-    # plafonne à 1/jour même si l'utilisatrice enchaîne plusieurs tirages.
-    # Fire-and-forget, jamais bloquant pour le 201.
-    now = _utcnow()
-    try:
-        sres = award_stars(
-            user_id, "tarot_completed", source_id=row.get("id"),
-            idempotency_key=f"tarot_completed:{user_id}:{_wellbeing_day(now)}",
-            now=now,
-        )
-        log_event(
-            "stars_awarded" if sres.get("awarded") else "reward_claim_denied",
-            user_hash=_user_hash(user_id), rule_key="tarot_completed",
-            reason=sres.get("reason"),
-        )
-    except Exception as e:
-        print(f"[rewards] award_stars(tarot_completed) erreur "
-              f"{_user_hash(user_id)}: {type(e).__name__}")
     return _auth_json(_tirage_public(row), 201)
 
 
