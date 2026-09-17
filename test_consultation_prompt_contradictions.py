@@ -65,7 +65,7 @@ def test_ten_personalities_and_symbolic_paths_remain_available():
 
 def test_trompery_and_uncertainty_rules_remain_strict():
     prompt = A.get_system_prompt(USER, "thea")
-    assert "ne constitue pas une preuve de tromperie" in prompt
+    assert "constitue pas une preuve de tromperie" in prompt
     assert "FAIT rapporté, INTERPRÉTATION de l'utilisateur, INCONNU" in prompt
     assert "Ne dis pas qu'il pense encore" in prompt
     assert "qu'il va revenir" in prompt

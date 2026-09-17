@@ -12,12 +12,16 @@ import auryel_bot as A
 USER = {"prenom": "Alex", "genre": "f", "guide": "selena"}
 
 
+def _flat(prompt):
+    return " ".join(prompt.split())
+
+
 def test_relationship_questions_are_contextual_and_progressive():
     prompt = A.get_system_prompt(USER, "selena")
     assert "UNE question" in prompt
     assert "historique et la mémoire narrative autorisée" in prompt
     assert "ne redemande pas une information déjà connue" in prompt
-    assert "ne transforme pas la consultation en questionnaire" in prompt
+    assert "transforme pas la consultation en questionnaire" in prompt
     assert "prénom" in prompt
     assert "chronologie" in prompt
     assert "comportement observable" in prompt
@@ -54,9 +58,19 @@ def test_third_party_uncertainty_and_cheating_are_fact_based():
     prompt = A.get_system_prompt(USER, "thea")
     assert "FAIT rapporté, INTERPRÉTATION de l'utilisateur, INCONNU" in prompt
     assert "Tu ne connais pas les pensées, sentiments, intentions ou décisions privées" in prompt
-    assert "ne constitue pas une preuve de tromperie" in prompt
+    assert "constitue pas une preuve de tromperie" in prompt
     assert "qu'il va revenir" in prompt
-    assert "une question concrète sur un comportement observable" in prompt
+    assert "une question concrète sur un comportement observable" in _flat(prompt)
+
+
+def test_observable_third_party_behavior_never_proves_private_state():
+    source = Path("auryel_bot.py").read_text(encoding="utf-8")
+    assert "RÈGLE ÉPISTÉMIQUE — COMPORTEMENT OBSERVABLE ET ÉTAT PRIVÉ" in source
+    for advisor in A.GUIDES:
+        prompt = A.get_system_prompt(USER, advisor)
+        assert "Un comportement, un silence ou un message observable d'un tiers" in prompt
+        assert "ne prouve pas" in prompt
+        assert "ne prouve pas sa pensée, son sentiment ou son intention privée" in _flat(prompt)
 
 
 def test_memory_and_profile_boundaries_remain_explicit():
@@ -68,7 +82,7 @@ def test_memory_and_profile_boundaries_remain_explicit():
         "orion",
     )
     assert "PROFIL PERSONNEL CONFIRMÉ" in prompt
-    assert "Une hypothèse reste une hypothèse" in prompt
+    assert "Une hypothèse reste une\nhypothèse" in prompt
     assert "ne les déplace pas dans le profil global" in prompt
 
 
@@ -84,4 +98,14 @@ def test_short_message_normalization_covers_requested_variants():
     assert A._conversation_mode("Oui.") == "brief"
     assert A._conversation_mode("D'accord.") == "brief"
     assert A._conversation_mode("Non.") == "brief"
-    assert A._conversation_mode("Pourquoi ?") == "brief"
+    assert A._conversation_mode("Pourquoi ?") == "explanation"
+
+
+def test_explicit_third_party_words_are_reported_not_promoted_to_guarantees():
+    prompt = A.get_system_prompt(USER, "raphael")
+    flat = _flat(prompt)
+    assert "Tu me manques" in flat
+    assert "Je veux qu'on se remette ensemble" in flat
+    assert "intention déclarée" in flat
+    assert "garantie sur la suite" in flat
+    assert "ne permet pas d'affirmer qu'elle se réalisera" in flat

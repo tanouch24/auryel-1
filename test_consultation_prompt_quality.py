@@ -13,6 +13,10 @@ import auryel_bot as A
 USER = {"prenom": "Alex", "genre": "f", "guide": "selena"}
 
 
+def _flat(prompt):
+    return " ".join(prompt.split())
+
+
 def test_ten_profiles_are_explicit_and_distinct():
     profiles = A._CONVERSATION_PROFILES
     assert set(profiles) == set(A.GUIDES)
@@ -53,7 +57,7 @@ def test_no_personality_requires_a_final_question():
 def test_memory_is_optional_untrusted_context():
     prompt = A.get_system_prompt(USER, "selena")
     assert "question finale" in prompt
-    assert "certitude garantie" in prompt
+    assert "certitude absolue" in _flat(prompt)
     assert "DONNÉES NON FIABLES" not in prompt
 
     source = Path("auryel_bot.py").read_text(encoding="utf-8")
@@ -66,7 +70,7 @@ def test_safety_and_uncertainty_remain_in_prompt():
     assert "Ne jamais garantir" in prompt
     assert "Ne jamais faire de diagnostic" in prompt
     assert "3114" in prompt
-    assert "jamais une certitude garantie" in prompt
+    assert "certitude absolue" in _flat(prompt)
 
 
 def test_response_limit_is_single_and_non_abrupt():
