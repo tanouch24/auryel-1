@@ -1,11 +1,26 @@
 """Contrat du catalogue d'ebooks Bien-être, sans accès à une base réelle."""
 
 from pathlib import Path
+import ast
 
 
 ROOT = Path(__file__).parent
 MIGRATION = (ROOT / "migrations/028_wellbeing_ebook_library.sql").read_text()
 SOURCE = (ROOT / "auryel_bot.py").read_text()
+
+
+def _ebook_dict_for_test():
+    tree = ast.parse(SOURCE)
+    function = next(
+        node for node in tree.body
+        if isinstance(node, ast.FunctionDef)
+        and node.name == "_wellbeing_ebook_dict"
+    )
+    namespace = {"_R2_PUBLIC_BASE_URL": "https://cdn.example/base",
+                 "_url_quote": lambda value, safe="": value.replace("/", "%2F")}
+    exec(compile(ast.Module(body=[function], type_ignores=[]),
+                 str(ROOT / "auryel_bot.py"), "exec"), namespace)
+    return namespace["_wellbeing_ebook_dict"]
 
 
 def test_catalogue_is_additive_and_idempotent():
@@ -39,8 +54,8 @@ def test_catalogue_route_filters_active_published_entries_and_sorts_newest_first
     assert '@app.route("/api/app/wellbeing-ebooks", methods=["GET"])' in SOURCE
     block = SOURCE[SOURCE.index("def _wellbeing_ebook_catalog"):SOURCE.index("@app.route(\"/api/app/wellbeing-ebooks\"")]
     assert "active=TRUE" in block
-    assert "publication_date <= %s" in block
-    assert "publication_date DESC" in block
+    assert "publication_date <= CURRENT_DATE" in block
+    assert "sort_order ASC" in block
     assert "@require_app_auth" in SOURCE[SOURCE.index('@app.route("/api/app/wellbeing-ebooks"'):]
 
 
@@ -51,3 +66,33 @@ def test_catalogue_has_free_and_premium_neutral_access_and_no_rewards_logic():
     assert "stars" not in route.lower()
     assert "premium" not in route.lower()
     assert "wellbeing_ebooks" in route
+
+
+def test_ebook_dict_prefers_explicit_cover_and_preserves_pdf_url():
+    build = _ebook_dict_for_test()
+    row = (3, "quand-la-tete-refuse-de-dormir", "Quand la tête refuse de dormir",
+           "", "", "https://explicit.example/cover.webp",
+           "https://cdn.example/ebooks/002.pdf", None, None, "1", True)
+    result = build(row)
+    assert result["cover_url"] == row[5]
+    assert result["pdf_url"] == row[6]
+    assert result["active"] is True
+
+
+def test_ebook_dict_builds_safe_r2_cover_fallback():
+    build = _ebook_dict_for_test()
+    row = (3, "quand/la-tete", "Titre", "", "", None,
+           "https://cdn.example/ebooks/002.pdf", None, None, "1", True)
+    result = build(row)
+    assert result["cover_url"] == (
+        "https://cdn.example/base/auryel-ebook-covers/quand%2Fla-tete.webp"
+    )
+    assert result["pdf_url"] == row[6]
+    assert result["active"] is True
+
+
+def test_catalogue_uses_the_same_cover_fallback_contract():
+    block = SOURCE[SOURCE.index("def _wellbeing_ebook_catalog"):
+                   SOURCE.index('@app.route("/api/app/wellbeing-ebooks"')]
+    assert 'ebook = _wellbeing_ebook_dict(row)' in block
+    assert '"cover_url": _wellbeing_ebook_media_url(ebook["cover_url"], row[13])' in block

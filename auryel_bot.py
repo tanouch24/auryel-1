@@ -164,6 +164,7 @@ GROQ_API_KEY    = os.environ.get("GROQ_API_KEY")
 VERIFY_TOKEN    = os.environ.get("VERIFY_TOKEN")
 ADMIN_PASSWORD  = os.environ.get("ADMIN_PASSWORD")
 DATABASE_URL    = os.environ.get("DATABASE_URL")
+_R2_PUBLIC_BASE_URL = os.environ.get("R2_PUBLIC_BASE_URL", "").strip().rstrip("/")
 STRIPE_SK       = os.environ.get("STRIPE_SK")
 STRIPE_WEBHOOK  = os.environ.get("STRIPE_WEBHOOK_SECRET")
 RESEND_API_KEY  = os.environ.get("RESEND_API_KEY")
@@ -7474,9 +7475,15 @@ def _wellbeing_program_ebook(cur):
 
 
 def _wellbeing_ebook_dict(row):
+    cover_url = row[5]
+    if not cover_url and _R2_PUBLIC_BASE_URL and row[1]:
+        cover_url = (
+            f"{_R2_PUBLIC_BASE_URL}/auryel-ebook-covers/"
+            f"{_url_quote(str(row[1]), safe='')}.webp"
+        )
     return {
         "id": row[0], "slug": row[1], "title": row[2], "subtitle": row[3],
-        "description": row[4], "cover_url": row[5], "pdf_url": row[6],
+        "description": row[4], "cover_url": cover_url, "pdf_url": row[6],
         "publication_date": row[7].isoformat() if row[7] else None,
         "month_label": row[8], "version": row[9], "active": bool(row[10]),
     }
@@ -7502,11 +7509,12 @@ def _wellbeing_ebook_catalog(cur):
     )
     result = []
     for row in cur.fetchall():
+        ebook = _wellbeing_ebook_dict(row)
         result.append({
             "id": row[0], "slug": row[1], "title": row[2],
             "subtitle": row[3] or "", "description": row[4],
             "category": row[14] or "", "display_author": row[15],
-            "cover_url": _wellbeing_ebook_media_url(row[5], row[13]),
+            "cover_url": _wellbeing_ebook_media_url(ebook["cover_url"], row[13]),
             "pdf_url": _wellbeing_ebook_media_url(row[6], row[12]),
             "publication_date": row[7].isoformat() if row[7] else None,
             "month_label": row[8], "version": row[9],
