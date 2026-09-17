@@ -9006,7 +9006,8 @@ def _meditation_video_catalog_active_rows():
             "FROM meditation_video_catalog "
             "WHERE is_active = TRUE "
             "  AND (published_at IS NULL OR published_at <= NOW()) "
-            "  AND r2_object_key LIKE 'meditations/%' "
+            "  AND (r2_object_key LIKE 'meditations/%' "
+            "       OR r2_object_key LIKE 'méditations/%') "
             "ORDER BY sort_order ASC, id ASC"
         )
         return c.fetchall()

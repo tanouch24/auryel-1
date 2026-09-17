@@ -138,6 +138,8 @@ def main():
     assert "wake-videos/%" not in inspect.getsource(
         A._meditation_video_catalog_active_rows
     )
+    source = inspect.getsource(A._meditation_video_catalog_active_rows)
+    assert "r2_object_key LIKE 'méditations/%'" in source
     assert R.public_url("https://cdn.example", "méditations/a.mp4") == (
         "https://cdn.example/m%C3%A9ditations/a.mp4"
     )
