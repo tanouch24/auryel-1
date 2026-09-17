@@ -3015,6 +3015,21 @@ def init_db():
             "Migration v66 (profil onboarding Consultation) échouée"
         ) from e
 
+    # Migration v67 — source de vérité minimale des contenus non lus.
+    try:
+        migration_path = os.path.join(
+            os.path.dirname(__file__), "migrations", "040_unread_events.sql"
+        )
+        with open(migration_path, "r", encoding="utf-8") as migration_file:
+            c.execute(migration_file.read())
+        conn.commit()
+    except Exception as e:
+        conn.rollback()
+        conn.close()
+        raise CriticalSchemaMigrationError(
+            "Migration v67 (événements non lus) échouée"
+        ) from e
+
     conn.close()
 
 def reset_db():
@@ -5325,6 +5340,103 @@ def api_account():
     }, 200)
 
 
+# ------------------------------------------------------------
+# CONTENUS NON LUS — source de vérité par compte
+# ------------------------------------------------------------
+
+_UNREAD_CATEGORIES = frozenset(("consultation", "wellbeing"))
+
+
+def create_unread_event(user_id, category, event_type, reference_key,
+                        dedupe_key=None, *, conn=None):
+    """Crée au plus une notification interne ouvrable par compte."""
+    category = str(category or "").strip()
+    event_type = str(event_type or "").strip()[:80]
+    reference_key = str(reference_key or "").strip()[:200]
+    dedupe_key = str(dedupe_key or reference_key).strip()[:240]
+    if category not in _UNREAD_CATEGORIES or not event_type or not reference_key or not dedupe_key:
+        raise ValueError("invalid_unread_event")
+    own = conn is None
+    db = conn or get_conn()
+    try:
+        cur = db.cursor()
+        cur.execute(
+            "INSERT INTO unread_events "
+            "(user_id, category, event_type, reference_key, dedupe_key) "
+            "VALUES (%s, %s, %s, %s, %s) "
+            "ON CONFLICT (user_id, dedupe_key) DO NOTHING",
+            (str(user_id), category, event_type, reference_key, dedupe_key),
+        )
+        if own:
+            db.commit()
+        return cur.rowcount == 1
+    except Exception:
+        if own:
+            db.rollback()
+        raise
+    finally:
+        if own:
+            db.close()
+
+
+@app.route("/api/app/unread", methods=["GET"])
+@require_app_auth
+def api_app_unread():
+    """Retourne les compteurs non lus du compte authentifié."""
+    user_id = g.app_account["user_id"]
+    conn = get_conn()
+    try:
+        cur = conn.cursor()
+        cur.execute(
+            "SELECT category, COUNT(*) FROM unread_events "
+            "WHERE user_id=%s AND read_at IS NULL GROUP BY category",
+            (str(user_id),),
+        )
+        counts = {category: 0 for category in _UNREAD_CATEGORIES}
+        for category, count in cur.fetchall():
+            if category in counts:
+                counts[category] = int(count or 0)
+        return _auth_json({"counts": counts}, 200)
+    finally:
+        conn.close()
+
+
+@app.route("/api/app/unread/read", methods=["POST"])
+@require_app_auth
+def api_app_unread_read():
+    """Marque une catégorie, ou une référence précise, comme lue."""
+    data = request.get_json(silent=True) or {}
+    category = str(data.get("category") or "").strip()
+    if category not in _UNREAD_CATEGORIES:
+        return _auth_json({"error": "invalid_request"}, 400)
+    reference_key = data.get("reference_key")
+    if reference_key is not None and (
+            not isinstance(reference_key, str) or not reference_key.strip()):
+        return _auth_json({"error": "invalid_request"}, 400)
+    conn = get_conn()
+    try:
+        cur = conn.cursor()
+        if reference_key is None:
+            cur.execute(
+                "UPDATE unread_events SET read_at=COALESCE(read_at, NOW()) "
+                "WHERE user_id=%s AND category=%s AND read_at IS NULL",
+                (str(g.app_account["user_id"]), category),
+            )
+        else:
+            cur.execute(
+                "UPDATE unread_events SET read_at=COALESCE(read_at, NOW()) "
+                "WHERE user_id=%s AND category=%s AND reference_key=%s "
+                "AND read_at IS NULL",
+                (str(g.app_account["user_id"]), category,
+                 reference_key.strip()[:200]),
+            )
+        changed = cur.rowcount
+        conn.commit()
+        return _auth_json({"status": "ok", "marked": int(changed)}, 200)
+    finally:
+        conn.close()
+
+
 _APP_MESSAGE_MAX_LEN = 4000
 
 
@@ -5583,6 +5695,9 @@ def api_consultation_message():
             not isinstance(rewarded_question_key, str) or
             not rewarded_question_key.strip()):
         return _auth_json({"error": "invalid_idempotency_key"}, 400)
+    rewarded_micro = data.get("response_mode") == "rewarded_micro"
+    if rewarded_micro and not isinstance(rewarded_question_key, str):
+        return _auth_json({"error": "invalid_response_mode"}, 400)
 
     user_id = g.app_account["user_id"]   # jamais lu dans le body
 
@@ -5754,6 +5869,7 @@ def api_consultation_message():
             advisor_override=advisor_real,
             consultation_id=cid,
             tirage_context=tirage_context,
+            rewarded_micro=rewarded_micro,
         )
     except Exception:
         if flow.get("question_reservation_id"):
@@ -8450,7 +8566,7 @@ _PUSH_LABEL_MAX   = 120
 # l'envoi FCM (Phase 3) et par le scheduler (Phase 4).
 _PUSH_CATEGORIES = (
     "daily_thought", "daily_meditation", "personal_guidance",
-    "weekly_sleep", "weekly_life_lesson", "wellbeing_daily", "ebook_monthly",
+    "weekly_sleep", "wellbeing_daily", "ebook_monthly", "wellbeing_session",
 )
 
 
@@ -9440,6 +9556,7 @@ _ACCOUNT_DELETE_CHILD_TABLES = (
     "rewarded_question_reservations",
     "rewarded_entitlements",
     "notification_sends",
+    "unread_events",
     "push_devices",
     "app_sessions",
 )
@@ -10717,6 +10834,33 @@ def llm_last_outcome():
     return getattr(_LLM_STATE, "outcome", "success")
 
 
+def _record_llm_usage(*, model, mode, usage):
+    """Métrique minimale, sans contenu conversationnel ni secret."""
+    if not isinstance(usage, dict):
+        return
+    values = {}
+    for key in ("prompt_tokens", "input_tokens", "completion_tokens",
+                "output_tokens", "total_tokens"):
+        value = usage.get(key)
+        if isinstance(value, int) and value >= 0:
+            values[key] = value
+    if not values:
+        return
+    log_event("llm_usage", model=str(model)[:80], mode=str(mode)[:32],
+              timestamp=datetime.now(timezone.utc).isoformat(), **values)
+
+
+def _usage_dict(value):
+    if isinstance(value, dict):
+        return value
+    if value is None:
+        return None
+    try:
+        return value.model_dump()
+    except Exception:
+        return None
+
+
 # Filtre de sortie borné (mots-clés / motifs) : catégories à NE JAMAIS
 # persister telles quelles. Volontairement conservateur (peu de faux positifs).
 _LLM_OUTPUT_BLOCKERS = (
@@ -10780,7 +10924,11 @@ def _call_llm_once(messages, temperature, max_tokens):
                     timeout=LLM_HTTP_TIMEOUT,
                 )
                 resp.raise_for_status()
-                content = resp.json()["choices"][0]["message"]["content"]
+                payload = resp.json()
+                _record_llm_usage(
+                    model=model, mode=getattr(_LLM_STATE, "mode", "normal"),
+                    usage=_usage_dict(payload.get("usage")))
+                content = payload["choices"][0]["message"]["content"]
                 if not content:
                     raise RuntimeError("OpenAI response vide")
                 return content
@@ -10798,7 +10946,11 @@ def _call_llm_once(messages, temperature, max_tokens):
                     timeout=LLM_HTTP_TIMEOUT,
                 )
                 resp.raise_for_status()
-                content = resp.json()["choices"][0]["message"]["content"]
+                payload = resp.json()
+                _record_llm_usage(
+                    model=model, mode=getattr(_LLM_STATE, "mode", "normal"),
+                    usage=_usage_dict(payload.get("usage")))
+                content = payload["choices"][0]["message"]["content"]
                 if not content:
                     raise RuntimeError("OpenRouter response vide")
                 return content
@@ -10814,6 +10966,10 @@ def _call_llm_once(messages, temperature, max_tokens):
                     temperature=temperature,
                     timeout=LLM_HTTP_TIMEOUT,
                 )
+                _record_llm_usage(
+                    model="llama-3.3-70b-versatile",
+                    mode=getattr(_LLM_STATE, "mode", "normal"),
+                    usage=_usage_dict(getattr(resp, "usage", None)))
                 content = resp.choices[0].message.content
                 if not content:
                     raise RuntimeError("Groq response vide")
@@ -10836,11 +10992,12 @@ _LLM_OUTPUT_CORRECTIVE = (
 )
 
 
-def call_llm(messages, temperature=0.85, max_tokens=320):
+def call_llm(messages, temperature=0.85, max_tokens=320, mode="normal"):
     """Chaîne de repli bornée + filtre de sortie borné. Résultat interne
     exposé via llm_last_outcome() : 'fallback_failure' en cas d'ÉCHEC TOTAL.
     Ne loggue JAMAIS le contenu du message."""
     _set_llm_outcome("success")
+    _LLM_STATE.mode = mode
 
     raw = _call_llm_once(messages, temperature, max_tokens)
     if raw is None:
@@ -11022,7 +11179,7 @@ def gerer_onboarding(phone, user, user_message):
 def _reply_core(user, key, user_message, io, *, depuis_pub=False,
                 user_msg_pre_inserted=False, onboarding_vient_de_finir=False,
                 channel="whatsapp", advisor_override=None, tirage_context=None,
-                onboarding_profile_intro=False):
+                onboarding_profile_intro=False, rewarded_micro=False):
     """Cœur PARTAGÉ de get_reply : détecteurs, assemblage du system prompt,
     personas, garde-fous détresse/sécurité, appel LLM, persistance de l'historique.
     `io` injecte les accès données/canal (legacy = phone ; app = user_id).
@@ -11369,11 +11526,13 @@ def _reply_core(user, key, user_message, io, *, depuis_pub=False,
     if tirage_context:
         system += tirage_context
 
-    reply = tronquer_reponse(call_llm(
+    _raw_reply = call_llm(
         [{"role":"system","content":system}, *history, {"role":"user","content":user_message}],
         temperature=0.85,
-        max_tokens=320
-    ))
+        max_tokens=140 if rewarded_micro else 320,
+        mode="rewarded_micro" if rewarded_micro else "normal",
+    )
+    reply = _raw_reply.strip() if rewarded_micro else tronquer_reponse(_raw_reply)
     # ── TRIGGER CONVERSION DÉSACTIVÉ ────────────────────────────────────────────
     # Upsell aléatoire 35% supprimé : pouvait se déclencher plusieurs fois/jour
     # et avant que l'utilisateur ait naturellement échangé.
@@ -11456,7 +11615,7 @@ def _app_persist_emotional_context(user_id, message):
 
 
 def get_reply_for_user_id(user_id, user_message, advisor_override=None, consultation_id=None,
-                          tirage_context=None):
+                          tirage_context=None, rewarded_micro=False):
     """Chemin APP (utilisateur = accounts.user_id, sans phone). Réutilise
     intégralement _reply_core (prompts / personas / détecteurs / garde-fous).
     AUCUN quota DAILY_LIMIT, AUCUN onboarding legacy, AUCUN WhatsApp/Telegram,
@@ -11529,7 +11688,8 @@ def get_reply_for_user_id(user_id, user_message, advisor_override=None, consulta
                        onboarding_vient_de_finir=False, channel="app",
                        advisor_override=advisor_override,
                        tirage_context=tirage_context,
-                       onboarding_profile_intro=onboarding_profile_intro)
+                       onboarding_profile_intro=onboarding_profile_intro,
+                       rewarded_micro=rewarded_micro)
 
 
 # ============================================================

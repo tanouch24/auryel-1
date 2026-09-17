@@ -149,7 +149,7 @@ snd = _FakeSender()
 summ = S.push_tick(_utc(2026, 1, 18, 21, 5), st, snd, schedule=SCHED)  # 22:05 Paris dim
 cats = [c for c, _ in summ["due"]]
 check("weekly_sleep" in cats, "6a — dimanche 22:05 Paris -> sommeil dû")
-check("weekly_life_lesson" not in cats, "6b — 22:05 -> leçon (11:00) pas re-due tardivement")
+check("weekly_life_lesson" not in cats, "6b — weekly_life_lesson supprimée")
 st = _FakeStore({"u1": ["t1"]})
 snd = _FakeSender()
 summ = S.push_tick(_utc(2026, 1, 17, 21, 5), st, snd, schedule=SCHED)  # samedi

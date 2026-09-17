@@ -15,10 +15,10 @@ ZoneInfo("Europe/Paris") (heure d'été / heure d'hiver gérées par zoneinfo).
 Horaires produits par défaut (surchargeables par variables d'env, valeurs
 non secrètes) :
   - pensée quotidienne     : 08:30 Europe/Paris, tous les jours
-  - méditation quotidienne : 19:00 Europe/Paris, tous les jours
-  - sommeil                : mercredi & dimanche 22:00 Europe/Paris
-  - leçon de vie           : dimanche 11:00 Europe/Paris
+  - méditation : mardi, jeudi et samedi à 19:00 Europe/Paris
+  - sommeil                : dimanche 22:00 Europe/Paris
   - bien-être              : 10:00 Europe/Paris (utilisateurs ayant activé le rappel)
+  - séance Bien-être       : mardi et samedi à 10:00 Europe/Paris
   - ebook mensuel          : 10:15 Europe/Paris (publication non déjà notifiée)
 """
 
@@ -45,10 +45,6 @@ MESSAGES = {
         "Besoin de décrocher avant de dormir ?",
         "Prends un instant pour toi dans Auryel.",
     ),
-    "weekly_life_lesson": (
-        "Ta leçon de vie de la semaine",
-        "Elle t'attend dans Auryel.",
-    ),
     "wellbeing_daily": (
         "Ton moment Bien-être t'attend",
         "Tes 5 actions du jour sont disponibles dans Auryel.",
@@ -57,6 +53,16 @@ MESSAGES = {
         "Ton nouvel ebook Auryel est disponible",
         "Découvre gratuitement le nouveau guide Bien-être du mois.",
     ),
+    "wellbeing_session": (
+        "Ta séance Bien-être est prête ✨",
+        "Tes 5 exercices du jour t’attendent dans Auryel.",
+    ),
+}
+
+_ADVISOR_NAMES = {
+    "selena": "Séléna", "cassandre": "Cassandre", "maia": "Maïa",
+    "luna": "Luna", "ezra": "Ezra", "thea": "Théa", "orion": "Orion",
+    "raphael": "Raphaël", "myriam": "Myriam", "kael": "Kaël",
 }
 
 _WEEKDAYS = {"mon": 0, "tue": 1, "wed": 2, "thu": 3, "fri": 4, "sat": 5, "sun": 6}
@@ -91,10 +97,13 @@ class PushSchedule:
         self.morning = _parse_hhmm(env.get("PUSH_TIME_MORNING"), (8, 30))
         self.evening = _parse_hhmm(env.get("PUSH_TIME_EVENING"), (19, 0))
         self.sleep_time = _parse_hhmm(env.get("PUSH_SLEEP_TIME"), (22, 0))
-        self.sleep_days = _parse_days(env.get("PUSH_SLEEP_DAYS"), ("wed", "sun"))
-        self.lesson_time = _parse_hhmm(env.get("PUSH_LESSON_TIME"), (11, 0))
-        self.lesson_days = _parse_days(env.get("PUSH_LESSON_DAY"), ("sun",))
+        # Une seule notification sommeil hebdomadaire, le dimanche soir.
+        self.sleep_days = _parse_days(env.get("PUSH_SLEEP_DAYS"), ("sun",))
+        self.meditation_days = _parse_days(
+            env.get("PUSH_MEDITATION_DAYS"), ("tue", "thu", "sat"))
         self.wellbeing_time = _parse_hhmm(env.get("PUSH_WELLBEING_TIME"), (10, 0))
+        self.session_days = _parse_days(
+            env.get("PUSH_WELLBEING_SESSION_DAYS"), ("tue", "sat"))
         self.ebook_time = _parse_hhmm(env.get("PUSH_EBOOK_TIME"), (10, 15))
         self.catch_up_hours = catch_up_hours
 
@@ -122,15 +131,20 @@ class PushSchedule:
         due = []
         every_day = list(range(7))
         if self._is_due(paris_now, every_day, *self.morning):
+            # La guidance personnelle ciblée est prioritaire sur la pensée
+            # éditoriale lorsqu'elle tombe le même jour : le plafond global
+            # évite ainsi deux push marketing, sans étouffer une relance
+            # directement liée au dernier conseiller utilisé.
+            due.append(("personal_guidance", day_key))
             due.append(("daily_thought", day_key))
-        if self._is_due(paris_now, every_day, *self.evening):
+        if self._is_due(paris_now, self.meditation_days, *self.evening):
             due.append(("daily_meditation", day_key))
         if self._is_due(paris_now, self.sleep_days, *self.sleep_time):
             due.append(("weekly_sleep", f"{week_key}-{paris_now.weekday()}"))
-        if self._is_due(paris_now, self.lesson_days, *self.lesson_time):
-            due.append(("weekly_life_lesson", week_key))
         if self._is_due(paris_now, every_day, *self.wellbeing_time):
             due.append(("wellbeing_daily", day_key))
+        if self._is_due(paris_now, self.session_days, *self.wellbeing_time):
+            due.append(("wellbeing_session", day_key))
         if self._is_due(paris_now, every_day, *self.ebook_time):
             # Les ebooks sont développés par le store DB : la catégorie ne
             # sera envoyée que pour une publication active non déjà notifiée.
@@ -166,10 +180,18 @@ def push_tick(now_utc, store, sender, schedule=None):
     for category, period in due:
         if category not in ALLOWED_TYPES or category not in MESSAGES:
             continue
+        # Une seule relance éditoriale par jour et par compte. Le rappel
+        # Bien-être explicitement configuré reste une exception ; les stores
+        # de test/compatibilité sans cette méthode conservent le comportement
+        # précédent.
         if category == "ebook_monthly" and hasattr(store, "ebook_jobs"):
             jobs = store.ebook_jobs(now_utc)
         elif category == "wellbeing_daily" and hasattr(store, "wellbeing_jobs"):
             jobs = store.wellbeing_jobs(now_utc)
+        elif category == "personal_guidance" and hasattr(store, "personal_guidance_jobs"):
+            jobs = store.personal_guidance_jobs(now_utc)
+        elif category == "personal_guidance":
+            jobs = []
         else:
             users = (store.recipients_for(category, now_utc)
                      if hasattr(store, "recipients_for") else recipients)
@@ -182,6 +204,10 @@ def push_tick(now_utc, store, sender, schedule=None):
             if user_ids is None and hasattr(store, "recipients_for"):
                 user_ids = store.recipients_for(category, now_utc)
             for uid in user_ids or []:
+                if (category != "wellbeing_daily" and
+                        hasattr(store, "global_push_allowed") and
+                        not store.global_push_allowed(uid, now_utc)):
+                    continue
                 dedupe_key = f"{category}:{uid}:{job_period}"
                 tokens = store.active_tokens(uid)
                 provisional = ("dry_run" if dry
@@ -199,13 +225,26 @@ def push_tick(now_utc, store, sender, schedule=None):
 
                 any_ok = False
                 for tok in tokens:
-                    res = sender.send(tok, category, title, body)
+                    data = job.get("data")
+                    if data:
+                        res = sender.send(tok, category, title, body, data=data)
+                    else:
+                        # Compatibilité avec les senders de test/intégrations
+                        # existants qui ne connaissent que le payload minimal.
+                        res = sender.send(tok, category, title, body)
                     if res.outcome in ("sent", "dry_run"):
                         any_ok = True
                     elif res.outcome == "invalid_token":
                         store.mark_invalid(tok)
                 if any_ok:
                     store.finalize(dedupe_key, "dry_run" if dry else "sent")
+                    if (not dry and category in
+                            ("personal_guidance", "wellbeing_session", "ebook_monthly")
+                            and hasattr(store, "create_unread_event")):
+                        store.create_unread_event(
+                            uid, "consultation" if category == "personal_guidance"
+                            else "wellbeing", category,
+                            str(job.get("ebook_id") or job_period), dedupe_key)
                     if (category == "ebook_monthly" and not dry and
                             hasattr(store, "mark_ebook_notification_sent")):
                         store.mark_ebook_notification_sent(job.get("ebook_id"))
@@ -241,7 +280,6 @@ class DbPushTickStore:
             return [str(r[0]) for r in c.fetchall()]
         finally:
             conn.close()
-
     def active_tokens(self, user_id):
         conn = self._get_conn()
         try:
@@ -286,8 +324,10 @@ class DbPushTickStore:
             c = conn.cursor()
             local_date = now_utc.astimezone(PARIS).date()
             c.execute(
-                "SELECT id, title, push_title, push_body FROM wellbeing_ebooks "
-                "WHERE active=TRUE AND publication_date<=%s "
+                "SELECT id, title, push_type, push_title, push_body, push_active "
+                "FROM wellbeing_ebooks "
+                "WHERE active=TRUE AND push_active=TRUE "
+                "AND push_type='ebook_monthly' AND publication_date<=%s "
                 "AND notification_sent_at IS NULL",
                 (local_date,),
             )
@@ -295,9 +335,50 @@ class DbPushTickStore:
             users = self.recipients()
             return [{"ebook_id": str(row[0]),
                      "period": f"ebook:{row[0]}",
-                     "title": row[2] or MESSAGES["ebook_monthly"][0],
-                     "body": row[3] or MESSAGES["ebook_monthly"][1],
+                     "title": row[3] or MESSAGES["ebook_monthly"][0],
+                     "body": row[4] or MESSAGES["ebook_monthly"][1],
                      "user_ids": users} for row in rows]
+        finally:
+            conn.close()
+
+    def global_push_allowed(self, user_id, now_utc):
+        """Plafond éditorial quotidien, évalué par compte.
+
+        Le verrou de déduplication par catégorie reste la protection contre
+        les relances identiques ; ce contrôle évite en plus une rafale de
+        catégories éditoriales le même jour.
+        """
+        local_day = now_utc.astimezone(PARIS).date()
+        day_start = datetime.combine(local_day, datetime.min.time(), tzinfo=PARIS)
+        conn = self._get_conn()
+        try:
+            c = conn.cursor()
+            c.execute(
+                "SELECT COUNT(*) FROM notification_sends "
+                "WHERE user_id=%s AND category <> 'wellbeing_daily' "
+                "AND status IN ('sent', 'dry_run') "
+                "AND created_at >= %s",
+                (str(user_id), day_start.astimezone(timezone.utc)),
+            )
+            return int(c.fetchone()[0] or 0) == 0
+        finally:
+            conn.close()
+
+    def create_unread_event(self, user_id, category, event_type,
+                            reference_key, dedupe_key):
+        """Crée le badge interne après un envoi FCM confirmé, idempotent."""
+        conn = self._get_conn()
+        try:
+            c = conn.cursor()
+            c.execute(
+                "INSERT INTO unread_events "
+                "(user_id, category, event_type, reference_key, dedupe_key) "
+                "VALUES (%s, %s, %s, %s, %s) "
+                "ON CONFLICT (user_id, dedupe_key) DO NOTHING",
+                (str(user_id), category, str(event_type)[:80],
+                 str(reference_key)[:200], str(dedupe_key)[:240]),
+            )
+            conn.commit()
         finally:
             conn.close()
 
@@ -324,6 +405,54 @@ class DbPushTickStore:
                      "title": MESSAGES["wellbeing_daily"][0],
                      "body": body, "user_ids": users}
                     for body, users in grouped.items()]
+        finally:
+            conn.close()
+
+    def personal_guidance_jobs(self, now_utc):
+        """Relances J+1/J+3/J+5 depuis la dernière activité réelle.
+
+        La consultation et son conseiller sont la seule source de vérité.
+        Une consultation encore active n'est jamais relancée. La clé de
+        période contient l'instant d'activité, donc toute nouvelle activité
+        ouvre automatiquement un nouveau cycle sans réutiliser l'ancien.
+        """
+        conn = self._get_conn()
+        try:
+            c = conn.cursor()
+            c.execute(
+                "SELECT DISTINCT ON (c.user_id) c.user_id, c.advisor_id, "
+                "c.last_activity_at FROM consultations c "
+                "JOIN accounts a ON a.user_id=c.user_id "
+                "JOIN push_devices d ON d.user_id=c.user_id "
+                "WHERE c.last_activity_at IS NOT NULL AND a.deleted_at IS NULL "
+                "AND d.enabled=TRUE AND d.revoked_at IS NULL AND d.invalid_at IS NULL "
+                "ORDER BY c.user_id, c.last_activity_at DESC",
+            )
+            today = now_utc.astimezone(PARIS).date()
+            jobs = []
+            for uid, advisor_id, activity in c.fetchall():
+                if activity.tzinfo is None:
+                    activity = activity.replace(tzinfo=timezone.utc)
+                activity_day = activity.astimezone(PARIS).date()
+                age = (today - activity_day).days
+                if age not in (1, 3, 5):
+                    continue
+                # Fenêtre active : la dernière activité est encore en cours.
+                if now_utc < activity + timedelta(minutes=5):
+                    continue
+                advisor = str(advisor_id or "").strip().lower()
+                name = _ADVISOR_NAMES.get(advisor)
+                if not name:
+                    continue
+                activity_key = activity.astimezone(timezone.utc).isoformat()
+                jobs.append({
+                    "period": f"guidance:{activity_key}:j{age}",
+                    "title": f"{name} aimerait reprendre votre échange ✨",
+                    "body": "Une question en tête ? Retrouvez-la dans Auryel.",
+                    "user_ids": [str(uid)],
+                    "data": {"advisor": advisor},
+                })
+            return jobs
         finally:
             conn.close()
 

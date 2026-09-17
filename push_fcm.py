@@ -33,7 +33,8 @@ FCM_SCOPE = "https://www.googleapis.com/auth/firebase.messaging"
 # (Flutter) et _PUSH_CATEGORIES (auryel_bot.py).
 ALLOWED_TYPES = (
     "daily_thought", "daily_meditation", "personal_guidance",
-    "weekly_sleep", "weekly_life_lesson", "wellbeing_daily", "ebook_monthly",
+    "weekly_sleep", "wellbeing_daily", "ebook_monthly",
+    "wellbeing_session",
 )
 
 _PERMANENT_FCM_ERRORS = frozenset({
@@ -102,7 +103,7 @@ def _clip(s, n):
     return s[:n]
 
 
-def build_message(token, category, title, body, dry_run=False):
+def build_message(token, category, title, body, dry_run=False, data=None):
     """Construit le corps HTTP v1. `data` ne contient QUE `type` (allowlist).
     Aucune URL, aucun deep link libre, aucun contenu de consultation."""
     if category not in ALLOWED_TYPES:
@@ -113,7 +114,7 @@ def build_message(token, category, title, body, dry_run=False):
             "title": _clip(title, _TITLE_MAX),
             "body": _clip(body, _BODY_MAX),
         },
-        "data": {"type": category},
+        "data": {"type": category, **(data or {})},
         "android": {
             "priority": "normal",
             "notification": {
@@ -161,7 +162,7 @@ class FcmSender:
         return creds.token
 
     # -- envoi -----------------------------------------------------------
-    def send(self, token, category, title, body,
+    def send(self, token, category, title, body, data=None,
              max_attempts=3, backoff_base=0.5):
         if category not in ALLOWED_TYPES:
             raise ValueError(f"type de notification non autorisé: {category!r}")
@@ -185,7 +186,7 @@ class FcmSender:
             "Content-Type": "application/json; charset=UTF-8",
         }
         payload = build_message(token, category, title, body,
-                                dry_run=self.config.dry_run)
+                                dry_run=self.config.dry_run, data=data)
 
         last = None
         for attempt in range(1, max_attempts + 1):
