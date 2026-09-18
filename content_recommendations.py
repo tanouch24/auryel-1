@@ -74,6 +74,60 @@ def resolve_explicit_catalog_recommendation(reply, catalog_entries):
     }
 
 
+def _contract_payloads(text):
+    """Find unambiguous structured contracts embedded in provider output.
+
+    Some providers prepend/append prose despite the JSON-only instruction.
+    Decode complete JSON objects instead of exposing that raw provider output
+    as the assistant message. Duplicate sightings of the same object (the
+    fenced and raw scans) are collapsed; multiple different contracts remain
+    ambiguous and are rejected.
+    """
+    decoder = json.JSONDecoder()
+    found = []
+
+    def add(payload):
+        if not isinstance(payload, dict) or not isinstance(payload.get("reply"), str):
+            return
+        key = json.dumps(payload, sort_keys=True, ensure_ascii=False)
+        if all(existing[0] != key for existing in found):
+            found.append((key, payload))
+
+    try:
+        add(json.loads(text))
+    except (TypeError, ValueError):
+        pass
+
+    for match in CONTRACT_RE.finditer(text):
+        try:
+            add(json.loads(match.group(1)))
+        except (TypeError, ValueError):
+            pass
+
+    # raw_decode handles prose before/after a valid contract and nested
+    # recommendation objects without a permissive regex.
+    for position, char in enumerate(text):
+        if char != "{":
+            continue
+        try:
+            payload, _end = decoder.raw_decode(text[position:])
+        except (TypeError, ValueError):
+            continue
+        add(payload)
+    return [payload for _key, payload in found]
+
+
+def _without_contract_artifacts(text):
+    """Keep natural prose while removing recognizable internal JSON blocks."""
+    cleaned = CONTRACT_RE.sub("", text)
+    # A malformed/truncated contract must never become visible as technical
+    # text. Only trigger on the contract's distinctive leading key.
+    marker = re.search(r"\{\s*[\"']reply[\"']\s*:", cleaned, re.I)
+    if marker:
+        cleaned = cleaned[:marker.start()]
+    return cleaned.strip()
+
+
 def parse_llm_contract(raw):
     """Return (reply, candidate) without trusting candidate content.
 
@@ -83,21 +137,13 @@ def parse_llm_contract(raw):
     text = str(raw or "").strip()
     if not text:
         return "", None
-    payload = None
-    try:
-        payload = json.loads(text)
-    except (TypeError, ValueError):
-        match = CONTRACT_RE.search(text)
-        if match:
-            try:
-                payload = json.loads(match.group(1))
-            except (TypeError, ValueError):
-                payload = None
-    if not isinstance(payload, dict) or not isinstance(payload.get("reply"), str):
-        return text, None
+    payloads = _contract_payloads(text)
+    if len(payloads) != 1:
+        return _without_contract_artifacts(text), None
+    payload = payloads[0]
     reply = payload["reply"].strip()
     if not reply:
-        return text, None
+        return _without_contract_artifacts(text), None
     candidate = payload.get("recommendation")
     if candidate is None:
         return reply, None

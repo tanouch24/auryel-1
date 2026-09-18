@@ -3652,7 +3652,7 @@ def get_consultation_messages_for_user_id(user_id, consultation_id):
             {"id": str(r[0]), "role": r[1], "content": r[2],
              "timestamp": _ts_iso(r[3]),
              **({"recommendation": {
-                 "id": str(r[4]), "content_type": r[5],
+                 "recommendation_id": str(r[4]), "content_type": r[5],
                  "content_id": r[6], "title": r[7],
                  **(r[8] if isinstance(r[8], dict) else {}),
              }} if r[4] is not None else {})}

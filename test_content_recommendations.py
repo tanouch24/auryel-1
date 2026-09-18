@@ -41,6 +41,48 @@ def test_structured_contract_accepts_one_candidate_and_keeps_reply_natural():
     }
 
 
+@pytest.mark.parametrize("raw", [
+    '```json\n{"reply":"Réponse propre.","recommendation":null}\n```',
+    'Avant le contrat. {"reply":"Réponse propre.","recommendation":null} Après.',
+])
+def test_embedded_contract_never_leaks_internal_json_into_reply(raw):
+    reply, recommendation = parse_llm_contract(raw)
+    assert reply == "Réponse propre."
+    assert recommendation is None
+    assert "recommendation" not in reply
+    assert "```" not in reply
+
+
+def test_embedded_contract_keeps_structured_recommendation_separate():
+    reply, recommendation = parse_llm_contract(
+        'Je te recommande ce contenu. {"reply":"Je te recommande la méditation '
+        '« Déposer la journée avant de dormir ». ","recommendation":{'
+        '"type":"meditation","id":"med-real","rationale_code":"theme_court"}}'
+    )
+    assert reply == "Je te recommande la méditation « Déposer la journée avant de dormir »."
+    assert recommendation == {
+        "content_type": "meditation",
+        "content_id": "med-real",
+        "rationale_code": "theme_court",
+    }
+
+
+def test_ambiguous_or_malformed_contract_is_safe_and_never_visible():
+    reply, recommendation = parse_llm_contract(
+        'Réponse naturelle. {"reply":"interne","recommendation":{broken}'
+    )
+    assert reply == "Réponse naturelle."
+    assert recommendation is None
+    assert '"reply"' not in reply
+
+    reply, recommendation = parse_llm_contract(
+        '{"reply":"un","recommendation":null} '
+        '{"reply":"deux","recommendation":null}'
+    )
+    assert recommendation is None
+    assert '"reply"' not in reply
+
+
 def test_invalid_or_plain_llm_output_never_creates_a_candidate():
     reply, recommendation = parse_llm_contract("Une réponse normale sans contrat.")
     assert reply.startswith("Une réponse normale")
@@ -82,7 +124,7 @@ def test_llm_contract_explicit_safe_cases():
                      '"type":"unknown","id":"x"}}') == ("Réponse conservée.", None)
     assert _contract('{"reply":"Réponse conservée.","recommendation":{'
                      '"type":"ebook","id":"new"}}')[1] is not None
-    assert _contract('{"reply":"Réponse') == ('{"reply":"Réponse', None)
+    assert _contract('{"reply":"Réponse') == ('', None)
     assert _contract('{"reply":"Catalogue vide."}') == ("Catalogue vide.", None)
 
 
