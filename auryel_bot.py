@@ -9332,9 +9332,10 @@ def api_content_exercises():
 # Le LLM ne reçoit que des identifiants/titres actifs et ne peut jamais créer
 # la carte. La validation et le snapshot de contenu sont faits ici, sous
 # verrou du compte, avant de répondre à l'app.
-# New recommendation creation is ebook-only. Existing meditation/exercise
-# rows remain valid historical data and are still returned by history joins.
-_RECOMMENDATION_TYPES = ("ebook",)
+# New recommendation creation supports ebooks and meditation-video navigation.
+# Exercise creation remains disabled. Existing exercise rows remain valid
+# historical data and are still returned by history joins.
+_RECOMMENDATION_TYPES = ("ebook", "meditation")
 _RECOMMENDATION_REPEAT_DAYS = 7
 
 
@@ -9360,7 +9361,19 @@ def _recommendation_catalog_entries(user_id=None):
         ebooks = [{"content_type": "ebook", "content_id": str(r[0]), "title": str(r[1])}
                   for r in c.fetchall()
                   if not recent_ebook_ids or str(r[0]) in recent_ebook_ids]
-        return ebooks
+        c.execute(
+            "SELECT id, title FROM meditation_video_catalog "
+            "WHERE is_active=TRUE AND (published_at IS NULL OR published_at<=NOW()) "
+            "AND (r2_object_key LIKE 'meditations/%' "
+            "OR r2_object_key LIKE 'méditations/%') "
+            "ORDER BY sort_order, id"
+        )
+        meditation_videos = [
+            {"content_type": "meditation", "content_id": str(r[0]),
+             "title": str(r[1])}
+            for r in c.fetchall()
+        ]
+        return ebooks + meditation_videos
     except Exception:
         return []
     finally:
@@ -9403,9 +9416,11 @@ def _recommendation_snapshot(cursor, kind, content_id):
     if kind == "meditation":
         cursor.execute(
             "SELECT id, slug, title, description, category, duration_seconds, "
-            "audio_url, image_url FROM meditation_catalog "
+            "thumbnail_url FROM meditation_video_catalog "
             "WHERE id=%s AND is_active=TRUE "
-            "AND (published_at IS NULL OR published_at<=NOW())",
+            "AND (published_at IS NULL OR published_at<=NOW()) "
+            "AND (r2_object_key LIKE 'meditations/%' "
+            "OR r2_object_key LIKE 'méditations/%')",
             (content_id,),
         )
         row = cursor.fetchone()
@@ -9413,8 +9428,10 @@ def _recommendation_snapshot(cursor, kind, content_id):
             return None
         return {"id": str(row[0]), "slug": row[1], "title": row[2],
                 "description": row[3] or "", "category": row[4] or "",
-                "duration_seconds": int(row[5] or 0), "audio_url": row[6],
-                "image_url": row[7], "content_type": kind}
+                "duration_seconds": int(row[5] or 0), "image_url": row[6],
+                "navigation_only": True,
+                "content_source": "meditation_video_catalog",
+                "content_type": kind}
     if kind == "exercise":
         cursor.execute(
             "SELECT id, slug, title, category, description, duration_seconds, "
@@ -11812,14 +11829,17 @@ def _reply_core(user, key, user_message, io, *, depuis_pub=False,
                 "\n\n=== RECOMMANDATION DE CONTENU — CONTRAT STRUCTURÉ ===\n"
                 "Une recommandation est FACULTATIVE. Si elle n'est pas vraiment "
                 "pertinente, renvoie recommendation:null. Ne recommande jamais "
-                "plus d'un contenu. Choisis type=ebook et id exactement dans la liste "
+                "plus d'un contenu. Choisis type=ebook ou type=meditation et id "
+                "exactement dans la liste "
                 "active ci-dessous, sans inventer de titre ni d'identifiant. "
                 "Ne présente jamais une recommandation comme une obligation, une "
                 "publicité ou une preuve que la personne a lu/fait quelque chose. "
                 "Réponds exactement en JSON valide, sans markdown, sous la forme : "
                 '{"reply":"ta réponse naturelle","recommendation":null} ou '
-                '{"reply":"ta réponse naturelle","recommendation":{"type":"ebook","id":"ID","rationale_code":"theme_court"}}. '
-                "Le titre doit être laissé au serveur. N'ajoute pas de carte pour "
+                '{"reply":"ta réponse naturelle","recommendation":{"type":"ebook|meditation","id":"ID","rationale_code":"theme_court"}}. '
+                "Le titre doit être laissé au serveur. Pour une méditation, "
+                "invite simplement à ouvrir l'espace Méditations; ne parle pas "
+                "d'une lecture audio dans la carte. N'ajoute pas de carte pour "
                 "un moment grave, une crise ou si cela alourdit la réponse.\n"
                 f"CATALOGUE ACTIF:\n{catalog_context}"
             )

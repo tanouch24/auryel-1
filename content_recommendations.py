@@ -5,10 +5,10 @@ import re
 import unicodedata
 from datetime import timedelta
 
-# New structured advisor recommendations are intentionally ebook-only. Legacy
-# recommendation rows remain readable by the history API/UI; this allow-list
-# governs creation/parsing only.
-CONTENT_TYPES = ("ebook",)
+# New structured advisor recommendations support ebooks and meditation-video
+# navigation. Legacy recommendation rows remain readable by the history
+# API/UI; this allow-list governs creation/parsing only.
+CONTENT_TYPES = ("ebook", "meditation")
 CONTRACT_RE = re.compile(r"```(?:json)?\s*(\{.*?\})\s*```", re.S)
 EXPLICIT_RECOMMENDATION_RE = re.compile(
     r"\b(?:je\s+(?:te\s+)?(?:recommande|conseille|sugg(?:è|e)re|propose)"
