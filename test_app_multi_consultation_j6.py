@@ -353,11 +353,13 @@ class FakeCursor:
             self._result = ((c0["started_at"], c0["expires_at"],
                              c0["credit_source"]) if c0 else None)
         elif k == ("SELECT id FROM consultations WHERE user_id=%s "
-                   "ORDER BY started_at DESC LIMIT 1"):
+                   "ORDER BY COALESCE(last_activity_at, started_at) DESC, "
+                   "started_at DESC LIMIT 1"):
             (uid,) = p
             rows = sorted([c for c in DB["consultations"].values()
                            if c["user_id"] == str(uid)],
-                          key=lambda c: c["started_at"], reverse=True)
+                          key=lambda c: (c["last_activity_at"] or c["started_at"],
+                                         c["started_at"]), reverse=True)
             self._result = (rows[0]["id"],) if rows else None
         elif k == ("SELECT id FROM consultations "
                    "WHERE user_id=%s AND last_activity_at IS NOT NULL"):
@@ -436,10 +438,16 @@ class FakeCursor:
                 self.rowcount = 0
 
         # ---- messages ----
-        elif k == ("INSERT INTO messages (user_id, phone, role, content, timestamp, "
-                   "consultation_id) VALUES (%s, NULL, %s, %s, %s, %s)"):
+        elif k in (
+            "INSERT INTO messages (user_id, phone, role, content, timestamp, "
+            "consultation_id) VALUES (%s, NULL, %s, %s, %s, %s)",
+            "INSERT INTO messages (user_id, phone, role, content, timestamp, "
+            "consultation_id) VALUES (%s, NULL, %s, %s, %s, %s) RETURNING id",
+        ):
             uid, role, content, ts, cid = p
             seed_message(uid, cid, role, content, ts)
+            if k.endswith("RETURNING id"):
+                self._result = (DB["seq"][0],)
         elif k == ("SELECT id, role, content, timestamp FROM messages WHERE user_id=%s "
                    "AND consultation_id=%s AND role IN ('user','assistant') "
                    "ORDER BY timestamp ASC, id ASC"):
@@ -450,6 +458,23 @@ class FakeCursor:
                            and m["role"] in ("user", "assistant")],
                           key=lambda m: (m["timestamp"], m["id"]))
             self._rows = [(m["id"], m["role"], m["content"], m["timestamp"]) for m in rows]
+        elif k == ("SELECT m.id, m.role, m.content, m.timestamp, r.id, "
+                   "r.content_type, r.content_id, r.title_snapshot, "
+                   "r.content_snapshot FROM messages m LEFT JOIN "
+                   "content_recommendations r ON r.assistant_message_id=m.id "
+                   "WHERE m.user_id=%s AND m.consultation_id=%s AND "
+                   "m.role IN ('user','assistant') ORDER BY m.timestamp ASC, m.id ASC"):
+            uid, cid = p
+            rows = sorted([m for m in DB["messages"]
+                           if m["user_id"] == str(uid)
+                           and str(m["consultation_id"]) == str(cid)
+                           and m["role"] in ("user", "assistant")],
+                          key=lambda m: (m["timestamp"], m["id"]))
+            self._rows = [
+                (m["id"], m["role"], m["content"], m["timestamp"],
+                 None, None, None, None, None)
+                for m in rows
+            ]
         elif k == ("SELECT id FROM messages WHERE user_id=%s "
                    "AND consultation_id=%s AND role='assistant' "
                    "ORDER BY id DESC LIMIT 1"):
@@ -707,6 +732,16 @@ check(r.status_code == 404, "22b consultation_id malformé -> 404")
 j = client.get("/api/consultation/messages", headers=_hdr(tok)).get_json()
 check(j["consultation_id"] == CID_EZR,
       "23 sans consultation_id -> comportement legacy (fil le plus récent)")
+
+# 23b. La récence d'activité prime sur started_at pour le chemin legacy.
+tok = _fresh()
+old_started_but_recent = "aaaaaaaa-0000-4000-8000-000000000011"
+new_started_but_idle = "bbbbbbbb-0000-4000-8000-000000000012"
+seed_consultation(old_started_but_recent, "selena", T(9, 0), last_activity_at=T(12, 0))
+seed_consultation(new_started_but_idle, "ezra", T(11, 0), last_activity_at=T(11, 30))
+j = client.get("/api/consultation/messages", headers=_hdr(tok)).get_json()
+check(j["consultation_id"] == old_started_but_recent,
+      "23b sans consultation_id -> activité récente prime sur started_at")
 
 
 print("=" * 64)

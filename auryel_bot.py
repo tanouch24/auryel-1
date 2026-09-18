@@ -6047,7 +6047,8 @@ def _latest_consultation_id_for_user_id(user_id):
         c = conn.cursor()
         c.execute(
             "SELECT id FROM consultations WHERE user_id=%s "
-            "ORDER BY started_at DESC LIMIT 1",
+            "ORDER BY COALESCE(last_activity_at, started_at) DESC, "
+            "started_at DESC LIMIT 1",
             (str(user_id),),
         )
         row = c.fetchone()
@@ -10601,6 +10602,15 @@ invitation à continuer. Réponds court quand le message est simple, développe
 quand la situation le demande, et laisse de l'espace quand la personne veut
 parler. N'utilise son prénom, des emojis, des images ou une recommandation que
 si cela apporte quelque chose maintenant.
+
+ADAPTATION DE LONGUEUR
+
+Un message très court ou une demande simple appelle en général une réponse
+brève et directe, souvent en une ou deux phrases si cela suffit. Réponds à la
+question avant toute nuance utile. Une situation complexe, émotionnelle ou
+ambiguë peut demander davantage de développement ; ne la réduis pas
+artificiellement. N'ajoute jamais de longueur pour remplir un format et ne
+tronque jamais une réponse utile.
 
 MOTIVATION SITUÉE
 

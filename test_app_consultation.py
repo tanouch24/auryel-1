@@ -276,10 +276,12 @@ class FakeCursor:
         # ---- GET /api/consultation/messages (TIMER-A.3d) : lecture seule ABSOLUE,
         # consultation la plus récente, SANS aucun cutoff temporel.
         elif k == ("SELECT id FROM consultations "
-                   "WHERE user_id=%s ORDER BY started_at DESC LIMIT 1"):
+                   "WHERE user_id=%s ORDER BY COALESCE(last_activity_at, started_at) DESC, "
+                   "started_at DESC LIMIT 1"):
             (uid,) = p
             rows = sorted([c for c in FAKE["consultations"] if c["user_id"] == uid],
-                          key=lambda c: c["started_at"], reverse=True)
+                          key=lambda c: (c.get("last_activity_at") or c["started_at"],
+                                         c["started_at"]), reverse=True)
             if rows:
                 self._result = (rows[0]["id"],)
 

@@ -91,11 +91,33 @@ def test_direct_answer_and_no_automatic_question_rules_are_explicit():
     assert "La longueur, le rythme et la question finale ne sont jamais obligatoires" in prompt
 
 
+def test_adaptive_length_contract_covers_short_and_complex_messages():
+    prompt = " ".join(A.get_system_prompt(USER, "selena").split())
+    assert "Un message très court ou une demande simple appelle en général une réponse brève et directe" in prompt
+    assert "souvent en une ou deux phrases si cela suffit" in prompt
+    assert "Une situation complexe, émotionnelle ou ambiguë peut demander davantage de développement" in prompt
+    assert "ne tronque jamais une réponse utile" in prompt
+
+
+def test_adaptive_length_modes_remain_deterministic():
+    assert A._conversation_mode("Merci.") == "brief"
+    assert A._conversation_mode("Tu penses que je devrais lui écrire ?") == "brief"
+    assert A._conversation_mode("Je commence par quoi ?") == "brief"
+    assert A._conversation_mode(
+        "Je suis épuisé par cette situation, j'ai peur de devoir choisir entre "
+        "plusieurs options et je ne sais plus comment avancer sans blesser quelqu'un."
+    ) == "complex"
+    assert A._conversation_mode(
+        "J'ai peur avant demain et cette peur revient depuis plusieurs jours, "
+        "avec beaucoup de pensées contradictoires."
+    ) == "complex"
+
+
 def test_humanisation_does_not_create_an_excessive_prompt():
     prompt = A.get_system_prompt(USER, "selena")
     # Contrat commun compact : la voix reste sous un plafond raisonnable malgré
     # les garde-fous historiques et les exemples persona.
-    assert len(A.BLOC_HUMANISATION_COMMUNE) < 2200
+    assert len(A.BLOC_HUMANISATION_COMMUNE) < 2400
     assert len(prompt) < 25000
 
 
