@@ -4,6 +4,8 @@ import threading
 from datetime import datetime, timedelta, timezone
 from unittest.mock import MagicMock
 
+import pytest
+
 sys.modules.setdefault("psycopg2", MagicMock())
 for _key, _value in {
     "DATABASE_URL": "postgresql://test:test@localhost/test",
@@ -16,6 +18,7 @@ from content_recommendations import (
     ebook_recommendation_allowed,
     follow_up_copy,
     parse_llm_contract,
+    resolve_explicit_catalog_recommendation,
 )
 from push_scheduler import DbPushTickStore, push_tick
 
@@ -81,6 +84,62 @@ def test_llm_contract_explicit_safe_cases():
                      '"type":"ebook","id":"new"}}')[1] is not None
     assert _contract('{"reply":"Réponse') == ('{"reply":"Réponse', None)
     assert _contract('{"reply":"Catalogue vide."}') == ("Catalogue vide.", None)
+
+
+def test_plain_reply_with_exact_actionable_meditation_title_gets_safe_candidate():
+    candidate = resolve_explicit_catalog_recommendation(
+        'Je te recommande la méditation "Relâcher le corps avant la nuit".',
+        [{"content_type": "meditation", "content_id": "med-night",
+          "title": "Relâcher le corps avant la nuit"}],
+    )
+    assert candidate == {
+        "content_type": "meditation",
+        "content_id": "med-night",
+        "rationale_code": "explicit_catalog_title",
+    }
+
+
+def test_safe_title_fallback_does_not_create_cards_for_non_actionable_or_fake_text():
+    catalog = [{"content_type": "meditation", "content_id": "med-night",
+                "title": "Relâcher le corps avant la nuit"}]
+    assert resolve_explicit_catalog_recommendation(
+        "Je peux te conseiller une méditation si tu veux.", catalog) is None
+    assert resolve_explicit_catalog_recommendation(
+        "Je peux te conseiller la méditation Relâcher le corps avant la nuit.",
+        catalog,
+    )["content_id"] == "med-night"
+    assert resolve_explicit_catalog_recommendation(
+        "Tu m'avais parlé de Relâcher le corps avant la nuit.", catalog) is None
+    assert resolve_explicit_catalog_recommendation(
+        "Je te recommande Faux contenu inexistant.", catalog) is None
+    assert resolve_explicit_catalog_recommendation(
+        "Je ne te recommande pas Relâcher le corps avant la nuit.", catalog) is None
+
+
+@pytest.mark.parametrize("kind, phrase", [
+    ("ebook", "Je te recommande « Le sommeil sans combat »."),
+    ("exercise", "Je te conseille l'exercice Trois souffles de pause."),
+])
+def test_safe_title_fallback_supports_ebook_and_exercise(kind, phrase):
+    candidate = resolve_explicit_catalog_recommendation(
+        phrase,
+        [{"content_type": kind, "content_id": f"{kind}-real",
+          "title": "Le sommeil sans combat" if kind == "ebook"
+          else "Trois souffles de pause"}],
+    )
+    assert candidate["content_type"] == kind
+    assert candidate["content_id"] == f"{kind}-real"
+
+
+def test_safe_title_fallback_refuses_ambiguous_two_content_titles():
+    reply = "Je te recommande Un moment calme."
+    catalog = [
+        {"content_type": "meditation", "content_id": "med-1",
+         "title": "Un moment calme"},
+        {"content_type": "exercise", "content_id": "ex-1",
+         "title": "Un moment calme"},
+    ]
+    assert resolve_explicit_catalog_recommendation(reply, catalog) is None
 
 
 class _RecommendationDb:
@@ -199,6 +258,24 @@ def _patch_recommendation_db(monkeypatch):
     monkeypatch.setattr(app, "_recommendation_snapshot",
                         lambda _cursor, kind, content_id: snapshots.get((kind, content_id)))
     return app, db
+
+
+@pytest.mark.parametrize("advisor_id", [
+    "selena", "luna", "maia", "thea", "cassandre",
+    "myriam", "orion", "ezra", "kael", "raphael",
+])
+def test_all_advisors_use_common_explicit_meditation_engine(monkeypatch, advisor_id):
+    app, db = _patch_recommendation_db(monkeypatch)
+    candidate = resolve_explicit_catalog_recommendation(
+        'Je te recommande la méditation "Méditation réelle".',
+        [{"content_type": "meditation", "content_id": "med-1",
+          "title": "Méditation réelle"}],
+    )
+    saved = app.save_content_recommendation("account-a", advisor_id, candidate)
+    assert saved["content_type"] == "meditation"
+    assert saved["content_id"] == "med-1"
+    assert saved["title"] == "Méditation réelle"
+    assert db.recommendations[0]["advisor_id"] == advisor_id
 
 
 def test_persistence_enforces_ebook_window_boundaries_and_account_isolation(monkeypatch):

@@ -9,7 +9,10 @@ from werkzeug.middleware.proxy_fix import ProxyFix
 from werkzeug.security import generate_password_hash, check_password_hash
 from groq import Groq
 from admob_ssv import SsvError, verify_callback
-from content_recommendations import parse_llm_contract
+from content_recommendations import (
+    parse_llm_contract,
+    resolve_explicit_catalog_recommendation,
+)
 import json as _json
 _RELANCES_PATH = os.path.join(os.path.dirname(__file__), "auryel_relances_h4_h22.json")
 try:
@@ -9333,8 +9336,8 @@ _RECOMMENDATION_TYPES = ("ebook", "meditation", "exercise")
 _RECOMMENDATION_REPEAT_DAYS = 7
 
 
-def _recommendation_catalog_context(user_id=None):
-    """Petit référentiel lisible par le LLM, sans URL ni contenu utilisateur."""
+def _recommendation_catalog_entries(user_id=None):
+    """Active server catalog entries, without URLs or user content."""
     conn = get_conn()
     try:
         c = conn.cursor()
@@ -9352,26 +9355,37 @@ def _recommendation_catalog_context(user_id=None):
             "WHERE active=TRUE AND publication_date<=CURRENT_DATE "
             "ORDER BY sort_order, id"
         )
-        ebooks = [("ebook", str(r[0]), str(r[1])) for r in c.fetchall()
+        ebooks = [{"content_type": "ebook", "content_id": str(r[0]), "title": str(r[1])}
+                  for r in c.fetchall()
                   if not recent_ebook_ids or str(r[0]) in recent_ebook_ids]
         c.execute(
             "SELECT id, title FROM meditation_catalog "
             "WHERE is_active=TRUE AND (published_at IS NULL OR published_at<=NOW()) "
             "ORDER BY sort_order, id"
         )
-        meditations = [("meditation", str(r[0]), str(r[1])) for r in c.fetchall()]
+        meditations = [{"content_type": "meditation", "content_id": str(r[0]),
+                        "title": str(r[1])} for r in c.fetchall()]
         c.execute(
             "SELECT id, title FROM exercise_catalog "
             "WHERE is_active=TRUE AND (published_at IS NULL OR published_at<=NOW()) "
             "ORDER BY category, sort_order, id"
         )
-        exercises = [("exercise", str(r[0]), str(r[1])) for r in c.fetchall()]
-        rows = ebooks + meditations + exercises
-        return "\n".join(f"- {kind} | id={cid} | {title[:140]}" for kind, cid, title in rows)
+        exercises = [{"content_type": "exercise", "content_id": str(r[0]),
+                      "title": str(r[1])} for r in c.fetchall()]
+        return ebooks + meditations + exercises
     except Exception:
-        return ""
+        return []
     finally:
         conn.close()
+
+
+def _recommendation_catalog_context(user_id=None):
+    """Petit référentiel lisible par le LLM, sans URL ni contenu utilisateur."""
+    entries = _recommendation_catalog_entries(user_id)
+    return "\n".join(
+        f"- {entry['content_type']} | id={entry['content_id']} | "
+        f"{entry['title'][:140]}" for entry in entries
+    )
 
 
 def _recommendation_snapshot(cursor, kind, content_id):
@@ -11829,6 +11843,9 @@ def _reply_core(user, key, user_message, io, *, depuis_pub=False,
         mode="rewarded_micro" if rewarded_micro else "normal",
     )
     parsed_reply, candidate = parse_llm_contract(_raw_reply)
+    if candidate is None and channel == "app":
+        candidate = resolve_explicit_catalog_recommendation(
+            parsed_reply, io.get("recommendation_catalog_entries", ()))
     _LLM_STATE.recommendation = candidate
     reply = parsed_reply.strip() if rewarded_micro else tronquer_reponse(parsed_reply)
     # ── TRIGGER CONVERSION DÉSACTIVÉ ────────────────────────────────────────────
@@ -11970,6 +11987,7 @@ def get_reply_for_user_id(user_id, user_message, advisor_override=None, consulta
         "add_message": lambda _, role, content: add_message_for_user_id(
             user_id, role, content, consultation_id=consultation_id),
         "recommendation_catalog": _recommendation_catalog_context(user_id),
+        "recommendation_catalog_entries": _recommendation_catalog_entries(user_id),
         "save_recommendation": lambda _key, advisor, candidate,
         assistant_message_id=None: save_content_recommendation(
             user_id, advisor, candidate, assistant_message_id=assistant_message_id),

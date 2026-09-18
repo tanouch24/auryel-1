@@ -2,10 +2,76 @@
 
 import json
 import re
+import unicodedata
 from datetime import timedelta
 
 CONTENT_TYPES = ("ebook", "meditation", "exercise")
 CONTRACT_RE = re.compile(r"```(?:json)?\s*(\{.*?\})\s*```", re.S)
+EXPLICIT_RECOMMENDATION_RE = re.compile(
+    r"\b(?:je\s+(?:te\s+)?(?:recommande|conseille|sugg(?:è|e)re|propose)"
+    r"|je\s+(?:peux|pourrais)\s+te\s+(?:recommander|conseiller|suggérer|suggerer|proposer)"
+    r"|(?:tu\s+)?(?:peux|pourrais)\s+(?:essayer|lire|écouter|ecouter|faire))\b",
+    re.I,
+)
+NEGATED_RECOMMENDATION_RE = re.compile(
+    r"\b(?:ne\s+(?:te\s+)?(?:recommande|conseille|sugg(?:è|e)re|propose)"
+    r"|ne\s+(?:peux|pourrais)\s+pas\s+te\s+(?:recommander|conseiller|suggérer|suggerer|proposer)"
+    r"|(?:recommande|conseille|sugg(?:è|e)re|propose)\s+pas)\b",
+    re.I,
+)
+
+
+def _title_key(value):
+    """Normalize only punctuation/spacing/accents for exact title matching."""
+    decomposed = unicodedata.normalize("NFKD", str(value or ""))
+    without_marks = "".join(ch for ch in decomposed
+                             if not unicodedata.combining(ch))
+    return " ".join(re.findall(r"[\w]+", without_marks.casefold()))
+
+
+def resolve_explicit_catalog_recommendation(reply, catalog_entries):
+    """Resolve one explicit actionable mention to a server catalog entry.
+
+    This is deliberately exact after conservative Unicode/punctuation
+    normalization. It never invents an ID and refuses ambiguous or historical
+    mentions, so a plain catalog mention cannot create a card.
+    """
+    reply_key = _title_key(reply)
+    if not reply_key:
+        return None
+    padded_reply = f" {reply_key} "
+    matches = []
+    for entry in catalog_entries or ():
+        if isinstance(entry, dict):
+            kind = entry.get("content_type")
+            content_id = entry.get("content_id")
+            title = entry.get("title")
+        else:
+            kind, content_id, title = entry
+        title_key = _title_key(title)
+        if not title_key:
+            continue
+        marker = f" {title_key} "
+        start = padded_reply.find(marker)
+        if start < 0:
+            continue
+        prefix = padded_reply[:start]
+        if (not EXPLICIT_RECOMMENDATION_RE.search(prefix[-180:]) or
+                NEGATED_RECOMMENDATION_RE.search(prefix[-180:])):
+            continue
+        matches.append((str(kind), str(content_id), str(title)))
+
+    unique_matches = {(kind, content_id, title) for kind, content_id, title in matches}
+    if len(unique_matches) != 1:
+        return None
+    kind, content_id, _title = next(iter(unique_matches))
+    if kind not in CONTENT_TYPES or not content_id:
+        return None
+    return {
+        "content_type": kind,
+        "content_id": content_id,
+        "rationale_code": "explicit_catalog_title",
+    }
 
 
 def parse_llm_contract(raw):
