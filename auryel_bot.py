@@ -9332,7 +9332,9 @@ def api_content_exercises():
 # Le LLM ne reçoit que des identifiants/titres actifs et ne peut jamais créer
 # la carte. La validation et le snapshot de contenu sont faits ici, sous
 # verrou du compte, avant de répondre à l'app.
-_RECOMMENDATION_TYPES = ("ebook", "meditation", "exercise")
+# New recommendation creation is ebook-only. Existing meditation/exercise
+# rows remain valid historical data and are still returned by history joins.
+_RECOMMENDATION_TYPES = ("ebook",)
 _RECOMMENDATION_REPEAT_DAYS = 7
 
 
@@ -9358,21 +9360,7 @@ def _recommendation_catalog_entries(user_id=None):
         ebooks = [{"content_type": "ebook", "content_id": str(r[0]), "title": str(r[1])}
                   for r in c.fetchall()
                   if not recent_ebook_ids or str(r[0]) in recent_ebook_ids]
-        c.execute(
-            "SELECT id, title FROM meditation_catalog "
-            "WHERE is_active=TRUE AND (published_at IS NULL OR published_at<=NOW()) "
-            "ORDER BY sort_order, id"
-        )
-        meditations = [{"content_type": "meditation", "content_id": str(r[0]),
-                        "title": str(r[1])} for r in c.fetchall()]
-        c.execute(
-            "SELECT id, title FROM exercise_catalog "
-            "WHERE is_active=TRUE AND (published_at IS NULL OR published_at<=NOW()) "
-            "ORDER BY category, sort_order, id"
-        )
-        exercises = [{"content_type": "exercise", "content_id": str(r[0]),
-                      "title": str(r[1])} for r in c.fetchall()]
-        return ebooks + meditations + exercises
+        return ebooks
     except Exception:
         return []
     finally:
@@ -11824,13 +11812,13 @@ def _reply_core(user, key, user_message, io, *, depuis_pub=False,
                 "\n\n=== RECOMMANDATION DE CONTENU — CONTRAT STRUCTURÉ ===\n"
                 "Une recommandation est FACULTATIVE. Si elle n'est pas vraiment "
                 "pertinente, renvoie recommendation:null. Ne recommande jamais "
-                "plus d'un contenu. Choisis type et id exactement dans la liste "
+                "plus d'un contenu. Choisis type=ebook et id exactement dans la liste "
                 "active ci-dessous, sans inventer de titre ni d'identifiant. "
                 "Ne présente jamais une recommandation comme une obligation, une "
                 "publicité ou une preuve que la personne a lu/fait quelque chose. "
                 "Réponds exactement en JSON valide, sans markdown, sous la forme : "
                 '{"reply":"ta réponse naturelle","recommendation":null} ou '
-                '{"reply":"ta réponse naturelle","recommendation":{"type":"ebook|meditation|exercise","id":"ID","rationale_code":"theme_court"}}. '
+                '{"reply":"ta réponse naturelle","recommendation":{"type":"ebook","id":"ID","rationale_code":"theme_court"}}. '
                 "Le titre doit être laissé au serveur. N'ajoute pas de carte pour "
                 "un moment grave, une crise ou si cela alourdit la réponse.\n"
                 f"CATALOGUE ACTIF:\n{catalog_context}"

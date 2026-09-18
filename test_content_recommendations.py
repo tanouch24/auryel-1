@@ -30,12 +30,12 @@ def _contract(raw):
 def test_structured_contract_accepts_one_candidate_and_keeps_reply_natural():
     reply, recommendation = parse_llm_contract(
         '{"reply":"Je pense à un moment pour ralentir.",'
-        '"recommendation":{"type":"meditation","id":"12",'
+        '"recommendation":{"type":"ebook","id":"12",'
         '"rationale_code":"sommeil"}}'
     )
     assert reply == "Je pense à un moment pour ralentir."
     assert recommendation == {
-        "content_type": "meditation",
+        "content_type": "ebook",
         "content_id": "12",
         "rationale_code": "sommeil",
     }
@@ -55,14 +55,14 @@ def test_embedded_contract_never_leaks_internal_json_into_reply(raw):
 
 def test_embedded_contract_keeps_structured_recommendation_separate():
     reply, recommendation = parse_llm_contract(
-        'Je te recommande ce contenu. {"reply":"Je te recommande la méditation '
-        '« Déposer la journée avant de dormir ». ","recommendation":{'
-        '"type":"meditation","id":"med-real","rationale_code":"theme_court"}}'
+        'Je te recommande ce contenu. {"reply":"Je te recommande '
+        '« Le sommeil sans combat ». ","recommendation":{'
+        '"type":"ebook","id":"ebook-real","rationale_code":"theme_court"}}'
     )
-    assert reply == "Je te recommande la méditation « Déposer la journée avant de dormir »."
+    assert reply == "Je te recommande « Le sommeil sans combat »."
     assert recommendation == {
-        "content_type": "meditation",
-        "content_id": "med-real",
+        "content_type": "ebook",
+        "content_id": "ebook-real",
         "rationale_code": "theme_court",
     }
 
@@ -128,57 +128,62 @@ def test_llm_contract_explicit_safe_cases():
     assert _contract('{"reply":"Catalogue vide."}') == ("Catalogue vide.", None)
 
 
-def test_plain_reply_with_exact_actionable_meditation_title_gets_safe_candidate():
+def test_plain_reply_with_exact_actionable_meditation_title_does_not_get_candidate():
     candidate = resolve_explicit_catalog_recommendation(
         'Je te recommande la méditation "Relâcher le corps avant la nuit".',
         [{"content_type": "meditation", "content_id": "med-night",
           "title": "Relâcher le corps avant la nuit"}],
     )
-    assert candidate == {
-        "content_type": "meditation",
-        "content_id": "med-night",
-        "rationale_code": "explicit_catalog_title",
-    }
+    assert candidate is None
 
 
 def test_safe_title_fallback_does_not_create_cards_for_non_actionable_or_fake_text():
-    catalog = [{"content_type": "meditation", "content_id": "med-night",
-                "title": "Relâcher le corps avant la nuit"}]
+    catalog = [{"content_type": "ebook", "content_id": "ebook-night",
+                "title": "Le sommeil sans combat"}]
     assert resolve_explicit_catalog_recommendation(
         "Je peux te conseiller une méditation si tu veux.", catalog) is None
     assert resolve_explicit_catalog_recommendation(
-        "Je peux te conseiller la méditation Relâcher le corps avant la nuit.",
+        "Je peux te conseiller le livre Le sommeil sans combat.",
         catalog,
-    )["content_id"] == "med-night"
+    )["content_id"] == "ebook-night"
     assert resolve_explicit_catalog_recommendation(
-        "Tu m'avais parlé de Relâcher le corps avant la nuit.", catalog) is None
+        "Tu m'avais parlé de Le sommeil sans combat.", catalog) is None
     assert resolve_explicit_catalog_recommendation(
         "Je te recommande Faux contenu inexistant.", catalog) is None
     assert resolve_explicit_catalog_recommendation(
         "Je ne te recommande pas Relâcher le corps avant la nuit.", catalog) is None
 
 
-@pytest.mark.parametrize("kind, phrase", [
-    ("ebook", "Je te recommande « Le sommeil sans combat »."),
-    ("exercise", "Je te conseille l'exercice Trois souffles de pause."),
-])
-def test_safe_title_fallback_supports_ebook_and_exercise(kind, phrase):
+def test_safe_title_fallback_supports_ebook_only():
     candidate = resolve_explicit_catalog_recommendation(
-        phrase,
-        [{"content_type": kind, "content_id": f"{kind}-real",
-          "title": "Le sommeil sans combat" if kind == "ebook"
-          else "Trois souffles de pause"}],
+        "Je te recommande « Le sommeil sans combat ».",
+        [{"content_type": "ebook", "content_id": "ebook-real",
+          "title": "Le sommeil sans combat"}],
     )
-    assert candidate["content_type"] == kind
-    assert candidate["content_id"] == f"{kind}-real"
+    assert candidate["content_type"] == "ebook"
+    assert candidate["content_id"] == "ebook-real"
+
+
+@pytest.mark.parametrize("kind", ["meditation", "exercise"])
+def test_structured_meditation_and_exercise_are_suppressed(kind):
+    reply, candidate = parse_llm_contract(
+        '{"reply":"Je peux te proposer une piste.",'
+        f'"recommendation":{{"type":"{kind}","id":"real"}}}}'
+    )
+    assert reply == "Je peux te proposer une piste."
+    assert candidate is None
+    assert resolve_explicit_catalog_recommendation(
+        "Je te recommande « Contenu réel ». ",
+        [{"content_type": kind, "content_id": "real", "title": "Contenu réel"}],
+    ) is None
 
 
 def test_safe_title_fallback_refuses_ambiguous_two_content_titles():
     reply = "Je te recommande Un moment calme."
     catalog = [
-        {"content_type": "meditation", "content_id": "med-1",
+        {"content_type": "ebook", "content_id": "ebook-1",
          "title": "Un moment calme"},
-        {"content_type": "exercise", "content_id": "ex-1",
+        {"content_type": "ebook", "content_id": "ebook-2",
          "title": "Un moment calme"},
     ]
     assert resolve_explicit_catalog_recommendation(reply, catalog) is None
@@ -306,17 +311,17 @@ def _patch_recommendation_db(monkeypatch):
     "selena", "luna", "maia", "thea", "cassandre",
     "myriam", "orion", "ezra", "kael", "raphael",
 ])
-def test_all_advisors_use_common_explicit_meditation_engine(monkeypatch, advisor_id):
+def test_all_advisors_use_common_ebook_engine(monkeypatch, advisor_id):
     app, db = _patch_recommendation_db(monkeypatch)
     candidate = resolve_explicit_catalog_recommendation(
-        'Je te recommande la méditation "Méditation réelle".',
-        [{"content_type": "meditation", "content_id": "med-1",
-          "title": "Méditation réelle"}],
+        'Je te recommande « Titre canonique ».',
+        [{"content_type": "ebook", "content_id": "ebook-1",
+          "title": "Titre canonique"}],
     )
     saved = app.save_content_recommendation("account-a", advisor_id, candidate)
-    assert saved["content_type"] == "meditation"
-    assert saved["content_id"] == "med-1"
-    assert saved["title"] == "Méditation réelle"
+    assert saved["content_type"] == "ebook"
+    assert saved["content_id"] == "ebook-1"
+    assert saved["title"] == "Titre canonique"
     assert db.recommendations[0]["advisor_id"] == advisor_id
 
 
@@ -354,19 +359,67 @@ def test_catalog_validation_and_content_deduplication(monkeypatch):
     }) is None
     assert app.save_content_recommendation("account-a", "luna", {
         "content_type": "meditation", "content_id": "med-1"
-    }) is not None
-    duplicate = app.save_content_recommendation("account-a", "luna", {
-        "content_type": "meditation", "content_id": "med-1"
-    })
-    assert len(db.recommendations) == 1
-    assert duplicate["recommendation_id"] == db.recommendations[0]["id"]
-    db.recommendations[0]["created_at"] = db.clock - timedelta(days=8)
-    assert app.save_content_recommendation("account-a", "luna", {
-        "content_type": "meditation", "content_id": "med-1"
-    }) is not None
+    }) is None
     assert app.save_content_recommendation("account-a", "luna", {
         "content_type": "exercise", "content_id": "ex-1"
-    }) is not None
+    }) is None
+    first = app.save_content_recommendation("account-a", "luna", {
+        "content_type": "ebook", "content_id": "ebook-1"
+    })
+    duplicate = app.save_content_recommendation("account-a", "luna", {
+        "content_type": "ebook", "content_id": "ebook-1"
+    })
+    assert len(db.recommendations) == 1
+    assert duplicate["recommendation_id"] == first["recommendation_id"]
+
+
+class _DynamicCatalogCursor:
+    def __init__(self, state):
+        self.state = state
+        self.rows = []
+
+    def execute(self, sql, params=()):
+        compact = " ".join(sql.split())
+        if "content_recommendations" in compact:
+            self.rows = []
+            return
+        if "FROM wellbeing_ebooks" in compact:
+            self.rows = [entry for entry in self.state if entry[2]]
+            return
+        raise AssertionError(f"catalog SQL non couvert: {compact}")
+
+    def fetchall(self):
+        return [(entry[0], entry[1]) for entry in self.rows]
+
+
+class _DynamicCatalogConnection:
+    def __init__(self, state):
+        self.cursor_obj = _DynamicCatalogCursor(state)
+
+    def cursor(self):
+        return self.cursor_obj
+
+    def close(self):
+        pass
+
+
+def test_active_ebook_catalog_is_dynamic_and_ebook_only(monkeypatch):
+    import auryel_bot as app
+
+    catalog = [["ebook-initial", "Initial", True]]
+    monkeypatch.setattr(app, "get_conn", lambda: _DynamicCatalogConnection(catalog))
+
+    first = app._recommendation_catalog_entries("account-a")
+    assert [entry["content_id"] for entry in first] == ["ebook-initial"]
+    assert all(entry["content_type"] == "ebook" for entry in first)
+
+    catalog.append(["ebook-synced-later", "Synchronisé plus tard", True])
+    catalog.append(["ebook-inactive", "Inactif", False])
+    refreshed = app._recommendation_catalog_entries("account-a")
+    assert [entry["content_id"] for entry in refreshed] == [
+        "ebook-initial", "ebook-synced-later"
+    ]
+    assert "ebook-inactive" not in {entry["content_id"] for entry in refreshed}
 
 
 def test_two_concurrent_new_ebooks_serialize_under_account_lock(monkeypatch):
@@ -395,16 +448,12 @@ def test_events_are_scoped_idempotent_and_never_mean_read(monkeypatch):
     ebook = app.save_content_recommendation("account-a", "luna", {
         "content_type": "ebook", "content_id": "ebook-1"
     })
-    meditation = app.save_content_recommendation("account-a", "luna", {
-        "content_type": "meditation", "content_id": "med-1"
-    })
     ebook_id = ebook["recommendation_id"]
-    med_id = meditation["recommendation_id"]
     assert app.record_content_event("account-a", ebook_id, "opened") == "ok"
     assert app.record_content_event("account-a", ebook_id, "opened") == "ok"
     assert app.record_content_event("account-a", ebook_id, "download_requested") == "ok"
     assert app.record_content_event("account-a", ebook_id, "download_requested") == "ok"
-    assert app.record_content_event("account-a", med_id, "download_requested") == "invalid"
+    assert app.record_content_event("account-a", ebook_id, "unknown_event") == "invalid"
     assert app.record_content_event("account-b", ebook_id, "opened") == "not_found"
     assert app.record_content_event("account-a", "00000000-0000-0000-0000-000000000000", "opened") == "not_found"
     row = db.recommendations[0]
