@@ -185,6 +185,14 @@ class FakeCursor:
             FAKE["messages"].append({"id": FAKE["seq"][0], "user_id": uid, "phone": None,
                                      "role": role, "content": content, "timestamp": ts,
                                      "consultation_id": consultation_id})
+        elif k == ("INSERT INTO messages (user_id, phone, role, content, timestamp, consultation_id) "
+                   "VALUES (%s, NULL, %s, %s, %s, %s) RETURNING id"):
+            uid, role, content, ts, consultation_id = p
+            FAKE["seq"][0] += 1
+            FAKE["messages"].append({"id": FAKE["seq"][0], "user_id": uid, "phone": None,
+                                     "role": role, "content": content, "timestamp": ts,
+                                     "consultation_id": consultation_id})
+            self._result = (FAKE["seq"][0],)
         elif k == ("SELECT role,content FROM messages WHERE user_id=%s "
                    "AND consultation_id=%s ORDER BY id DESC LIMIT %s"):
             uid, cid, limit = p
@@ -203,6 +211,14 @@ class FakeCursor:
             (uid,) = p
             rows = sorted([m for m in FAKE["messages"] if m["user_id"] == uid], key=lambda m: m["id"])
             self._rows = [(m["role"], m["content"], m["timestamp"]) for m in rows]
+        elif k.startswith("SELECT m.id, m.role, m.content, m.timestamp, r.id,"):
+            uid, cid = p
+            rows = [m for m in FAKE["messages"]
+                    if m["user_id"] == uid and m["consultation_id"] == cid
+                    and m["role"] in ("user", "assistant")]
+            rows.sort(key=lambda m: (m["timestamp"], m["id"]))
+            self._rows = [(m["id"], m["role"], m["content"], m["timestamp"],
+                          None, None, None, None, None) for m in rows]
         elif k == ("SELECT id FROM messages "
                    "WHERE user_id=%s AND consultation_id=%s AND role='assistant' "
                    "ORDER BY id DESC LIMIT 1"):

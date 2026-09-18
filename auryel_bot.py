@@ -9,6 +9,7 @@ from werkzeug.middleware.proxy_fix import ProxyFix
 from werkzeug.security import generate_password_hash, check_password_hash
 from groq import Groq
 from admob_ssv import SsvError, verify_callback
+from content_recommendations import parse_llm_contract
 import json as _json
 _RELANCES_PATH = os.path.join(os.path.dirname(__file__), "auryel_relances_h4_h22.json")
 try:
@@ -3031,6 +3032,21 @@ def init_db():
             "Migration v67 (événements non lus) échouée"
         ) from e
 
+    # Migration v68 — recommandations de contenu liées à un conseiller.
+    try:
+        migration_path = os.path.join(
+            os.path.dirname(__file__), "migrations", "041_content_recommendations.sql"
+        )
+        with open(migration_path, "r", encoding="utf-8") as migration_file:
+            c.execute(migration_file.read())
+        conn.commit()
+    except Exception as e:
+        conn.rollback()
+        conn.close()
+        raise CriticalSchemaMigrationError(
+            "Migration v68 (content recommendations) échouée"
+        ) from e
+
     conn.close()
 
 def reset_db():
@@ -3552,17 +3568,20 @@ def add_message_for_user_id(user_id, role, content, consultation_id=None):
         c = conn.cursor()
         c.execute(
             "INSERT INTO messages (user_id, phone, role, content, timestamp, consultation_id) "
-            "VALUES (%s, NULL, %s, %s, %s, %s)",
+            "VALUES (%s, NULL, %s, %s, %s, %s) RETURNING id",
             (str(user_id), role, content, datetime.now().isoformat(),
              str(consultation_id) if consultation_id else None),
         )
+        message_id = c.fetchone()[0]
         conn.commit()
+        return str(message_id)
     except Exception as e:
         print(f"[DB] add_message_for_user_id erreur {_user_hash(user_id)}: {e}")
     finally:
         if conn:
             try: conn.close()
             except Exception: pass
+    return None
 
 
 def get_history_for_user_id(user_id, limit=20, consultation_id=None):
@@ -3617,15 +3636,23 @@ def get_consultation_messages_for_user_id(user_id, consultation_id):
     try:
         c = conn.cursor()
         c.execute(
-            "SELECT id, role, content, timestamp FROM messages "
-            "WHERE user_id=%s AND consultation_id=%s AND role IN ('user','assistant') "
-            "ORDER BY timestamp ASC, id ASC",
+            "SELECT m.id, m.role, m.content, m.timestamp, "
+            "r.id, r.content_type, r.content_id, r.title_snapshot, r.content_snapshot "
+            "FROM messages m LEFT JOIN content_recommendations r "
+            "ON r.assistant_message_id=m.id "
+            "WHERE m.user_id=%s AND m.consultation_id=%s AND m.role IN ('user','assistant') "
+            "ORDER BY m.timestamp ASC, m.id ASC",
             (str(user_id), str(consultation_id)),
         )
         rows = c.fetchall()
         return [
             {"id": str(r[0]), "role": r[1], "content": r[2],
-             "timestamp": _ts_iso(r[3])}
+             "timestamp": _ts_iso(r[3]),
+             **({"recommendation": {
+                 "id": str(r[4]), "content_type": r[5],
+                 "content_id": r[6], "title": r[7],
+                 **(r[8] if isinstance(r[8], dict) else {}),
+             }} if r[4] is not None else {})}
             for r in rows
         ]
     finally:
@@ -5872,6 +5899,7 @@ def api_consultation_message():
             tirage_context=tirage_context,
             rewarded_micro=rewarded_micro,
         )
+        recommendation = llm_last_recommendation()
     except Exception:
         if flow.get("question_reservation_id"):
             _finish_rewarded_question(user_id, flow["question_reservation_id"], "released")
@@ -5950,6 +5978,8 @@ def api_consultation_message():
         "quota": _quota_shim_json(_st),
         "rewarded": {"question_consumed": bool(flow.get("question_reservation_id"))},
     }
+    if recommendation is not None:
+        response_payload["recommendation"] = recommendation
     _finish_consultation_message_request(user_id, request_key, response_payload)
     return _auth_json(response_payload, 200)
 
@@ -9295,6 +9325,237 @@ def api_content_exercises():
     }), 200
 
 
+# --- Recommandations structurées Consultation -> Bien-être -----------------
+# Le LLM ne reçoit que des identifiants/titres actifs et ne peut jamais créer
+# la carte. La validation et le snapshot de contenu sont faits ici, sous
+# verrou du compte, avant de répondre à l'app.
+_RECOMMENDATION_TYPES = ("ebook", "meditation", "exercise")
+_RECOMMENDATION_REPEAT_DAYS = 7
+
+
+def _recommendation_catalog_context(user_id=None):
+    """Petit référentiel lisible par le LLM, sans URL ni contenu utilisateur."""
+    conn = get_conn()
+    try:
+        c = conn.cursor()
+        recent_ebook_ids = set()
+        if user_id is not None:
+            c.execute(
+                "SELECT content_id FROM content_recommendations "
+                "WHERE user_id=%s AND content_type='ebook' "
+                "AND created_at > NOW() - INTERVAL '30 days'",
+                (str(user_id),),
+            )
+            recent_ebook_ids = {str(r[0]) for r in c.fetchall()}
+        c.execute(
+            "SELECT id, title FROM wellbeing_ebooks "
+            "WHERE active=TRUE AND publication_date<=CURRENT_DATE "
+            "ORDER BY sort_order, id"
+        )
+        ebooks = [("ebook", str(r[0]), str(r[1])) for r in c.fetchall()
+                  if not recent_ebook_ids or str(r[0]) in recent_ebook_ids]
+        c.execute(
+            "SELECT id, title FROM meditation_catalog "
+            "WHERE is_active=TRUE AND (published_at IS NULL OR published_at<=NOW()) "
+            "ORDER BY sort_order, id"
+        )
+        meditations = [("meditation", str(r[0]), str(r[1])) for r in c.fetchall()]
+        c.execute(
+            "SELECT id, title FROM exercise_catalog "
+            "WHERE is_active=TRUE AND (published_at IS NULL OR published_at<=NOW()) "
+            "ORDER BY category, sort_order, id"
+        )
+        exercises = [("exercise", str(r[0]), str(r[1])) for r in c.fetchall()]
+        rows = ebooks + meditations + exercises
+        return "\n".join(f"- {kind} | id={cid} | {title[:140]}" for kind, cid, title in rows)
+    except Exception:
+        return ""
+    finally:
+        conn.close()
+
+
+def _recommendation_snapshot(cursor, kind, content_id):
+    """Canonical active catalogue row -> display snapshot, or None."""
+    if kind == "ebook":
+        cursor.execute(
+            "SELECT id, slug, title, subtitle, cover_url, pdf_url, object_key, "
+            "cover_key FROM wellbeing_ebooks "
+            "WHERE id=%s AND active=TRUE AND publication_date<=CURRENT_DATE",
+            (content_id,),
+        )
+        row = cursor.fetchone()
+        if row is None:
+            return None
+        cover = row[4]
+        if not cover and _R2_PUBLIC_BASE_URL and row[1]:
+            cover = (
+                f"{_R2_PUBLIC_BASE_URL}/auryel-ebook-covers/"
+                f"{_url_quote(str(row[1]), safe='')}.webp"
+            )
+        if row[7] and _R2_PUBLIC_BASE_URL:
+            cover = f"{_R2_PUBLIC_BASE_URL}/{_url_quote(str(row[7]), safe='/')}"
+        pdf = _wellbeing_ebook_media_url(row[5], row[6])
+        return {"id": str(row[0]), "slug": row[1], "title": row[2],
+                "subtitle": row[3] or "", "cover_url": cover, "pdf_url": pdf,
+                "content_type": kind}
+    if kind == "meditation":
+        cursor.execute(
+            "SELECT id, slug, title, description, category, duration_seconds, "
+            "audio_url, image_url FROM meditation_catalog "
+            "WHERE id=%s AND is_active=TRUE "
+            "AND (published_at IS NULL OR published_at<=NOW())",
+            (content_id,),
+        )
+        row = cursor.fetchone()
+        if row is None:
+            return None
+        return {"id": str(row[0]), "slug": row[1], "title": row[2],
+                "description": row[3] or "", "category": row[4] or "",
+                "duration_seconds": int(row[5] or 0), "audio_url": row[6],
+                "image_url": row[7], "content_type": kind}
+    if kind == "exercise":
+        cursor.execute(
+            "SELECT id, slug, title, category, description, duration_seconds, "
+            "level, steps, precautions, sort_order, version "
+            "FROM exercise_catalog WHERE id=%s AND is_active=TRUE "
+            "AND (published_at IS NULL OR published_at<=NOW())",
+            (content_id,),
+        )
+        row = cursor.fetchone()
+        if row is None:
+            return None
+        steps = row[7]
+        if isinstance(steps, str):
+            try:
+                steps = _json.loads(steps)
+            except Exception:
+                steps = []
+        return {"id": str(row[0]), "slug": row[1], "title": row[2],
+                "category": row[3], "description": row[4] or "",
+                "duration_seconds": int(row[5]), "level": row[6],
+                "steps": steps if isinstance(steps, list) else [],
+                "precautions": row[8] or "", "sort_order": int(row[9]),
+                "version": int(row[10] or 1),
+                "image_url": _exercise_image_url(row[1]),
+                "content_type": kind}
+    return None
+
+
+def save_content_recommendation(user_id, advisor_id, candidate, assistant_message_id=None):
+    """Validate, deduplicate and persist one structured recommendation."""
+    if not isinstance(candidate, dict):
+        return None
+    kind = str(candidate.get("content_type") or "").strip().lower()
+    content_id = str(candidate.get("content_id") or "").strip()
+    if kind not in _RECOMMENDATION_TYPES or not content_id or advisor_id not in GUIDES:
+        return None
+    conn = get_conn()
+    try:
+        c = conn.cursor()
+        c.execute(
+            "SELECT user_id FROM accounts WHERE user_id=%s AND deleted_at IS NULL FOR UPDATE",
+            (str(user_id),),
+        )
+        if c.fetchone() is None:
+            conn.rollback()
+            return None
+        snapshot = _recommendation_snapshot(c, kind, content_id)
+        if snapshot is None:
+            conn.rollback()
+            return None
+        now = _utcnow()
+        c.execute(
+            "SELECT id, title_snapshot, content_snapshot FROM content_recommendations "
+            "WHERE user_id=%s AND advisor_id=%s AND content_type=%s AND content_id=%s "
+            "AND created_at >= %s ORDER BY created_at DESC LIMIT 1",
+            (str(user_id), advisor_id, kind, content_id,
+             now - timedelta(days=_RECOMMENDATION_REPEAT_DAYS)),
+        )
+        existing = c.fetchone()
+        if kind == "ebook":
+            c.execute(
+                "SELECT id, title_snapshot, content_snapshot FROM content_recommendations "
+                "WHERE user_id=%s AND content_type='ebook' AND created_at > %s "
+                "ORDER BY created_at DESC LIMIT 1",
+                (str(user_id), now - timedelta(days=30)),
+            )
+            recent_ebook = c.fetchone()
+            if recent_ebook is not None and existing is None:
+                conn.rollback()
+                return None
+        if existing is not None:
+            conn.commit()
+            return {"recommendation_id": str(existing[0]),
+                    "content_id": content_id, **snapshot}
+        rec_id = str(uuid.uuid4())
+        c.execute(
+            "INSERT INTO content_recommendations "
+            "(id,user_id,advisor_id,content_type,content_id,title_snapshot,"
+            "rationale_code,content_snapshot,created_at,card_displayed_at,assistant_message_id) "
+            "VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)",
+            (rec_id, str(user_id), advisor_id, kind, content_id, snapshot["title"],
+             candidate.get("rationale_code"), _json.dumps(snapshot), now, now,
+             int(assistant_message_id) if assistant_message_id else None),
+        )
+        conn.commit()
+        return {"recommendation_id": rec_id,
+                "content_id": content_id, **snapshot}
+    except Exception as exc:
+        conn.rollback()
+        print(f"[recommendation] save erreur {_user_hash(user_id)}: {type(exc).__name__}")
+        return None
+    finally:
+        conn.close()
+
+
+def record_content_event(user_id, recommendation_id, event):
+    if not _is_uuid(recommendation_id) or event not in ("opened", "download_requested"):
+        return "invalid"
+    conn = get_conn()
+    try:
+        c = conn.cursor()
+        c.execute(
+            "SELECT content_type FROM content_recommendations WHERE id=%s AND user_id=%s",
+            (str(recommendation_id), str(user_id)),
+        )
+        row = c.fetchone()
+        if row is None:
+            conn.rollback()
+            return "not_found"
+        if event == "download_requested" and row[0] != "ebook":
+            conn.rollback()
+            return "invalid"
+        col = "opened_at" if event == "opened" else "download_requested_at"
+        c.execute(
+            f"UPDATE content_recommendations SET {col}=COALESCE({col}, NOW()) "
+            "WHERE id=%s AND user_id=%s",
+            (str(recommendation_id), str(user_id)),
+        )
+        conn.commit()
+        return "ok"
+    except Exception:
+        conn.rollback()
+        return "unavailable"
+    finally:
+        conn.close()
+
+
+@app.route("/api/app/content-recommendations/<recommendation_id>/event", methods=["POST"])
+@limiter.limit("60 per hour")
+@require_app_auth
+def api_content_recommendation_event(recommendation_id):
+    data = request.get_json(silent=True) or {}
+    event = data.get("event")
+    result = record_content_event(g.app_account["user_id"], recommendation_id, event)
+    if result == "ok":
+        return _auth_json({"status": "ok"}, 200)
+    if result == "not_found":
+        return _auth_json({"error": "recommendation_not_found"}, 404)
+    if result == "invalid":
+        return _auth_json({"error": "invalid_event"}, 400)
+    return _auth_json({"error": "temporarily_unavailable"}, 503)
+
+
 # --- Vidéos apaisantes distantes (ambiance visuelle muette des méditations) ---
 #
 # Compatibilité méditation <-> vidéo : CONFIG BACKEND (pas une table, pas de
@@ -9565,6 +9826,7 @@ _ACCOUNT_DELETE_CHILD_TABLES = (
     "rewarded_entitlements",
     "notification_sends",
     "unread_events",
+    "content_recommendations",
     "push_devices",
     "app_sessions",
 )
@@ -10842,6 +11104,12 @@ def llm_last_outcome():
     return getattr(_LLM_STATE, "outcome", "success")
 
 
+def llm_last_recommendation():
+    """Validated persisted recommendation for the current app request, if any."""
+    value = getattr(_LLM_STATE, "recommendation", None)
+    return value if isinstance(value, dict) else None
+
+
 def _record_llm_usage(*, model, mode, usage):
     """Métrique minimale, sans contenu conversationnel ni secret."""
     if not isinstance(usage, dict):
@@ -11198,6 +11466,7 @@ def _reply_core(user, key, user_message, io, *, depuis_pub=False,
     advisor_override (B4.2) : conseiller de la consultation 2 h en cours. Force le
     persona de CE tour sans jamais modifier le conseiller global du profil
     (app_profiles.guide). Toujours None pour le chemin legacy `phone`."""
+    _LLM_STATE.recommendation = None
     guide_key = advisor_override or user.get("guide", "selena")
 
     # Bloc 2 — bascule/liaison Telegram : le tirage d'accueil part seul, propre,
@@ -11534,13 +11803,34 @@ def _reply_core(user, key, user_message, io, *, depuis_pub=False,
     if tirage_context:
         system += tirage_context
 
+    if channel == "app" and not moment_grave:
+        catalog_context = io.get("recommendation_catalog")
+        if catalog_context:
+            system += (
+                "\n\n=== RECOMMANDATION DE CONTENU — CONTRAT STRUCTURÉ ===\n"
+                "Une recommandation est FACULTATIVE. Si elle n'est pas vraiment "
+                "pertinente, renvoie recommendation:null. Ne recommande jamais "
+                "plus d'un contenu. Choisis type et id exactement dans la liste "
+                "active ci-dessous, sans inventer de titre ni d'identifiant. "
+                "Ne présente jamais une recommandation comme une obligation, une "
+                "publicité ou une preuve que la personne a lu/fait quelque chose. "
+                "Réponds exactement en JSON valide, sans markdown, sous la forme : "
+                '{"reply":"ta réponse naturelle","recommendation":null} ou '
+                '{"reply":"ta réponse naturelle","recommendation":{"type":"ebook|meditation|exercise","id":"ID","rationale_code":"theme_court"}}. '
+                "Le titre doit être laissé au serveur. N'ajoute pas de carte pour "
+                "un moment grave, une crise ou si cela alourdit la réponse.\n"
+                f"CATALOGUE ACTIF:\n{catalog_context}"
+            )
+
     _raw_reply = call_llm(
         [{"role":"system","content":system}, *history, {"role":"user","content":user_message}],
         temperature=0.85,
         max_tokens=140 if rewarded_micro else 320,
         mode="rewarded_micro" if rewarded_micro else "normal",
     )
-    reply = _raw_reply.strip() if rewarded_micro else tronquer_reponse(_raw_reply)
+    parsed_reply, candidate = parse_llm_contract(_raw_reply)
+    _LLM_STATE.recommendation = candidate
+    reply = parsed_reply.strip() if rewarded_micro else tronquer_reponse(parsed_reply)
     # ── TRIGGER CONVERSION DÉSACTIVÉ ────────────────────────────────────────────
     # Upsell aléatoire 35% supprimé : pouvait se déclencher plusieurs fois/jour
     # et avant que l'utilisateur ait naturellement échangé.
@@ -11551,7 +11841,10 @@ def _reply_core(user, key, user_message, io, *, depuis_pub=False,
     # laisse la route gérer la restauration de la question réservée et ne
     # pollue pas l'historique avec ce message d'erreur fournisseur.
     if not (channel == "app" and llm_last_outcome() == "fallback_failure"):
-        io["add_message"](key, "assistant", reply)
+        assistant_id = io["add_message"](key, "assistant", reply)
+        if channel == "app" and candidate and io.get("save_recommendation"):
+            _LLM_STATE.recommendation = io["save_recommendation"](
+                key, guide_key, candidate, assistant_message_id=assistant_id)
     log_event("bot_response_sent", phone_hash=io["hash_id"](key), guide=guide_key)
     return reply
 
@@ -11676,6 +11969,10 @@ def get_reply_for_user_id(user_id, user_message, advisor_override=None, consulta
         "reload": _app_reload,
         "add_message": lambda _, role, content: add_message_for_user_id(
             user_id, role, content, consultation_id=consultation_id),
+        "recommendation_catalog": _recommendation_catalog_context(user_id),
+        "save_recommendation": lambda _key, advisor, candidate,
+        assistant_message_id=None: save_content_recommendation(
+            user_id, advisor, candidate, assistant_message_id=assistant_message_id),
         # J6 — l'historique injecté au LLM est CLOISONNÉ sur le fil courant :
         # `consultation_id` (session ciblée) borne le SELECT. Aucun message d'un
         # autre conseiller ne peut contaminer le prompt.

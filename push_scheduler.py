@@ -27,6 +27,7 @@ from datetime import datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
 
 from push_fcm import ALLOWED_TYPES
+from content_recommendations import follow_up_copy
 
 PARIS = ZoneInfo("Europe/Paris")
 
@@ -248,6 +249,11 @@ def push_tick(now_utc, store, sender, schedule=None):
                     if (category == "ebook_monthly" and not dry and
                             hasattr(store, "mark_ebook_notification_sent")):
                         store.mark_ebook_notification_sent(job.get("ebook_id"))
+                    if (category == "personal_guidance" and not dry and
+                            job.get("recommendation_id") and
+                            hasattr(store, "mark_recommendation_followup_sent")):
+                        store.mark_recommendation_followup_sent(
+                            job.get("recommendation_id"), dedupe_key)
                     summary["sent"] += 1
                 else:
                     # Rien parti : libère la clé pour retenter au tick suivant.
@@ -452,6 +458,59 @@ class DbPushTickStore:
                     "user_ids": [str(uid)],
                     "data": {"advisor": advisor},
                 })
+            # Une relance de contenu reste dans Personal Guidance : même cap,
+            # même cooldown, même routage conseiller. V1 ne suit que les ebooks
+            # et ne relance pas une personne revenue sur le fil depuis la carte.
+            c.execute(
+                "SELECT r.id, r.user_id, r.advisor_id, r.title_snapshot, "
+                "r.opened_at, r.created_at, r.assistant_message_id "
+                "FROM content_recommendations r "
+                "JOIN wellbeing_ebooks e ON e.id=r.content_id "
+                "JOIN accounts a ON a.user_id=r.user_id "
+                "JOIN push_devices d ON d.user_id=r.user_id "
+                "WHERE r.content_type='ebook' AND r.follow_up_sent_at IS NULL "
+                "AND e.active=TRUE AND e.publication_date<=CURRENT_DATE "
+                "AND r.created_at <= %s - INTERVAL '3 days' "
+                "AND r.created_at > %s - INTERVAL '4 days' "
+                "AND a.deleted_at IS NULL AND d.enabled=TRUE "
+                "AND d.revoked_at IS NULL AND d.invalid_at IS NULL "
+                "ORDER BY r.created_at ASC",
+                (now_utc, now_utc),
+            )
+            for rec_id, uid, advisor_id, title, opened_at, created_at, assistant_id in c.fetchall():
+                advisor = str(advisor_id or "").strip().lower()
+                name = _ADVISOR_NAMES.get(advisor)
+                if not name:
+                    continue
+                # Un message utilisateur postérieur à la recommandation signifie
+                # que la personne est déjà revenue dans ce fil : pas de relance.
+                if assistant_id is not None:
+                    c.execute(
+                        "SELECT 1 FROM messages m "
+                        "JOIN messages rec ON rec.id=%s "
+                        "WHERE m.user_id=%s AND m.consultation_id=rec.consultation_id "
+                        "AND m.role='user' AND m.id>%s LIMIT 1",
+                        (assistant_id, str(uid), assistant_id),
+                    )
+                    if c.fetchone() is not None:
+                        continue
+                c.execute(
+                    "SELECT 1 FROM consultations c "
+                    "JOIN messages rec ON rec.id=%s "
+                    "WHERE c.id=rec.consultation_id AND c.last_activity_at>%s "
+                    "LIMIT 1",
+                    (assistant_id, now_utc - timedelta(minutes=5)),
+                ) if assistant_id is not None else None
+                if assistant_id is not None and c.fetchone() is not None:
+                    continue
+                jobs.append({
+                    "period": f"content-guidance:{rec_id}:j3",
+                    "title": name,
+                    "body": follow_up_copy(title, opened_at is not None),
+                    "user_ids": [str(uid)],
+                    "data": {"advisor": advisor},
+                    "recommendation_id": str(rec_id),
+                })
             return jobs
         finally:
             conn.close()
@@ -464,6 +523,19 @@ class DbPushTickStore:
             c = conn.cursor()
             c.execute("UPDATE wellbeing_ebooks SET notification_sent_at=NOW() "
                       "WHERE id=%s AND notification_sent_at IS NULL", (ebook_id,))
+            conn.commit()
+        finally:
+            conn.close()
+
+    def mark_recommendation_followup_sent(self, recommendation_id, dedupe_key):
+        conn = self._get_conn()
+        try:
+            c = conn.cursor()
+            c.execute(
+                "UPDATE content_recommendations SET follow_up_sent_at=NOW(), "
+                "follow_up_dedupe_key=%s WHERE id=%s AND follow_up_sent_at IS NULL",
+                (str(dedupe_key)[:240], str(recommendation_id)),
+            )
             conn.commit()
         finally:
             conn.close()

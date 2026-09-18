@@ -12,11 +12,16 @@ class _Cursor:
     def __init__(self, rows):
         self.rows = rows
         self.sql = ""
+        self.content_rows = []
 
     def execute(self, sql, params=None):
         self.sql = sql
+        if "FROM content_recommendations r" in sql:
+            self.content_rows = []
 
     def fetchall(self):
+        if "FROM content_recommendations r" in self.sql:
+            return self.content_rows
         return self.rows
 
 
