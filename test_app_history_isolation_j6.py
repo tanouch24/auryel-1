@@ -67,15 +67,17 @@ _SEQ = [0]
 class _Cur:
     def __init__(self):
         self._rows = None
+        self._last_insert_id = None
 
     def execute(self, sql, params=()):
         k = " ".join(sql.split())
         p = params
         self._rows = None
         if k == ("INSERT INTO messages (user_id, phone, role, content, timestamp, "
-                 "consultation_id) VALUES (%s, NULL, %s, %s, %s, %s)"):
+                 "consultation_id) VALUES (%s, NULL, %s, %s, %s, %s) RETURNING id"):
             uid, role, content, ts, cid = p
             _SEQ[0] += 1
+            self._last_insert_id = _SEQ[0]
             _MSGS.append({"id": _SEQ[0], "user_id": str(uid), "role": role,
                           "content": content, "consultation_id": cid})
         elif k == ("SELECT role,content FROM messages WHERE user_id=%s "
@@ -100,7 +102,7 @@ class _Cur:
         return self._rows or []
 
     def fetchone(self):
-        return None
+        return (self._last_insert_id,) if self._last_insert_id is not None else None
 
     def close(self):
         pass
