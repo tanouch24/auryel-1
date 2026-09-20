@@ -89,6 +89,8 @@ def test_direct_answer_and_no_automatic_question_rules_are_explicit():
     assert "ne termine pas automatiquement par une question" in prompt
     assert "Une question finale, une image, un conseil ou une proposition supplémentaire sont facultatifs" in " ".join(prompt.split())
     assert "La longueur, le rythme et la question finale ne sont jamais obligatoires" in prompt
+    assert "Pour un message simple, un merci, une affirmation ou un conseil déjà complet" in prompt
+    assert "ils ne constituent jamais une consigne de terminer chaque réponse par une question" in " ".join(prompt.split())
 
 
 def test_adaptive_length_contract_covers_short_and_complex_messages():
