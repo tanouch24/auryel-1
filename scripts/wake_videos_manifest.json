@@ -1,0 +1,536 @@
+{
+  "count": 59,
+  "videos": [
+    {
+      "filename": "AURYEL_WAKE_001_010/auryel-wake-001.mp4",
+      "r2_key": "wake-videos/auryel-wake-001.mp4",
+      "slug": "auryel-wake-001",
+      "title": "Auryel wake 001",
+      "duration_seconds": 30.0,
+      "size_bytes": 17297229,
+      "sha256": "71e55d8e82e2a07ef0983c4e598838d82faf15db5da7da1a0f1d73e40517d575"
+    },
+    {
+      "filename": "AURYEL_WAKE_001_010/auryel-wake-002.mp4",
+      "r2_key": "wake-videos/auryel-wake-002.mp4",
+      "slug": "auryel-wake-002",
+      "title": "Auryel wake 002",
+      "duration_seconds": 30.0,
+      "size_bytes": 7983390,
+      "sha256": "a214f828616796f3516599a3b45e98f52aa6b36c7de0edb309a535a45cbbd011"
+    },
+    {
+      "filename": "AURYEL_WAKE_001_010/auryel-wake-003.mp4",
+      "r2_key": "wake-videos/auryel-wake-003.mp4",
+      "slug": "auryel-wake-003",
+      "title": "Auryel wake 003",
+      "duration_seconds": 30.0,
+      "size_bytes": 14837059,
+      "sha256": "4f1bd9c7d3359baff646ee95b5d4018dcd79e95b3e633183515e4d7c0de2a4f5"
+    },
+    {
+      "filename": "AURYEL_WAKE_001_010/auryel-wake-005.mp4",
+      "r2_key": "wake-videos/auryel-wake-005.mp4",
+      "slug": "auryel-wake-005",
+      "title": "Auryel wake 005",
+      "duration_seconds": 30.0,
+      "size_bytes": 7344226,
+      "sha256": "a5fa396510df75385f95cd5ca6ecae923d00e9db11110b2c6eb58e9032a41d0a"
+    },
+    {
+      "filename": "AURYEL_WAKE_001_010/auryel-wake-006.mp4",
+      "r2_key": "wake-videos/auryel-wake-006.mp4",
+      "slug": "auryel-wake-006",
+      "title": "Auryel wake 006",
+      "duration_seconds": 30.0,
+      "size_bytes": 14412429,
+      "sha256": "6f3d7579bd7dabd4fd4e5f413cfe61567f8105bc189a426c3ed9da9545c17706"
+    },
+    {
+      "filename": "AURYEL_WAKE_001_010/auryel-wake-007.mp4",
+      "r2_key": "wake-videos/auryel-wake-007.mp4",
+      "slug": "auryel-wake-007",
+      "title": "Auryel wake 007",
+      "duration_seconds": 30.0,
+      "size_bytes": 26251851,
+      "sha256": "ba862cfd222c919d0c1966ad24ee8fa27897cbb0fcd88127b3f505a1f1a22092"
+    },
+    {
+      "filename": "AURYEL_WAKE_001_010/auryel-wake-008.mp4",
+      "r2_key": "wake-videos/auryel-wake-008.mp4",
+      "slug": "auryel-wake-008",
+      "title": "Auryel wake 008",
+      "duration_seconds": 30.0,
+      "size_bytes": 13058421,
+      "sha256": "adf9eff81e780e6a84493f47fda44767f0e2e3b147352ad487ba54185e5c3789"
+    },
+    {
+      "filename": "AURYEL_WAKE_001_010/auryel-wake-009.mp4",
+      "r2_key": "wake-videos/auryel-wake-009.mp4",
+      "slug": "auryel-wake-009",
+      "title": "Auryel wake 009",
+      "duration_seconds": 30.0,
+      "size_bytes": 13249133,
+      "sha256": "f82a0c585b370e7c542bf0b71a3f2337f23b83b94587f7fb3d2296194d57d3f0"
+    },
+    {
+      "filename": "AURYEL_WAKE_001_010/auryel-wake-010.mp4",
+      "r2_key": "wake-videos/auryel-wake-010.mp4",
+      "slug": "auryel-wake-010",
+      "title": "Auryel wake 010",
+      "duration_seconds": 30.0,
+      "size_bytes": 4899333,
+      "sha256": "d9a5f967186a8a1e723400f3f42e80e73ce5fbac68e694e6d1088acdc19204fe"
+    },
+    {
+      "filename": "AURYEL_WAKE_011_060/auryel-wake-011.mp4",
+      "r2_key": "wake-videos/auryel-wake-011.mp4",
+      "slug": "auryel-wake-011",
+      "title": "Auryel wake 011",
+      "duration_seconds": 30.0,
+      "size_bytes": 32823223,
+      "sha256": "c023d5eaffe8d0c48c80492add0e855dbd9cbe45e5454b2ace85e4f3cc741420"
+    },
+    {
+      "filename": "AURYEL_WAKE_011_060/auryel-wake-012.mp4",
+      "r2_key": "wake-videos/auryel-wake-012.mp4",
+      "slug": "auryel-wake-012",
+      "title": "Auryel wake 012",
+      "duration_seconds": 30.0,
+      "size_bytes": 29621101,
+      "sha256": "942b04488e1d9f7de01e3141c380a71a1597b06e9a3d977ebe33495c06310df8"
+    },
+    {
+      "filename": "AURYEL_WAKE_011_060/auryel-wake-013.mp4",
+      "r2_key": "wake-videos/auryel-wake-013.mp4",
+      "slug": "auryel-wake-013",
+      "title": "Auryel wake 013",
+      "duration_seconds": 30.0,
+      "size_bytes": 11523248,
+      "sha256": "b387c50a639aabcf6ac151a1a06c4fb7cf5e0a419a376c6b91dc2e2e319ecb3e"
+    },
+    {
+      "filename": "AURYEL_WAKE_011_060/auryel-wake-014.mp4",
+      "r2_key": "wake-videos/auryel-wake-014.mp4",
+      "slug": "auryel-wake-014",
+      "title": "Auryel wake 014",
+      "duration_seconds": 30.0,
+      "size_bytes": 7502451,
+      "sha256": "e079a480aa2ee99545f22bd7eabdf2ac894f00d4d0eee3b04116c414fa8e43bd"
+    },
+    {
+      "filename": "AURYEL_WAKE_011_060/auryel-wake-015.mp4",
+      "r2_key": "wake-videos/auryel-wake-015.mp4",
+      "slug": "auryel-wake-015",
+      "title": "Auryel wake 015",
+      "duration_seconds": 30.0,
+      "size_bytes": 9494338,
+      "sha256": "85d9a18d0cd92ba764b8fea60a069e2cd1a9d6f546316cbfecf211fbc255feca"
+    },
+    {
+      "filename": "AURYEL_WAKE_011_060/auryel-wake-016.mp4",
+      "r2_key": "wake-videos/auryel-wake-016.mp4",
+      "slug": "auryel-wake-016",
+      "title": "Auryel wake 016",
+      "duration_seconds": 30.0,
+      "size_bytes": 4846213,
+      "sha256": "109a6c5833886fc7203de10c50b34f8f586521db5204766e9587459545372020"
+    },
+    {
+      "filename": "AURYEL_WAKE_011_060/auryel-wake-017.mp4",
+      "r2_key": "wake-videos/auryel-wake-017.mp4",
+      "slug": "auryel-wake-017",
+      "title": "Auryel wake 017",
+      "duration_seconds": 30.0,
+      "size_bytes": 30692217,
+      "sha256": "d8a6442747bbb8b6e41875228626c247b27931727f87935aa4321451d5bc5104"
+    },
+    {
+      "filename": "AURYEL_WAKE_011_060/auryel-wake-018.mp4",
+      "r2_key": "wake-videos/auryel-wake-018.mp4",
+      "slug": "auryel-wake-018",
+      "title": "Auryel wake 018",
+      "duration_seconds": 30.0,
+      "size_bytes": 26112544,
+      "sha256": "763a3bcf35aaf562323c1e3d6efa7f892f43576185c93e5416141c0f0e40cb06"
+    },
+    {
+      "filename": "AURYEL_WAKE_011_060/auryel-wake-019.mp4",
+      "r2_key": "wake-videos/auryel-wake-019.mp4",
+      "slug": "auryel-wake-019",
+      "title": "Auryel wake 019",
+      "duration_seconds": 30.0,
+      "size_bytes": 25546419,
+      "sha256": "6d4bad48df273e0fcda36a21160333aab8cc678dfc76e0d7f31f09a548f538af"
+    },
+    {
+      "filename": "AURYEL_WAKE_011_060/auryel-wake-020.mp4",
+      "r2_key": "wake-videos/auryel-wake-020.mp4",
+      "slug": "auryel-wake-020",
+      "title": "Auryel wake 020",
+      "duration_seconds": 30.0,
+      "size_bytes": 44651924,
+      "sha256": "1f8cfc88946a36204056e8fc4a4471d13ba7a05243925ccb4c099e537f8a9161"
+    },
+    {
+      "filename": "AURYEL_WAKE_011_060/auryel-wake-021.mp4",
+      "r2_key": "wake-videos/auryel-wake-021.mp4",
+      "slug": "auryel-wake-021",
+      "title": "Auryel wake 021",
+      "duration_seconds": 30.0,
+      "size_bytes": 11088249,
+      "sha256": "67492eea46e30a4d4d229605d68f978bba25e37bca69c51977ade5d75a45c9b3"
+    },
+    {
+      "filename": "AURYEL_WAKE_011_060/auryel-wake-022.mp4",
+      "r2_key": "wake-videos/auryel-wake-022.mp4",
+      "slug": "auryel-wake-022",
+      "title": "Auryel wake 022",
+      "duration_seconds": 30.0,
+      "size_bytes": 3465280,
+      "sha256": "a63b6bee1cd5553599824060f5dbf6252bf213cb58ca837aeaa68d80f1264d1c"
+    },
+    {
+      "filename": "AURYEL_WAKE_011_060/auryel-wake-023.mp4",
+      "r2_key": "wake-videos/auryel-wake-023.mp4",
+      "slug": "auryel-wake-023",
+      "title": "Auryel wake 023",
+      "duration_seconds": 30.0,
+      "size_bytes": 33762832,
+      "sha256": "58f5f96bf90f8bc58442eceb74533c4c220713745f520f87f01247c9fb6db2f7"
+    },
+    {
+      "filename": "AURYEL_WAKE_011_060/auryel-wake-024.mp4",
+      "r2_key": "wake-videos/auryel-wake-024.mp4",
+      "slug": "auryel-wake-024",
+      "title": "Auryel wake 024",
+      "duration_seconds": 30.0,
+      "size_bytes": 21100607,
+      "sha256": "c58f6668fa980b292cb88db47184f1c987483983d83642f8c9410a0dbd6f22bd"
+    },
+    {
+      "filename": "AURYEL_WAKE_011_060/auryel-wake-025.mp4",
+      "r2_key": "wake-videos/auryel-wake-025.mp4",
+      "slug": "auryel-wake-025",
+      "title": "Auryel wake 025",
+      "duration_seconds": 30.0,
+      "size_bytes": 15833785,
+      "sha256": "25c0f89acb434a361ba2bd5026d91a2fe3766c1bf6550bddf29f144378920d85"
+    },
+    {
+      "filename": "AURYEL_WAKE_011_060/auryel-wake-026.mp4",
+      "r2_key": "wake-videos/auryel-wake-026.mp4",
+      "slug": "auryel-wake-026",
+      "title": "Auryel wake 026",
+      "duration_seconds": 30.0,
+      "size_bytes": 6284685,
+      "sha256": "498c116487e481ede229d8ff171661279bd629b07c5f430091ceab38beba32cc"
+    },
+    {
+      "filename": "AURYEL_WAKE_011_060/auryel-wake-027.mp4",
+      "r2_key": "wake-videos/auryel-wake-027.mp4",
+      "slug": "auryel-wake-027",
+      "title": "Auryel wake 027",
+      "duration_seconds": 30.0,
+      "size_bytes": 11015302,
+      "sha256": "6574af223ccd6169f39e678ce3281ee1420f8fc537233460a3cf92eb2e1353dc"
+    },
+    {
+      "filename": "AURYEL_WAKE_011_060/auryel-wake-028.mp4",
+      "r2_key": "wake-videos/auryel-wake-028.mp4",
+      "slug": "auryel-wake-028",
+      "title": "Auryel wake 028",
+      "duration_seconds": 30.0,
+      "size_bytes": 11397794,
+      "sha256": "b2a30b2d8552a1d3a79a531833eaccc4368e83064ca48ed38177c4f1e7abec28"
+    },
+    {
+      "filename": "AURYEL_WAKE_011_060/auryel-wake-029.mp4",
+      "r2_key": "wake-videos/auryel-wake-029.mp4",
+      "slug": "auryel-wake-029",
+      "title": "Auryel wake 029",
+      "duration_seconds": 30.0,
+      "size_bytes": 9050867,
+      "sha256": "dad86362b29b43a9ce7c263282af73de6db509c9ef9338b5f5668b46142f6bf3"
+    },
+    {
+      "filename": "AURYEL_WAKE_011_060/auryel-wake-030.mp4",
+      "r2_key": "wake-videos/auryel-wake-030.mp4",
+      "slug": "auryel-wake-030",
+      "title": "Auryel wake 030",
+      "duration_seconds": 30.0,
+      "size_bytes": 12193978,
+      "sha256": "7c208a8f1d2b3aafb4129c72980e316c228a772f0a53178beae2b588f86d02e9"
+    },
+    {
+      "filename": "AURYEL_WAKE_011_060/auryel-wake-031.mp4",
+      "r2_key": "wake-videos/auryel-wake-031.mp4",
+      "slug": "auryel-wake-031",
+      "title": "Auryel wake 031",
+      "duration_seconds": 30.0,
+      "size_bytes": 26971475,
+      "sha256": "a34cd41a91bdc83698c8e3908e4080ecdb94c8f4290914bfd78ad11a4468f862"
+    },
+    {
+      "filename": "AURYEL_WAKE_011_060/auryel-wake-032.mp4",
+      "r2_key": "wake-videos/auryel-wake-032.mp4",
+      "slug": "auryel-wake-032",
+      "title": "Auryel wake 032",
+      "duration_seconds": 30.0,
+      "size_bytes": 11403741,
+      "sha256": "6e0ae99841fe237072482a9ffe542a28e09e6fb6baaecfad5e0696930d826cc0"
+    },
+    {
+      "filename": "AURYEL_WAKE_011_060/auryel-wake-033.mp4",
+      "r2_key": "wake-videos/auryel-wake-033.mp4",
+      "slug": "auryel-wake-033",
+      "title": "Auryel wake 033",
+      "duration_seconds": 30.0,
+      "size_bytes": 17649391,
+      "sha256": "13af1f0449d2368a3f2ee4ae0bbdab5a0067b1c0d9ae639f18c7c70aae2a057b"
+    },
+    {
+      "filename": "AURYEL_WAKE_011_060/auryel-wake-034.mp4",
+      "r2_key": "wake-videos/auryel-wake-034.mp4",
+      "slug": "auryel-wake-034",
+      "title": "Auryel wake 034",
+      "duration_seconds": 30.0,
+      "size_bytes": 4644253,
+      "sha256": "527c0a2d2c869b7bd740dae6d01f9b36d1ff4d338e10fd2e1be609a71b093d8e"
+    },
+    {
+      "filename": "AURYEL_WAKE_011_060/auryel-wake-035.mp4",
+      "r2_key": "wake-videos/auryel-wake-035.mp4",
+      "slug": "auryel-wake-035",
+      "title": "Auryel wake 035",
+      "duration_seconds": 30.0,
+      "size_bytes": 9106139,
+      "sha256": "11627c62042567f8d04bdcbfda7bc4b13b616a41b22f827dce1ccfd51d4b4689"
+    },
+    {
+      "filename": "AURYEL_WAKE_011_060/auryel-wake-036.mp4",
+      "r2_key": "wake-videos/auryel-wake-036.mp4",
+      "slug": "auryel-wake-036",
+      "title": "Auryel wake 036",
+      "duration_seconds": 30.0,
+      "size_bytes": 10967005,
+      "sha256": "1454682d82af5689f5c34b38e2f762cdc83cd6ac3ff27d04e48585da7715dc74"
+    },
+    {
+      "filename": "AURYEL_WAKE_011_060/auryel-wake-037.mp4",
+      "r2_key": "wake-videos/auryel-wake-037.mp4",
+      "slug": "auryel-wake-037",
+      "title": "Auryel wake 037",
+      "duration_seconds": 30.0,
+      "size_bytes": 13412428,
+      "sha256": "f2a580aceeeb07d1a6be91a47b4f065349d3bbadcef98f04734855dfbc43e734"
+    },
+    {
+      "filename": "AURYEL_WAKE_011_060/auryel-wake-038.mp4",
+      "r2_key": "wake-videos/auryel-wake-038.mp4",
+      "slug": "auryel-wake-038",
+      "title": "Auryel wake 038",
+      "duration_seconds": 30.0,
+      "size_bytes": 11832233,
+      "sha256": "fb9aac5d328979241c3980dbc670f9d91c6678c47fc250bde54d915261a1f160"
+    },
+    {
+      "filename": "AURYEL_WAKE_011_060/auryel-wake-039.mp4",
+      "r2_key": "wake-videos/auryel-wake-039.mp4",
+      "slug": "auryel-wake-039",
+      "title": "Auryel wake 039",
+      "duration_seconds": 30.0,
+      "size_bytes": 8385470,
+      "sha256": "a60d2cf1387eb759a37dc295835c6010930bf2f7aa2f6266c21fbbe769c42fb4"
+    },
+    {
+      "filename": "AURYEL_WAKE_011_060/auryel-wake-040.mp4",
+      "r2_key": "wake-videos/auryel-wake-040.mp4",
+      "slug": "auryel-wake-040",
+      "title": "Auryel wake 040",
+      "duration_seconds": 30.0,
+      "size_bytes": 10611986,
+      "sha256": "4d257e7729ff56e333cf195cabeb0ebc92a9aa5b83c20b24d707a496c8f96469"
+    },
+    {
+      "filename": "AURYEL_WAKE_011_060/auryel-wake-041.mp4",
+      "r2_key": "wake-videos/auryel-wake-041.mp4",
+      "slug": "auryel-wake-041",
+      "title": "Auryel wake 041",
+      "duration_seconds": 30.0,
+      "size_bytes": 6597821,
+      "sha256": "1770fdc875f39f47e66969219ce5637dddc542e023ca39d6014abac4913108d9"
+    },
+    {
+      "filename": "AURYEL_WAKE_011_060/auryel-wake-042.mp4",
+      "r2_key": "wake-videos/auryel-wake-042.mp4",
+      "slug": "auryel-wake-042",
+      "title": "Auryel wake 042",
+      "duration_seconds": 30.0,
+      "size_bytes": 6610752,
+      "sha256": "57fe7eda045cd6b1441829381c126d1aa39aa05c34c846dfc7122315ef43ab45"
+    },
+    {
+      "filename": "AURYEL_WAKE_011_060/auryel-wake-043.mp4",
+      "r2_key": "wake-videos/auryel-wake-043.mp4",
+      "slug": "auryel-wake-043",
+      "title": "Auryel wake 043",
+      "duration_seconds": 30.0,
+      "size_bytes": 24480051,
+      "sha256": "a82d7626696d8f3c323289b74a0dbafa22a959c37625449babb491770262eeaf"
+    },
+    {
+      "filename": "AURYEL_WAKE_011_060/auryel-wake-044.mp4",
+      "r2_key": "wake-videos/auryel-wake-044.mp4",
+      "slug": "auryel-wake-044",
+      "title": "Auryel wake 044",
+      "duration_seconds": 30.0,
+      "size_bytes": 5608350,
+      "sha256": "ca21c6378080cc2c97e0d8c389c89fd42490160a6d8233234f5837cac3fc6ee7"
+    },
+    {
+      "filename": "AURYEL_WAKE_011_060/auryel-wake-045.mp4",
+      "r2_key": "wake-videos/auryel-wake-045.mp4",
+      "slug": "auryel-wake-045",
+      "title": "Auryel wake 045",
+      "duration_seconds": 30.0,
+      "size_bytes": 5163027,
+      "sha256": "88a3bc9e4f79bdae7617b5f9d6a40e7e11d9a62f89b6c8f5f25e147d3c70ce69"
+    },
+    {
+      "filename": "AURYEL_WAKE_011_060/auryel-wake-046.mp4",
+      "r2_key": "wake-videos/auryel-wake-046.mp4",
+      "slug": "auryel-wake-046",
+      "title": "Auryel wake 046",
+      "duration_seconds": 30.0,
+      "size_bytes": 21027816,
+      "sha256": "92c7d13a09ec4f3026f16603ee03c81f22849605a416cc10ae2f4c718bb076bb"
+    },
+    {
+      "filename": "AURYEL_WAKE_011_060/auryel-wake-047.mp4",
+      "r2_key": "wake-videos/auryel-wake-047.mp4",
+      "slug": "auryel-wake-047",
+      "title": "Auryel wake 047",
+      "duration_seconds": 30.0,
+      "size_bytes": 5686752,
+      "sha256": "ee6179f9210eb6ef270d0f4f02579861d1c63704eddda1511afa607e704a02b3"
+    },
+    {
+      "filename": "AURYEL_WAKE_011_060/auryel-wake-048.mp4",
+      "r2_key": "wake-videos/auryel-wake-048.mp4",
+      "slug": "auryel-wake-048",
+      "title": "Auryel wake 048",
+      "duration_seconds": 30.0,
+      "size_bytes": 5271623,
+      "sha256": "284d6efa9d26b86edfbd6c56a205a102215de3741ce7c3fd7b48df5203303aa8"
+    },
+    {
+      "filename": "AURYEL_WAKE_011_060/auryel-wake-049.mp4",
+      "r2_key": "wake-videos/auryel-wake-049.mp4",
+      "slug": "auryel-wake-049",
+      "title": "Auryel wake 049",
+      "duration_seconds": 30.0,
+      "size_bytes": 5518321,
+      "sha256": "46b8a652131d8883a2298a8f111f787f8af9224ff215af725878f0c94788f914"
+    },
+    {
+      "filename": "AURYEL_WAKE_011_060/auryel-wake-050.mp4",
+      "r2_key": "wake-videos/auryel-wake-050.mp4",
+      "slug": "auryel-wake-050",
+      "title": "Auryel wake 050",
+      "duration_seconds": 30.0,
+      "size_bytes": 6113439,
+      "sha256": "dfceefdfd069e64083f33c53c2dd5bbdfd63db91f74973d469c10b5c28f9a944"
+    },
+    {
+      "filename": "AURYEL_WAKE_011_060/auryel-wake-051.mp4",
+      "r2_key": "wake-videos/auryel-wake-051.mp4",
+      "slug": "auryel-wake-051",
+      "title": "Auryel wake 051",
+      "duration_seconds": 30.0,
+      "size_bytes": 9330908,
+      "sha256": "eb7c48dd9e0aee445e776517878a9cede117071b631fdaa0c9578c6447cea321"
+    },
+    {
+      "filename": "AURYEL_WAKE_011_060/auryel-wake-052.mp4",
+      "r2_key": "wake-videos/auryel-wake-052.mp4",
+      "slug": "auryel-wake-052",
+      "title": "Auryel wake 052",
+      "duration_seconds": 30.0,
+      "size_bytes": 11211620,
+      "sha256": "4d109848b64135b874cfdaf473334e8c7966bb6289090b9014e5628e8330a2a5"
+    },
+    {
+      "filename": "AURYEL_WAKE_011_060/auryel-wake-053.mp4",
+      "r2_key": "wake-videos/auryel-wake-053.mp4",
+      "slug": "auryel-wake-053",
+      "title": "Auryel wake 053",
+      "duration_seconds": 30.0,
+      "size_bytes": 4743143,
+      "sha256": "9dbe598278c723147e0389252e8eb13b87eba8a85ec827d9aa07ba7c008c5ce0"
+    },
+    {
+      "filename": "AURYEL_WAKE_011_060/auryel-wake-054.mp4",
+      "r2_key": "wake-videos/auryel-wake-054.mp4",
+      "slug": "auryel-wake-054",
+      "title": "Auryel wake 054",
+      "duration_seconds": 30.0,
+      "size_bytes": 8493940,
+      "sha256": "0b835e30d562dcabe916df934571cb54ad30357dfad9b325e5298091db719772"
+    },
+    {
+      "filename": "AURYEL_WAKE_011_060/auryel-wake-055.mp4",
+      "r2_key": "wake-videos/auryel-wake-055.mp4",
+      "slug": "auryel-wake-055",
+      "title": "Auryel wake 055",
+      "duration_seconds": 30.0,
+      "size_bytes": 11213253,
+      "sha256": "d9041292f2dded06dfacbda4e36038173b3375b911d1b2942598e0b009e1f54d"
+    },
+    {
+      "filename": "AURYEL_WAKE_011_060/auryel-wake-056.mp4",
+      "r2_key": "wake-videos/auryel-wake-056.mp4",
+      "slug": "auryel-wake-056",
+      "title": "Auryel wake 056",
+      "duration_seconds": 30.0,
+      "size_bytes": 37361515,
+      "sha256": "b6708f89d3ac642c116a1298a11020e056610f42b98668b0992399e44f393413"
+    },
+    {
+      "filename": "AURYEL_WAKE_011_060/auryel-wake-057.mp4",
+      "r2_key": "wake-videos/auryel-wake-057.mp4",
+      "slug": "auryel-wake-057",
+      "title": "Auryel wake 057",
+      "duration_seconds": 30.0,
+      "size_bytes": 34747973,
+      "sha256": "8dec601c991884e1486f46dad5d3a4ce8df9dc62353e50453c2d62588fa3a362"
+    },
+    {
+      "filename": "AURYEL_WAKE_011_060/auryel-wake-058.mp4",
+      "r2_key": "wake-videos/auryel-wake-058.mp4",
+      "slug": "auryel-wake-058",
+      "title": "Auryel wake 058",
+      "duration_seconds": 30.0,
+      "size_bytes": 4423915,
+      "sha256": "d4349da20f7d095d00addc0d1c8a95170f52ef7a7682feac887f535bb15cb1a5"
+    },
+    {
+      "filename": "AURYEL_WAKE_011_060/auryel-wake-059.mp4",
+      "r2_key": "wake-videos/auryel-wake-059.mp4",
+      "slug": "auryel-wake-059",
+      "title": "Auryel wake 059",
+      "duration_seconds": 30.0,
+      "size_bytes": 12189685,
+      "sha256": "e1e7d4422c95d27555cb6fc9cfa9a73313b4e5f1406fc7142e79427343e56b15"
+    },
+    {
+      "filename": "AURYEL_WAKE_011_060/auryel-wake-060.mp4",
+      "r2_key": "wake-videos/auryel-wake-060.mp4",
+      "slug": "auryel-wake-060",
+      "title": "Auryel wake 060",
+      "duration_seconds": 30.0,
+      "size_bytes": 30544505,
+      "sha256": "22556a13674bad664e9cf29ba6a57f86fc2296d9a0d7edeb90aa181b2d5114d6"
+    }
+  ]
+}

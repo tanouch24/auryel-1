@@ -12,6 +12,7 @@ sous ~15 min, sans release, sans script manuel.
     R2  méditations/*.mp4        -> 1 ligne meditation_video_catalog
     R2  meditations/*.mp4        -> 1 ligne meditation_video_catalog (compat.)
     R2  relaxation-videos/*.mp4  -> 1 ligne relaxation_video_catalog
+    R2  wake-videos/*.mp4        -> 1 ligne wake_video_catalog
 
 RÈGLE ABSOLUE : 1 MP3 = 1 méditation, 1 MP4 = 1 visuel. Une vidéo ne crée
 JAMAIS de méditation. Aucun produit cartésien : les deux catalogues sont
@@ -48,6 +49,7 @@ MEDITATION_VIDEO_PREFIXES = (
     MEDITATION_VIDEO_PREFIX_COMPAT,
 )
 VIDEO_PREFIX = "relaxation-videos/"
+WAKE_VIDEO_PREFIX = "wake-videos/"
 
 _R2_ENDPOINT_TMPL = "https://{account_id}.r2.cloudflarestorage.com"
 
@@ -346,6 +348,16 @@ class R2MediaCatalogSync:
                 return cand
         return f"{slug[:52]}-{uuid.uuid4().hex[:8]}"
 
+    @staticmethod
+    def _wake_catalog_available(c):
+        """Keep older/test databases compatible until migration 042 exists."""
+        try:
+            c.execute("SELECT to_regclass('public.wake_video_catalog')")
+            row = c.fetchone()
+            return bool(row and row[0])
+        except Exception:
+            return False
+
     # -- coeur ------------------------------------------------------------
     def run(self, dry_run=False):
         started = self._now()
@@ -354,12 +366,16 @@ class R2MediaCatalogSync:
             "started_at": started.isoformat(),
             "audio_objects": 0, "video_objects": 0,
             "meditation_video_objects": 0,
+            "wake_video_objects": 0,
             "new_audio": 0, "new_videos": 0,
             "new_meditation_videos": 0,
+            "new_wake_videos": 0,
             "adopted_audio": 0, "adopted_videos": 0,
             "adopted_meditation_videos": 0,
+            "adopted_wake_videos": 0,
             "updated_audio": 0, "updated_videos": 0,
             "updated_meditation_videos": 0,
+            "updated_wake_videos": 0,
             "invalid_objects": 0, "missing_objects": 0,
             "missing": [], "errors": 0, "status": "success",
         }
@@ -381,10 +397,13 @@ class R2MediaCatalogSync:
                 count_extension_mismatch=False,
             )
             video_keys, inv_v = self._collect(VIDEO_PREFIX, "mp4")
+            wake_video_keys, inv_w = self._collect(WAKE_VIDEO_PREFIX, "mp4")
             result["audio_objects"] = len(audio_keys)
             result["video_objects"] = len(video_keys)
             result["meditation_video_objects"] = len(meditation_video_keys)
-            result["invalid_objects"] = inv_a + inv_mv + inv_v
+            result["wake_video_objects"] = len(wake_video_keys)
+            result["invalid_objects"] = inv_a + inv_mv + inv_v + inv_w
+            wake_catalog_available = self._wake_catalog_available(c)
 
             self._sync_kind(
                 c, result, dry_run, kind="meditation_videos",
@@ -400,6 +419,12 @@ class R2MediaCatalogSync:
                 table="relaxation_video_catalog", url_col="video_url",
                 keys=video_keys, derive=self._derive_video_row,
             )
+            if wake_catalog_available:
+                self._sync_kind(
+                    c, result, dry_run, kind="wake_videos",
+                    table="wake_video_catalog", url_col="video_url",
+                    keys=wake_video_keys, derive=self._derive_wake_video_row,
+                )
 
             if not dry_run:
                 self._persist_state(c, result)
@@ -448,6 +473,17 @@ class R2MediaCatalogSync:
         slug, title, category, _tech = d
         return {
             "slug": slug, "title": title, "category": category,
+            "description": "", "duration_seconds": None,
+            "url": public_url(self._base_url, key), "image_or_thumb": None,
+        }
+
+    def _derive_wake_video_row(self, key):
+        d = derive_video(key)
+        if d is None:
+            return None
+        slug, title, _category, _tech = d
+        return {
+            "slug": slug, "title": title, "category": "wake",
             "description": "", "duration_seconds": None,
             "url": public_url(self._base_url, key), "image_or_thumb": None,
         }
@@ -534,6 +570,21 @@ class R2MediaCatalogSync:
                         "RETURNING id",
                         (new_id, slug, row["title"], row["description"],
                          row["url"], row["category"], next_order, key,
+                         result["started_at"]),
+                    )
+                elif table == "wake_video_catalog":
+                    c.execute(
+                        "INSERT INTO wake_video_catalog "
+                        "(id, slug, title, video_url, duration_seconds, "
+                        " sort_order, is_active, published_at, r2_object_key, "
+                        " r2_last_seen_at, created_at, updated_at, version) "
+                        "VALUES (%s, %s, %s, %s, %s, %s, TRUE, NULL, %s, %s, "
+                        " NOW(), NOW(), 1) "
+                        "ON CONFLICT (r2_object_key) DO UPDATE SET "
+                        " r2_last_seen_at = EXCLUDED.r2_last_seen_at "
+                        "RETURNING id",
+                        (new_id, slug, row["title"], row["url"],
+                         row["duration_seconds"], next_order, key,
                          result["started_at"]),
                     )
                 else:

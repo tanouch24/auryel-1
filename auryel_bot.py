@@ -3050,6 +3050,22 @@ def init_db():
             "Migration v68 (content recommendations) échouée"
         ) from e
 
+    # Migration v69 — catalogue dédié des vidéos du Réveil. Les vidéos du
+    # Réveil ne doivent pas être mélangées aux visuels de méditation.
+    try:
+        migration_path = os.path.join(
+            os.path.dirname(__file__), "migrations", "042_wake_video_catalog.sql"
+        )
+        with open(migration_path, "r", encoding="utf-8") as migration_file:
+            c.execute(migration_file.read())
+        conn.commit()
+    except Exception as e:
+        conn.rollback()
+        conn.close()
+        raise CriticalSchemaMigrationError(
+            "Migration v69 (catalogue vidéos Réveil) échouée"
+        ) from e
+
     conn.close()
 
 def reset_db():
@@ -9684,6 +9700,60 @@ def api_content_relaxation_videos():
         "catalog_version": tag,
         "generic_category": _RELAXATION_GENERIC_CATEGORY,
         "compatibility_map": _MEDITATION_VIDEO_COMPATIBILITY,
+        "videos": videos,
+    })
+    resp.headers["ETag"] = f'"{tag}"'
+    resp.headers["Cache-Control"] = "no-cache"
+    return resp, 200
+
+
+def _wake_video_catalog_active_rows():
+    """Vidéos Réveil actives et publiées, triées de façon déterministe."""
+    conn = get_conn()
+    try:
+        c = conn.cursor()
+        c.execute(
+            "SELECT id, slug, title, video_url, duration_seconds, sort_order, "
+            "       published_at, updated_at, version "
+            "FROM wake_video_catalog "
+            "WHERE is_active = TRUE "
+            "  AND (published_at IS NULL OR published_at <= NOW()) "
+            "ORDER BY sort_order ASC, id ASC"
+        )
+        return c.fetchall()
+    finally:
+        conn.close()
+
+
+@app.route("/api/app/content/wake-videos", methods=["GET"])
+@limiter.limit("60 per hour")
+@require_app_auth
+def api_content_wake_videos():
+    """Catalogue dédié des vidéos du Réveil, sans contenu binaire."""
+    rows = _wake_video_catalog_active_rows()
+    basis = "|".join(
+        f"{r[0]}:{r[7].isoformat() if r[7] else ''}:{r[8]}" for r in rows
+    )
+    tag = hashlib.sha256(basis.encode("utf-8")).hexdigest()[:32]
+    inm = request.headers.get("If-None-Match", "").strip().strip('"')
+    if inm and inm == tag:
+        resp = jsonify({})
+        resp.headers["ETag"] = f'"{tag}"'
+        resp.headers["Cache-Control"] = "no-cache"
+        return resp, 304
+
+    videos = [{
+        "id": str(r[0]),
+        "slug": r[1],
+        "title": r[2],
+        "video_url": r[3],
+        "duration_seconds": r[4],
+        "sort_order": int(r[5] or 0),
+        "published_at": _ts_iso(r[6]) if r[6] else None,
+    } for r in rows]
+    resp = jsonify({
+        "version": _CONTENT_API_VERSION,
+        "catalog_version": tag,
         "videos": videos,
     })
     resp.headers["ETag"] = f'"{tag}"'
@@ -17508,9 +17578,13 @@ def cron_r2_media_sync():
         "updated_audio": result.get("updated_audio", 0),
         "updated_videos": result.get("updated_videos", 0),
         "meditation_video_objects": result.get("meditation_video_objects", 0),
+        "wake_video_objects": result.get("wake_video_objects", 0),
         "new_meditation_videos": result.get("new_meditation_videos", 0),
+        "new_wake_videos": result.get("new_wake_videos", 0),
         "adopted_meditation_videos": result.get("adopted_meditation_videos", 0),
+        "adopted_wake_videos": result.get("adopted_wake_videos", 0),
         "updated_meditation_videos": result.get("updated_meditation_videos", 0),
+        "updated_wake_videos": result.get("updated_wake_videos", 0),
         "invalid_objects": result.get("invalid_objects", 0),
         "missing_objects": result.get("missing_objects", 0),
         "errors": result.get("errors", 0),
