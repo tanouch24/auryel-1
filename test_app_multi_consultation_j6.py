@@ -862,8 +862,7 @@ def _flow(target, now, preferred="selena"):
                                              target_consultation_id=target)
 
 
-# 31/32/33/34. Séléna fenêtre active -> switch Ezra : tranche Séléna settled 1x,
-#              pas de double débit, Ezra repart, wallet global.
+# 31/32/33/34. Une activité ciblée sur Ezra ne règle jamais la fenêtre Séléna.
 reset_db()
 seed_account(UID, first_free=0, purchased=0)
 seed_allowance(UID, allowance_seconds=28800, used_seconds=0)
@@ -876,22 +875,22 @@ used_after_switch = DB["allowance"][0]["monthly_used_seconds"]
 check(res["status"] == "ok" and res["consultation"]["id"] == CID_EZR
       and res["consultation"]["advisor_id"] == "ezra",
       "31 switch Séléna->Ezra : le flux cible bien le fil Ezra")
-check(used_after_switch == 120,
-      "32 tranche réellement due de Séléna (120 s) débitée UNE fois")
-check(DB["consultations"][CID_SEL]["billed_until"] == T(10, 2, 0),
-      "32b billed_until Séléna avancé de 120 s exactement")
+check(used_after_switch == 0,
+      "32 activité Ezra -> aucune tranche Séléna débitée")
+check(DB["consultations"][CID_SEL]["billed_until"] == T(10, 0, 0),
+      "32b billed_until Séléna reste inchangé")
 # Ezra a ouvert sa fenêtre maintenant
 check(DB["consultations"][CID_EZR]["last_activity_at"] == T(10, 2, 0)
       and DB["consultations"][CID_EZR]["billed_until"] == T(10, 2, 0),
       "33 Ezra : fenêtre ouverte à l'instant du switch (billed_until = now)")
-# re-switch Ezra plus tard : Séléna finit sa fenêtre (jusqu'à 10:05), Ezra facturé
+# re-switch Ezra plus tard : seul Ezra est réglé
 res = _flow(CID_EZR, T(10, 10, 0))
 used_total = DB["allowance"][0]["monthly_used_seconds"]
-# Séléna : reste [10:02 -> 10:05] = 180 s ; Ezra : [10:02 -> 10:07] (window_end) = 300 s
-check(used_total == 120 + 180 + 300,
-      "34 pas de double débit : Séléna plafonne à 300 s (grâce), Ezra facturé sa fenêtre")
-check(DB["consultations"][CID_SEL]["billed_until"] == T(10, 5, 0),
-      "34b Séléna : facturée jusqu'à window_end (10:05), jamais au-delà")
+# Ezra : [10:02 -> 10:07] = 300 s ; Séléna reste intacte.
+check(used_total == 300,
+      "34 une activité Ezra ne débite que la fenêtre Ezra")
+check(DB["consultations"][CID_SEL]["billed_until"] == T(10, 0, 0),
+      "34b Séléna : fenêtre non ciblée jamais réglée")
 
 # 35. retry /flow au même `now` ne redébite pas
 used_before = DB["allowance"][0]["monthly_used_seconds"]
@@ -899,7 +898,7 @@ _flow(CID_EZR, T(10, 10, 0))
 check(DB["allowance"][0]["monthly_used_seconds"] == used_before,
       "35 rejeu au même instant : 0 s débitée (idempotent)")
 
-# 36. inactivité > 300 s jamais facturée au-delà de 300
+# 36. activité ciblée après inactivité : seul le fil ciblé est réglé
 reset_db()
 seed_account(UID, first_free=0)
 seed_allowance(UID, used_seconds=0)
@@ -907,10 +906,10 @@ seed_consultation(CID_SEL, "selena", T(10, 0, 0),
                   last_activity_at=T(10, 0, 0), billed_until=T(10, 0, 0))
 seed_consultation(CID_EZR, "ezra", T(10, 1, 0))
 _flow(CID_EZR, T(11, 0, 0))    # 1 h plus tard
-check(DB["allowance"][0]["monthly_used_seconds"] == 300,
-      "36 Séléna inactive 1 h -> exactement 300 s facturées (grâce), pas 3600")
+check(DB["allowance"][0]["monthly_used_seconds"] == 0,
+      "36 Ezra sans fenêtre active -> Séléna inactive non facturée")
 
-# 37. deux anciennes fenêtres ouvertes -> settle borné pour chacune
+# 37. deux anciennes fenêtres ouvertes -> aucune facturation parasite
 reset_db()
 seed_account(UID, first_free=0)
 seed_allowance(UID, used_seconds=0)
@@ -920,9 +919,10 @@ seed_consultation("cccccccc-0000-4000-8000-00000000000c", "luna", T(10, 0, 30),
                   last_activity_at=T(10, 0, 30), billed_until=T(10, 0, 30))
 seed_consultation(CID_EZR, "ezra", T(10, 2, 0))
 _flow(CID_EZR, T(10, 30, 0))
-# Séléna 300 s + Luna 300 s = 600 s ; Ezra ouvre sa fenêtre (0 s)
-check(DB["allowance"][0]["monthly_used_seconds"] == 600,
-      "37 deux fenêtres anciennes -> 300 s chacune (bornées), somme 600 s")
+# Séléna/Luna restent intactes ; Ezra ouvre sa fenêtre sans débit initial.
+check(DB["allowance"][0]["monthly_used_seconds"] == 0
+      and DB["consultations"][CID_SEL]["billed_until"] == T(10, 0, 0),
+      "37 deux fenêtres anciennes -> aucune n'est réglée par l'activité Ezra")
 
 # 38. total restant jamais négatif
 reset_db()
@@ -931,11 +931,11 @@ seed_allowance(UID, allowance_seconds=0, used_seconds=0)
 seed_consultation(CID_SEL, "selena", T(10, 0, 0),
                   last_activity_at=T(10, 0, 0), billed_until=T(10, 0, 0))
 seed_consultation(CID_EZR, "ezra", T(10, 1, 0))
-res = _flow(CID_EZR, T(10, 10, 0))
+res = _flow(CID_SEL, T(10, 10, 0))
 check(res["status"] == "time_exhausted"
       and res["time"]["total_remaining_seconds"] == 0
       and DB["accounts"][UID]["first_free_seconds_remaining"] == 0,
-      "38 portefeuille épuisé -> total 0 (jamais négatif), 402 time_exhausted")
+      "38 fil ciblé épuisé -> total 0 (jamais négatif), time_exhausted")
 
 # 39. ordre des buckets inchangé (first_free avant premium)
 reset_db()
@@ -945,9 +945,9 @@ seed_consultation(CID_SEL, "selena", T(10, 0, 0),
                   last_activity_at=T(10, 0, 0), billed_until=T(10, 0, 0))
 seed_consultation(CID_EZR, "ezra", T(10, 1, 0))
 _flow(CID_EZR, T(10, 2, 0))   # 120 s dus
-check(DB["accounts"][UID]["first_free_seconds_remaining"] == 80
+check(DB["accounts"][UID]["first_free_seconds_remaining"] == 200
       and DB["allowance"][0]["monthly_used_seconds"] == 0,
-      "39 débit : first_free consommé EN PREMIER (200->80), premium intact")
+      "39 fil Ezra sans activité précédente : aucun débit parasite")
 
 # 40. GET /list n'a aucun effet de facturation
 tok = _fresh(first_free=1000)
@@ -985,6 +985,18 @@ seed_consultation(CID_EZR, "ezra", T(11, 0))
 client.get("/api/consultation/state", headers=_hdr(tok))
 check(len(DB["consultations"]) == 2,
       "43 GET /state ne supprime / ne ferme aucun fil")
+
+# 44. GET /state après absence ne rétrofacture pas la fenêtre persistée.
+tok = _fresh(first_free=1000)
+seed_consultation(CID_SEL, "selena", T(10, 0),
+                  last_activity_at=T(10, 0), billed_until=T(10, 0))
+before = DB["accounts"][UID]["first_free_seconds_remaining"]
+before_total = before + 28800
+j = A._state_with_time_settle(UID, T(10, 20))
+check(j["time_snapshot"]["total_remaining_seconds"] == before_total
+      and DB["accounts"][UID]["first_free_seconds_remaining"] == before
+      and DB["consultations"][CID_SEL]["billed_until"] == T(10, 0),
+      "44 GET /state après fermeture ne débite pas l'absence")
 
 
 # ---------------------------------------------------------------------------

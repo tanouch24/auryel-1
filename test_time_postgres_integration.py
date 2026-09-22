@@ -739,18 +739,30 @@ check(_con(_cid16)[0] == _TH and _con(_cid16)[1] == _TH,
 with patch.object(A, "_utcnow", return_value=_TH + timedelta(seconds=180)):
     _rs = _client.get("/api/consultation/state", headers=_H)
 _js = _rs.get_json()
-check(_rs.status_code == 200 and _acc(_u16)[0] == 3420,
-      f"16e GET /state à +180 s -> settle 180 s réel (first_free -> {_acc(_u16)[0]})")
-check(_js["time"]["total_remaining_seconds"] == 3420 + 28800,
-      "16f /state.time.total = 3420 + 28800")
-check(_acc(_u16)[2] is not None, "16g first_consultation_used_at posé par le settle du GET /state")
+check(_rs.status_code == 200 and _acc(_u16)[0] == 3600,
+      "16e GET /state à +180 s -> aucun débit rétroactif")
+check(_js["time"]["total_remaining_seconds"] == 3600 + 28800,
+      "16f /state.time.total reste 3600 + 28800")
+check(_acc(_u16)[2] is None, "16g GET /state ne pose pas first_consultation_used_at")
+
+with patch.object(A, "call_llm", return_value="REPONSE-A4B-MOCK"), \
+     patch.object(A, "_utcnow", return_value=_TH + timedelta(seconds=180)):
+    _rp2 = _client.post("/api/consultation/message",
+                        json={"message": "activite-apres-refresh",
+                              "consultation_id": _cid16}, headers=_H)
+check(_rp2.status_code == 200 and _acc(_u16)[0] == 3420,
+      "16h POST après refresh -> seule l'activité réelle règle 180 s")
+check(_acc(_u16)[2] is not None,
+      "16i first_consultation_used_at posé par l'activité réelle")
 
 _snap_before_msgs = (_acc(_u16), _alw(_u16), _con(_cid16))
 with patch.object(A, "_utcnow", return_value=_TH + timedelta(seconds=600)):
     _rm = _client.get("/api/consultation/messages", headers=_H)
 _jm = _rm.get_json()
 check(_rm.status_code == 200 and _jm["consultation_id"] == _cid16
-      and [m["content"] for m in _jm["messages"]] == ["bonjour a4", "REPONSE-A4-MOCK"],
+      and [m["content"] for m in _jm["messages"]] == [
+          "bonjour a4", "REPONSE-A4-MOCK",
+          "activite-apres-refresh", "REPONSE-A4B-MOCK"],
       "16h GET /messages -> historique complet de la consultation logique")
 check((_acc(_u16), _alw(_u16), _con(_cid16)) == _snap_before_msgs,
       "16i GET /messages : AUCUN débit / touch supplémentaire (DB strictement inchangée)")

@@ -5520,12 +5520,12 @@ _QUOTA_SHIM_MONTHLY_LIMIT_HOURS = 4   # 4 h Premium / période (affichage UI)
 
 
 def _state_with_time_settle(user_id, now=None):
-    """État pour GET /api/consultation/state : UNE transaction qui verrouille
-    `accounts` FOR UPDATE (mutex par utilisateur), settle la fenêtre d'activité
-    de la consultation COURANTE si elle existe (débite les secondes réellement
-    écoulées via le moteur A.2 : accounts FOR UPDATE -> consultation_allowance
-    FOR UPDATE, AUCUN FOR UPDATE sur consultations), lit le snapshot temps,
-    commit.
+    """État pour GET /api/consultation/state, sans facturation implicite.
+
+    La transaction verrouille `accounts` FOR UPDATE pour lire un snapshot
+    cohérent, mais un simple refresh ne règle jamais une fenêtre persistée.
+    La facturation est déclenchée uniquement par une nouvelle activité de
+    consultation dans `_open_time_consultation_flow_tx`.
 
     N'OUVRE / NE CRÉE aucune consultation. N'incrémente PAS monthly_used
     (legacy). Ne consomme AUCUN earned_credit. N'appelle AUCUN LLM. La
@@ -5593,11 +5593,11 @@ def _state_with_time_settle(user_id, now=None):
                 "started_at": started_at, "expires_at": expires_at,
                 "credit_source": credit_source,
             }
-            # E. settle de la fenêtre temps (no-op si last_activity_at NULL —
-            #    c'est le cas en production tant que _touch n'est pas câblé).
-            _settle_consultation_time_tx(c, uid, cid, now)
+        # E. Le refresh est strictement non facturant. Une fenêtre ancienne
+        # peut rester observable pour l'UI, mais son temps écoulé n'est pas
+        # rétrofacturé par GET /state.
 
-        # F. snapshot temps APRÈS settle (lecture seule).
+        # F. snapshot temps (lecture seule).
         snap = _get_time_snapshot_tx(c, uid, now)
 
         # Legacy (lecture seule) : period_* / is_premium / earned_available du
@@ -13310,19 +13310,22 @@ def _open_time_consultation_flow_tx(user_id, preferred_advisor_id, tirage_id, no
                 return {"status": "consultation_not_found", "consultation": None,
                         "time": None, "tirage_attached": False}
 
-        # 4-5. J6 multi-fil — settle de TOUTES les fenêtres d'activité
-        #      potentiellement ouvertes de l'utilisateur (pas seulement la plus
-        #      récente). `_settle_consultation_time_tx` est idempotent (rejeu au
-        #      même `now` -> 0 s), borne le débit à min(now, last_activity_at +
-        #      300) et ne facture JAMAIS l'inactivité. Ordre de verrous inchangé :
-        #      `accounts` déjà FOR UPDATE, `consultations` lue SANS FOR UPDATE.
-        c.execute(
-            "SELECT id FROM consultations "
-            "WHERE user_id=%s AND last_activity_at IS NOT NULL",
-            (uid,),
-        )
-        for (_open_cid,) in c.fetchall():
-            _settle_consultation_time_tx(c, uid, str(_open_cid), now)
+        # 4-5. Une nouvelle activité ne règle que le fil réellement concerné.
+        #      L'ancien comportement réglait toutes les fenêtres du compte et
+        #      pouvait débiter plusieurs consultations lors d'un seul message.
+        if target_row is not None:
+            settlement_cid = str(target_row[0])
+        else:
+            c.execute(
+                "SELECT id, advisor_id, last_activity_at, billed_until "
+                "FROM consultations WHERE user_id=%s "
+                "ORDER BY started_at DESC LIMIT 1",
+                (uid,),
+            )
+            latest_row = c.fetchone()
+            settlement_cid = str(latest_row[0]) if latest_row is not None else None
+        if settlement_cid is not None:
+            _settle_consultation_time_tx(c, uid, settlement_cid, now)
 
         # 6. snapshot APRÈS settle.
         snap = _get_time_snapshot_tx(c, uid, now)

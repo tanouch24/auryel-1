@@ -849,7 +849,7 @@ _expected = A._ts_iso(_la + timedelta(seconds=300))
 check(jt["window_active"] is True and jt["window_expires_at"] == _expected,
       "7.F fenêtre active -> window_active true, window_expires_at = last_activity + 5 min")
 
-# --- 7.G/H/I — settle progressif via /state ----------------------------------
+# --- 7.G/H/I — GET /state non facturant --------------------------------------
 tok = fresh()
 with patch.object(A, "call_llm", return_value=REPLY):
     _post(tok, "go")
@@ -859,26 +859,23 @@ _set_time_meter(_cid7, _t0, _t0)
 with patch.object(A, "_utcnow", return_value=_t0 + timedelta(seconds=180)):
     _state(tok)
 check(FAKE["accounts"][0]["first_free_seconds_remaining"] == 0
-      and FAKE["consultation_allowance"][0]["monthly_used_seconds"] == 180,
-      "7.G state à +3 min -> 180 s Premium consommées (first_free déjà à 0)")
+      and FAKE["consultation_allowance"][0]["monthly_used_seconds"] == 0,
+      "7.G state à +3 min -> aucun débit rétroactif")
 with patch.object(A, "_utcnow", return_value=_t0 + timedelta(seconds=180)):
     _state(tok)
-check(FAKE["consultation_allowance"][0]["monthly_used_seconds"] == 180,
-      "7.H même state répété au même instant -> aucun double débit")
+check(FAKE["consultation_allowance"][0]["monthly_used_seconds"] == 0,
+      "7.H même state répété au même instant -> aucun débit")
 with patch.object(A, "_utcnow", return_value=_t0 + timedelta(seconds=480)):
     _state(tok)
-check(FAKE["consultation_allowance"][0]["monthly_used_seconds"] == 300,
-      "7.I state à +8 min -> fenêtre plafonnée à 300 s au total")
+check(FAKE["consultation_allowance"][0]["monthly_used_seconds"] == 0,
+      "7.I state à +8 min -> aucune facturation de l'absence")
 
 # --- 7.J — seconds_remaining == total_remaining_seconds ----------------------
 js = _state(tok)
 check(js["consultation"]["seconds_remaining"] == js["time"]["total_remaining_seconds"],
       "7.J consultation.seconds_remaining == time.total_remaining_seconds")
 
-# --- 7.PRIO — AUDIT CIBLÉ A.3c-2c : priorité stricte des buckets au settle ---
-# Un débit de N s avec first_free suffisant NE TOUCHE QUE first_free : Premium
-# et purchased restent INCHANGÉS. first_consultation_used_at posé au 1er DÉBIT
-# RÉEL (ici pendant le GET /state à +180 s, jamais au simple POST/touch).
+# --- 7.PRIO — débit uniquement sur activité réelle ---------------------------
 reset_db()
 seed_account(UID1, first_consultation_used_at=None,          # gratuite JAMAIS consommée
              first_free_seconds_remaining=3600,
@@ -904,19 +901,19 @@ check(_con["last_activity_at"] == _TP and _con["billed_until"] == _TP,
       "7.PRIO-b consultation ouverte : last_activity_at = billed_until = T0")
 with patch.object(A, "_utcnow", return_value=_TP + timedelta(seconds=180)):
     _js = _state(tok)
-check(_acc["first_free_seconds_remaining"] == 3420,
-      "7.PRIO-c GET /state +180 s -> first_free 3600 -> 3420")
+check(_acc["first_free_seconds_remaining"] == 3600,
+      "7.PRIO-c GET /state +180 s -> first_free intact")
 check(_alw["monthly_used_seconds"] == 0,
       "7.PRIO-d Premium INCHANGÉ (monthly_used_seconds reste 0)")
 check(_acc["purchased_seconds_remaining"] == 7200,
       "7.PRIO-e purchased INCHANGÉ (7200)")
-check(_acc["first_consultation_used_at"] == _TP + timedelta(seconds=180),
-      "7.PRIO-f first_consultation_used_at posé à l'instant du 1er débit réel (T0+180 s)")
-check(_js["time"]["first_free_remaining_seconds"] == 3420
+check(_acc["first_consultation_used_at"] is None,
+      "7.PRIO-f aucun débit et marqueur first_consultation_used_at intact")
+check(_js["time"]["first_free_remaining_seconds"] == 3600
       and _js["time"]["premium_remaining_seconds"] == 28800
       and _js["time"]["purchased_remaining_seconds"] == 7200
-      and _js["time"]["total_remaining_seconds"] == 39420,
-      "7.PRIO-g time exposé = 3420 + 28800 + 7200 = 39420")
+      and _js["time"]["total_remaining_seconds"] == 39600,
+      "7.PRIO-g time exposé sans débit rétroactif = 3600 + 28800 + 7200")
 
 # --- 7.PRIO2 — frontière first_free -> Premium sur un settle unique ----------
 reset_db()
@@ -935,17 +932,17 @@ _acc = FAKE["accounts"][0]
 _alw = FAKE["consultation_allowance"][0]
 with patch.object(A, "_utcnow", return_value=_TP + timedelta(seconds=180)):
     _state(tok)
-check(_acc["first_free_seconds_remaining"] == 0
-      and _alw["monthly_used_seconds"] == 80
+check(_acc["first_free_seconds_remaining"] == 100
+      and _alw["monthly_used_seconds"] == 0
       and _acc["purchased_seconds_remaining"] == 500
-      and _acc["first_consultation_used_at"] is not None,
-      "7.PRIO2-a débit 180 s -> ff 100->0, premium 1000->920 (used 80), purchased 500 intact, fcua posé")
+      and _acc["first_consultation_used_at"] is None,
+      "7.PRIO2-a GET /state ne débite pas first_free/premium")
 with patch.object(A, "_utcnow", return_value=_TP + timedelta(seconds=230)):
     _state(tok)
-check(_acc["first_free_seconds_remaining"] == 0
-      and _alw["monthly_used_seconds"] == 130
+check(_acc["first_free_seconds_remaining"] == 100
+      and _alw["monthly_used_seconds"] == 0
       and _acc["purchased_seconds_remaining"] == 500,
-      "7.PRIO2-b nouveau débit 50 s -> premium used 80->130 (920->870), ff 0, purchased 500")
+      "7.PRIO2-b second refresh -> aucun débit supplémentaire")
 
 # --- 7.PRIO3 — frontière Premium -> purchased, aucun négatif ----------------
 reset_db()
@@ -964,11 +961,11 @@ _acc = FAKE["accounts"][0]
 _alw = FAKE["consultation_allowance"][0]
 with patch.object(A, "_utcnow", return_value=_TP + timedelta(seconds=180)):
     _state(tok)
-check(_alw["monthly_used_seconds"] == 28800
-      and _acc["purchased_seconds_remaining"] == 420
+check(_alw["monthly_used_seconds"] == 28700
+      and _acc["purchased_seconds_remaining"] == 500
       and _acc["first_free_seconds_remaining"] == 0
-      and _acc["purchased_seconds_remaining"] >= 0,
-      "7.PRIO3 débit 180 s -> premium 100->0 (used 28800), purchased 500->420, aucun négatif")
+      and _acc["first_consultation_used_at"] is not None,
+      "7.PRIO3 GET /state ne débite pas Premium/purchased")
 
 tok = fresh()   # rétablit l'état pour les scénarios suivants
 
