@@ -1038,6 +1038,20 @@ check(next(c for c in FAKE["consultations"] if c["id"] == _cid8)["advisor_id"] =
       "8f ancienne consultation : advisor_id selena JAMAIS modifié")
 check(len(FAKE["consultations"]) == 2, "8g exactement 2 consultations logiques")
 
+# --- 8h — reproduction exacte du bug réel : quota 350 s + fenêtre obsolète
+tok = fresh(uid=UID1, premium=False, first_free=True)
+with patch.object(A, "call_llm", return_value=REPLY):
+    first = _post(tok, "ouvrir la consultation")
+assert first.status_code == 200
+FAKE["accounts"][0]["first_free_seconds_remaining"] = 350
+_expire_window()
+with patch.object(A, "call_llm", return_value=REPLY):
+    second = _post(tok, "reprendre après une longue absence")
+check(second.status_code == 200
+      and second.get_json()["time"]["total_remaining_seconds"] == 350
+      and FAKE["accounts"][0]["first_free_seconds_remaining"] == 350,
+      "8h reproduction 350 s : nouveau message après fenêtre obsolète -> 0 s rétroactif")
+
 # --- 9. payload JSON exact / cohérent (contrat temps) --------------------------
 tok = fresh()
 with patch.object(A, "call_llm", return_value=REPLY):

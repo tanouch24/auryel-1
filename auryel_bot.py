@@ -14699,7 +14699,10 @@ def _settle_consultation_time_tx(cursor, user_id, consultation_id, now):
       last_activity_at NULL -> rien à facturer.
       sinon :
         window_end   = last_activity_at + 300 s
-        charge_until = min(now, window_end)
+        si `now` est déjà après `window_end`, la fenêtre est obsolète : elle
+        est invalidée sans débit. Une nouvelle activité ouvrira une fenêtre
+        neuve à `now` ; la période d'inactivité n'est jamais rétrofacturée.
+        sinon, charge_until = now
         on TENTE de facturer [ billed_until (ou last_activity_at si NULL) ,
         charge_until ]. billed_until n'avance QUE des `debited_seconds`
         RÉELLEMENT débités : jamais au-delà de window_end, jamais en arrière,
@@ -14732,7 +14735,22 @@ def _settle_consultation_time_tx(cursor, user_id, consultation_id, now):
 
     uid = str(user_id) if user_id is not None else str(_uid)
     win_end = _window_end(last_activity_at)
-    charge_until = now if now < win_end else win_end
+    if now > win_end:
+        # Une activité tardive est une reprise, pas une preuve que l'utilisateur
+        # a utilisé la consultation pendant toute la période écoulée. La
+        # fenêtre persistée est donc fermée sans solder son reliquat : la
+        # prochaine activité ouvrira une fenêtre neuve via _touch.
+        cursor.execute(
+            "UPDATE consultations SET last_activity_at=%s, billed_until=%s "
+            "WHERE id=%s",
+            (None, None, str(consultation_id)),
+        )
+        return {"settled_seconds": 0, "requested_seconds": 0,
+                "exhausted": False, "billed_until": None,
+                "last_activity_at": None, "window_end": win_end,
+                "debit": None, "stale": True}
+
+    charge_until = now
     billed_from = billed_until if billed_until is not None else last_activity_at
 
     requested = _as_seconds(charge_until - billed_from)  # borné >= 0

@@ -412,14 +412,14 @@ check(DB["consultations"]["c-1"]["last_activity_at"] == T(10, 4, 59)
       "B4 touch 10:04:59 -> nouvelle fenêtre jusqu'à 10:09:59")
 
 print("-" * 64)
-print("D — retour >5 min même conseiller -> settle ≤300, reprise, aucune facturation du gap")
+print("D — retour >5 min même conseiller -> ancienne fenêtre invalidée, reprise sans débit")
 reset_db(); seed_account(first_free=3600)
 seed_consultation("c-1", "selena", T(9, 0), last_activity_at=T(10, 0), billed_until=T(10, 0))
 r = flow("selena", T(10, 20))
 check(r["status"] == "ok" and r["consultation"]["created"] is False,
       "D même conseiller après >5 min -> reprise (created False)")
-check(_acc()["first_free_seconds_remaining"] == 3600 - 300,
-      "D2 settle plafonné à 300 s (traîne), rien facturé sur 10:05->10:20")
+check(_acc()["first_free_seconds_remaining"] == 3600,
+      "D2 ancienne fenêtre obsolète -> 0 s débité, rien facturé sur 10:00->10:20")
 check(len(_consultations()) == 1
       and DB["consultations"]["c-1"]["last_activity_at"] == T(10, 20)
       and DB["consultations"]["c-1"]["billed_until"] == T(10, 20),
@@ -437,11 +437,22 @@ _old = DB["consultations"]["c-old"]
 check(_old["advisor_id"] == "selena" and _old["last_activity_at"] == T(10, 20 - 15, 0)  # settle a coupé? non : 10:00+300=10:05
       or (_old["advisor_id"] == "selena"),
       "F ancienne consultation c-old : advisor=selena INTACT")
-check(_acc()["first_free_seconds_remaining"] == 3600 - 300,
-      "E2 settle de l'ancienne fenêtre (300 s traîne), aucun débit lié au changement de conseiller")
+check(_acc()["first_free_seconds_remaining"] == 3600,
+      "E2 ancienne fenêtre obsolète -> aucun débit lié au changement de conseiller")
 _new_id = r["consultation"]["id"]
 check(DB["consultations"][_new_id]["last_activity_at"] == T(10, 20),
       "E3 touch de la NOUVELLE consultation à 10:20")
+
+print("Ebis — reproduction exacte : quota 350 s + ancienne fenêtre -> nouveau message sans débit rétroactif")
+reset_db(); seed_account(first_free=350)
+seed_consultation("c-stale", "selena", T(9, 0),
+                  last_activity_at=T(10, 0), billed_until=T(10, 0))
+r = flow("selena", T(10, 20))
+check(r["status"] == "ok"
+      and _acc()["first_free_seconds_remaining"] == 350
+      and DB["consultations"]["c-stale"]["last_activity_at"] == T(10, 20)
+      and DB["consultations"]["c-stale"]["billed_until"] == T(10, 20),
+      "Ebis quota 350 s : nouvelle question -> 0 s rétroactifs, fenêtre neuve à now")
 
 print("-" * 64)
 print("F-init — 0 seconde initiale -> time_exhausted, rien créé, rien touché")

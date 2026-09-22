@@ -358,7 +358,7 @@ check(_acc(_u4)[0] == 3420, "5b first_free toujours 3420 (aucun double débit)")
 check(_con(_cid4)[1] == _T0 + timedelta(seconds=180), "5c billed_until inchangé")
 
 # ===========================================================================
-section("6. CAP 300 s — settle à T0 + 20 min ne facture pas l'inactivité")
+section("6. FENÊTRE OBSOLÈTE — settle à T0 + 20 min n'est pas rétrofacturé")
 # ===========================================================================
 _u6 = _uid(6)
 _seed_account(_u6, first_free=3600, fcua=None)
@@ -369,11 +369,12 @@ _cur = _c.cursor()
 _res6 = A._settle_consultation_time_tx(_cur, _u6, _cid6, _T6 + timedelta(minutes=20))
 _c.commit()
 _c.close()
-check(_res6["settled_seconds"] == 300,
-      f"6a débit plafonné à 300 s (pas 1200) — lu: {_res6['settled_seconds']}")
-check(_acc(_u6)[0] == 3300, f"6b first_free 3600 -> 3300 (lu: {_acc(_u6)[0]})")
-check(_con(_cid6)[1] == _T6 + timedelta(seconds=300),
-      f"6c billed_until = T0 + 5 min (lu: {_con(_cid6)[1]})")
+check(_res6["settled_seconds"] == 0 and _res6.get("stale") is True,
+      f"6a fenêtre obsolète -> 0 s débitées — lu: {_res6['settled_seconds']}")
+check(_acc(_u6)[0] == 3600,
+      f"6b first_free inchangé à 3600 (lu: {_acc(_u6)[0]})")
+check(_con(_cid6)[0] is None and _con(_cid6)[1] is None,
+      "6c fenêtre invalidée : last_activity_at et billed_until NULL")
 
 # ===========================================================================
 section("7. WATERFALL first_free -> Premium (débit 180 s, ff=100)")

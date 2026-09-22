@@ -886,9 +886,9 @@ check(DB["consultations"][CID_EZR]["last_activity_at"] == T(10, 2, 0)
 # re-switch Ezra plus tard : seul Ezra est réglé
 res = _flow(CID_EZR, T(10, 10, 0))
 used_total = DB["allowance"][0]["monthly_used_seconds"]
-# Ezra : [10:02 -> 10:07] = 300 s ; Séléna reste intacte.
-check(used_total == 300,
-      "34 une activité Ezra ne débite que la fenêtre Ezra")
+# Ezra a été inactif au-delà de sa fenêtre ; sa reprise n'est pas rétrofacturée.
+check(used_total == 0,
+      "34 une activité Ezra n'applique aucun débit rétroactif à sa fenêtre obsolète")
 check(DB["consultations"][CID_SEL]["billed_until"] == T(10, 0, 0),
       "34b Séléna : fenêtre non ciblée jamais réglée")
 
@@ -932,10 +932,10 @@ seed_consultation(CID_SEL, "selena", T(10, 0, 0),
                   last_activity_at=T(10, 0, 0), billed_until=T(10, 0, 0))
 seed_consultation(CID_EZR, "ezra", T(10, 1, 0))
 res = _flow(CID_SEL, T(10, 10, 0))
-check(res["status"] == "time_exhausted"
-      and res["time"]["total_remaining_seconds"] == 0
-      and DB["accounts"][UID]["first_free_seconds_remaining"] == 0,
-      "38 fil ciblé épuisé -> total 0 (jamais négatif), time_exhausted")
+check(res["status"] == "ok"
+      and res["time"]["total_remaining_seconds"] == 50
+      and DB["accounts"][UID]["first_free_seconds_remaining"] == 50,
+      "38 fil ciblé obsolète -> aucune rétrofacturation, solde 50 conservé")
 
 # 39. ordre des buckets inchangé (first_free avant premium)
 reset_db()

@@ -390,10 +390,12 @@ check(s["settled_seconds"] == 0, "O deux appels timestamp identique -> 0 double 
 reset_db(); seed_account(UID, first_free=3600)
 seed_consultation(CID, UID, last_activity_at=T(10, 0), billed_until=T(10, 0))
 s = A._settle_consultation_time_tx(cur(), UID, CID, T(10, 8))
-check(s["settled_seconds"] == 300
-      and DB["consultations"][CID]["billed_until"] == T(10, 5)
-      and DB["accounts"][UID]["first_free_seconds_remaining"] == 3300,
-      "L settle now=10:08, last_activity 10:00 -> fenetre plafonnee a 300 s, billed_until = 10:05")
+check(s["settled_seconds"] == 0
+      and s.get("stale") is True
+      and DB["consultations"][CID]["last_activity_at"] is None
+      and DB["consultations"][CID]["billed_until"] is None
+      and DB["accounts"][UID]["first_free_seconds_remaining"] == 3600,
+      "L settle now=10:08 -> ancienne fenêtre obsolète invalidée sans débit")
 
 print("-" * 64)
 print("M — retour tardif : l'inactivite n'est jamais facturee")
@@ -401,12 +403,12 @@ print("M — retour tardif : l'inactivite n'est jamais facturee")
 reset_db(); seed_account(UID, first_free=3600)
 seed_consultation(CID, UID, last_activity_at=T(10, 0), billed_until=T(10, 0))
 proc = A._process_consultation_activity_tx(cur(), UID, CID, T(10, 20))
-check(proc["settled"]["settled_seconds"] == 300
-      and DB["accounts"][UID]["first_free_seconds_remaining"] == 3300
-      and proc["touched"]["phase"] == "reopened"
+check(proc["settled"]["settled_seconds"] == 0
+      and DB["accounts"][UID]["first_free_seconds_remaining"] == 3600
+      and proc["touched"]["phase"] == "opened"
       and DB["consultations"][CID]["last_activity_at"] == T(10, 20)
       and DB["consultations"][CID]["billed_until"] == T(10, 20),
-      "M retour 10:20 -> seule la traine 10:00-10:05 facturee (300 s), aucune facturation 10:05->10:20")
+      "M retour 10:20 -> ancienne fenêtre invalidée, aucune facturation de l'absence")
 
 print("-" * 64)
 print("N — message a 4 min 59 : meme fenetre, facturee jusqu'a now")
@@ -468,7 +470,7 @@ check(DB["accounts"][UID]["purchased_seconds_remaining"] == 5000
       "S purchased NON touche par une conso Premium (debit tenu par le bucket premium)")
 
 print("-" * 64)
-print("U / V / W — epuisement en milieu de fenetre, pas de retrofacturation")
+print("U / V / W — épuisement et invalidation des fenêtres obsolètes")
 
 # U. settle de 300 s avec seulement 100 s disponibles.
 reset_db()
@@ -493,12 +495,16 @@ check(DB["consultations"][CID]["last_activity_at"] == T(9, 56, 40),
 s2 = A._settle_consultation_time_tx(cur(), UID, CID, T(10, 5, 0))
 check(s2["settled_seconds"] == 0 and s2["debit"] is None
       and DB["accounts"][UID]["first_free_seconds_remaining"] == 0
-      and DB["consultations"][CID]["billed_until"] == T(10, 1, 40),
-      "V settle repete apres epuisement -> +0 s, curseur fige a 10:01:40")
+      and s2.get("stale") is True
+      and DB["consultations"][CID]["last_activity_at"] is None
+      and DB["consultations"][CID]["billed_until"] is None,
+      "V settle repete après épuisement -> +0 s, fenêtre obsolète invalidée")
 
 s3 = A._settle_consultation_time_tx(cur(), UID, CID, T(11, 0, 0))
-check(s3["settled_seconds"] == 0,
-      "V2 settle bien plus tard (11:00) -> toujours +0 s (fenetre finie, aucune grace)")
+check(s3["settled_seconds"] == 0 and s3.get("stale") is not True
+      and DB["consultations"][CID]["last_activity_at"] is None
+      and DB["consultations"][CID]["billed_until"] is None,
+      "V2 settle bien plus tard (11:00) -> fenêtre obsolète invalidée, 0 s")
 
 # W. recharge ulterieure -> aucun rattrapage retroactif de la periode impayee.
 DB["accounts"][UID]["purchased_seconds_remaining"] = 500  # l'utilisateur recharge
@@ -507,10 +513,10 @@ check(proc["settled"]["settled_seconds"] == 0,
       "W recharge puis message a 10:20 -> settle ne rattrape RIEN (0 s facturee)")
 check(DB["accounts"][UID]["purchased_seconds_remaining"] == 500,
       "W2 le temps recharge (500) n'est PAS ampute par la periode impayee 10:01:40->10:05")
-check(proc["available"] is True and proc["touched"]["phase"] == "reopened"
+check(proc["available"] is True and proc["touched"]["phase"] == "opened"
       and DB["consultations"][CID]["last_activity_at"] == T(10, 20, 0)
       and DB["consultations"][CID]["billed_until"] == T(10, 20, 0),
-      "W3 fenetre NEUVE a now (10:20), pas de reprise de la fenetre interrompue")
+      "W3 fenêtre NEUVE à now (10:20), pas de reprise de la fenêtre interrompue")
 
 # W bis. meme scenario SANS recharge -> pas de touch, fenetre reste coupee.
 reset_db()
@@ -519,8 +525,9 @@ seed_consultation(CID, UID, last_activity_at=T(10, 0, 0), billed_until=T(10, 0, 
 A._settle_consultation_time_tx(cur(), UID, CID, T(10, 5, 0))  # epuise
 proc = A._process_consultation_activity_tx(cur(), UID, CID, T(10, 20, 0))
 check(proc["available"] is False and proc["touched"] is None
-      and DB["consultations"][CID]["last_activity_at"] == T(9, 56, 40),
-      "W4 sans recharge -> available False, aucune fenetre ouverte, coupe conservee")
+      and DB["consultations"][CID]["last_activity_at"] is None
+      and DB["consultations"][CID]["billed_until"] is None,
+      "W4 sans recharge -> available False, aucune fenêtre ouverte, ancienne fenêtre invalidée")
 
 print("-" * 64)
 print("X / Y — convention structurelle de verrouillage (pas une preuve anti-deadlock PG)")
