@@ -90,6 +90,8 @@ check(call["headers"]["Authorization"] == "Bearer ya29.fake-access-token",
       "1d — Authorization Bearer <access token>")
 check(msg["token"] == TOKEN, "1e — token cible dans message.token")
 check(msg["data"]["type"] == "daily_thought", "1f — data.type = catégorie")
+check(msg["android"]["notification"]["channel_id"] == P.INFORMATIVE_CHANNEL_ID,
+      "1f-bis — canal informatif = auryel_default_v2")
 check(msg["android"]["notification"]["visibility"] == "PRIVATE",
       "1g — visibilité écran verrouillé = PRIVATE")
 check("url" not in json.dumps(msg).lower() or "http" not in str(msg.get("data", {})),

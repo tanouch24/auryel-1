@@ -28,6 +28,7 @@ import time
 
 FCM_SEND_URL = "https://fcm.googleapis.com/v1/projects/{project_id}/messages:send"
 FCM_SCOPE = "https://www.googleapis.com/auth/firebase.messaging"
+INFORMATIVE_CHANNEL_ID = "auryel_default_v2"
 
 # Allowlist stricte — doit rester synchronisée avec NotificationType.wire
 # (Flutter) et _PUSH_CATEGORIES (auryel_bot.py).
@@ -118,7 +119,7 @@ def build_message(token, category, title, body, dry_run=False, data=None):
         "android": {
             "priority": "normal",
             "notification": {
-                "channel_id": "auryel_default",
+                "channel_id": INFORMATIVE_CHANNEL_ID,
                 "visibility": "PRIVATE",
                 "default_sound": True,
             },

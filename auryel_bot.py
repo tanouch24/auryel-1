@@ -16485,7 +16485,7 @@ def receive():
         if msg["type"] == "text":
             user_text = msg["text"]["body"]
             wamid = msg.get("id", "")
-            print(f"👤 {from_num}: {user_text}")
+            log_event("webhook_message_received", phone_hash=_phone_hash(from_num))
             est_depuis_pub = user_text.lower().strip() == MSG_PUB
 
             guide_key_code, nom_affiche_code = detecter_code_activation(user_text)
@@ -16495,7 +16495,7 @@ def receive():
                     create_user(from_num, guide_key_code, nom_affiche_code, depuis_site=True)
                     update_user_silent(from_num, onboarding_step="genre")
                     if wamid and not insert_user_msg_dedup(from_num, user_text, wamid):
-                        print(f"[webhook] doublon ignoré wamid={wamid}")
+                        log_event("webhook_duplicate_ignored")
                         return jsonify({"status": "ok"}), 200
                     def send_welcome_site(num, nom):
                         time.sleep(2)
@@ -16549,7 +16549,7 @@ def receive():
                 MOTS_RELANCE = {"RELANCE", "REPRENDRE"}
                 if msg_norm in MOTS_STOP:
                     update_user_silent(from_num, stop_relances=True)
-                    print(f"[opt-out] STOP reçu → {from_num}")
+                    log_event("webhook_opt_out", phone_hash=_phone_hash(from_num))
                     threading.Thread(
                         target=lambda num: (time.sleep(1), send_message(num,
                             "Vous ne recevrez plus de messages automatiques de notre part. "
@@ -16558,7 +16558,7 @@ def receive():
                     return jsonify({"status": "ok"}), 200
                 if msg_norm in MOTS_RELANCE and user and user.get("stop_relances", False):
                     update_user_silent(from_num, stop_relances=False)
-                    print(f"[opt-in] RELANCE reçu → {from_num}")
+                    log_event("webhook_opt_in", phone_hash=_phone_hash(from_num))
                     threading.Thread(
                         target=lambda num: (time.sleep(1), send_message(num,
                             "C'est noté, vous recevrez à nouveau nos messages. "
@@ -16583,7 +16583,7 @@ def receive():
                 if onboarding_ok and user.get("etat") == "pause":
                     if wamid:
                         if not insert_user_msg_dedup(from_num, user_text, wamid):
-                            print(f"[webhook] doublon ignoré wamid={wamid}")
+                            log_event("webhook_duplicate_ignored")
                             return jsonify({"status": "ok"}), 200
                     else:
                         add_message(from_num, "user", user_text)
@@ -16602,7 +16602,7 @@ def receive():
                 _user_msg_pre_inserted = False
                 if onboarding_ok and wamid:
                     if not insert_user_msg_dedup(from_num, user_text, wamid):
-                        print(f"[webhook] doublon ignoré wamid={wamid}")
+                        log_event("webhook_duplicate_ignored")
                         return jsonify({"status": "ok"}), 200
                     _user_msg_pre_inserted = True
 
@@ -16612,7 +16612,7 @@ def receive():
 
                     if not onboarding_ok:
                         reply = get_reply(num, text, depuis_pub=depuis_pub)
-                        print(f"🔮 {nom}: {reply}")
+                        log_event("webhook_reply_generated", phone_hash=_phone_hash(num))
                         send_message(num, reply)
                         return
 
@@ -16646,7 +16646,7 @@ def receive():
 
                     reply = get_reply(num, text, depuis_pub=depuis_pub,
                                       user_msg_pre_inserted=_user_msg_pre_inserted)
-                    print(f"🔮 {nom}: {reply}")
+                    log_event("webhook_reply_generated", phone_hash=_phone_hash(num))
                     send_message(num, reply)
 
                 threading.Thread(target=send_reply,
@@ -16666,8 +16666,7 @@ def receive():
                     threading.Thread(target=lambda num: (time.sleep(2), send_message(num, "Je suis là...")), args=(from_num,), daemon=True).start()
 
     except Exception as e:
-        print(f"❌ Erreur: {e}")
-        import traceback; traceback.print_exc()
+        log_event("webhook_processing_error", error=type(e).__name__)
     return jsonify({"status":"ok"}), 200
 
 # ============================================================
