@@ -1,6 +1,6 @@
 """
 test_billing_extra_hour.py — v44 : achat CONSOMMABLE « +1 heure supplémentaire »
-(produit Google Play `auryel_extra_hour`).
+(produit `auryel_extra_hour`, Google Play et Apple App Store).
 
 Couvre :
   - _google_verify_product : purchaseState 0 / 1 / 2, 404, parsing, pas de token
@@ -404,10 +404,32 @@ r = post({"store": "google_play", "product_id": "auryel_premium_monthly",
 check(r.status_code == 400 and r.get_json()["error"] == "invalid_product",
       "3d product_id non consommable -> 400 invalid_product")
 
-# 3e app_store -> 422 (lot ultérieur)
+# 3e app_store -> vérification Apple puis crédit exactly-once
+reset_db()
+seed_account(UID)
 r = post({"store": "app_store", "product_id": PID, "transaction_id": "tx"})
-check(r.status_code == 422 and r.get_json()["error"] == "invalid_store_receipt",
-      "3e app_store consommable -> 422 invalid_store_receipt")
+check(r.status_code == 503 and r.get_json()["error"] == "verification_not_configured",
+      "3e credentials Apple absents -> fail closed")
+
+with patch.object(A, "_apple_verify_consumable", return_value={
+    "store": "app_store", "product_id": PID, "purchase_key": "tx",
+    "order_id": None, "purchased_at": NOW,
+    "raw_payload": {"source": "app_store"},
+}):
+    r = post({"store": "app_store", "product_id": PID, "transaction_id": "tx"})
+check(r.status_code == 200 and r.get_json()["purchase"]["credited_seconds"] == 3600
+      and r.get_json()["purchase"]["already_credited"] is False,
+      "3e Apple transaction valide -> +3600")
+
+with patch.object(A, "_apple_verify_consumable", return_value={
+    "store": "app_store", "product_id": PID, "purchase_key": "tx",
+    "order_id": None, "purchased_at": NOW,
+    "raw_payload": {"source": "app_store"},
+}):
+    r = post({"store": "app_store", "product_id": PID, "transaction_id": "tx"})
+check(r.status_code == 200 and r.get_json()["purchase"]["credited_seconds"] == 0
+      and r.get_json()["purchase"]["already_credited"] is True,
+      "3e rejeu Apple -> aucun double crédit")
 
 # 3f purchase_token manquant
 r = post({"store": "google_play", "product_id": PID})

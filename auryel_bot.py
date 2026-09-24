@@ -8607,14 +8607,14 @@ def api_memory_progress():
 
 
 # ============================================================
-# PUSH ANDROID MULTI-APPAREIL — POST /api/app/push/register + /unregister
+# PUSH MULTI-APPAREIL — POST /api/app/push/register + /unregister
 # ============================================================
 # Enregistre / désenregistre un jeton FCM pour l'appareil courant. Le serveur
 # est l'unique autorité sur l'identité : `user_id` vient TOUJOURS du jeton
 # Bearer (`g.app_account["user_id"]`), jamais du body. Le jeton FCM n'est
 # JAMAIS renvoyé ni écrit dans un log. Voir Migration v40 / push_devices.
 
-_PUSH_PLATFORMS   = frozenset({"android"})   # allowlist (iOS = lot ultérieur)
+_PUSH_PLATFORMS   = frozenset({"android", "ios"})
 _PUSH_TOKEN_MAX   = 4096
 _PUSH_META_MAX    = 60
 _PUSH_LABEL_MAX   = 120
@@ -8737,12 +8737,12 @@ def active_push_tokens_for_user(user_id):
 @require_app_auth
 def api_app_push_register():
     """Enregistre le jeton FCM de l'appareil courant.
-      body : { "fcm_token": "...", "platform": "android",
+      body : { "fcm_token": "...", "platform": "android" | "ios",
                "app_version"?: "...", "os_version"?: "...",
                "device_label"?: "..." }
     - identité = Bearer, jamais le body.
     - fcm_token obligatoire, borné (<= 4096).
-    - platform dans l'allowlist (défaut 'android').
+    - platform dans l'allowlist (défaut 'android' pour compatibilité).
     - upsert idempotent : réaffecte le jeton au compte courant si le téléphone
       a changé de compte, réactive un jeton désactivé.
     Réponses : 200 {"status":"registered"} ; 400 invalid_request ;
@@ -16133,6 +16133,116 @@ def _apple_verify_subscription(transaction_id, expected_product_id, now=None):
                                                    "transaction Apple inconnue")
 
 
+def _apple_verify_consumable(transaction_id, expected_product_id, now=None):
+    """Vérifie un consommable Apple via Get Transaction Info.
+
+    La preuve envoyée par le client est seulement le transaction_id. La
+    transaction signée est récupérée auprès d'Apple puis décodée par le même
+    SignedDataVerifier que les abonnements. Le crédit exactly-once est ensuite
+    assuré par ``credit_consumable_purchase`` et sa clé unique
+    (store, transaction_id).
+    """
+    if now is None:
+        now = _utcnow()
+    try:
+        from appstoreserverlibrary.api_client import APIException
+    except ImportError:
+        raise StoreVerificationError("verification_not_configured",
+                                     "app-store-server-library non installé")
+
+    _iss, _kid, _pk, _bundle, configured_env, _aid = _apple_config()
+    envs = [configured_env] + (["sandbox"] if configured_env == "production" else [])
+    last_not_found = None
+
+    for env_label in envs:
+        client = _apple_api_client(env_label)
+        try:
+            response = client.get_transaction_info(transaction_id)
+        except APIException as exc:
+            code = getattr(exc, "http_status_code", None)
+            if code == 404:
+                last_not_found = StoreVerificationError(
+                    "invalid_store_receipt", "transaction Apple inconnue")
+                continue
+            if code in (401, 403):
+                raise StoreVerificationError("store_verification_unavailable",
+                                             "auth Apple refusée", retryable=True)
+            if code == 429 or (code is not None and code >= 500):
+                raise StoreVerificationError("store_verification_unavailable",
+                                             "App Store Server API indisponible",
+                                             retryable=True)
+            raise StoreVerificationError("invalid_store_receipt",
+                                         "réponse Apple inattendue")
+        except requests.RequestException:
+            raise StoreVerificationError("store_verification_unavailable",
+                                         "App Store injoignable", retryable=True)
+
+        signed_transaction = getattr(response, "signedTransactionInfo", None)
+        if not signed_transaction:
+            raise StoreVerificationError("invalid_store_receipt",
+                                         "signedTransactionInfo absent")
+
+        verifier = _apple_signed_data_verifier(env_label)
+        try:
+            transaction = verifier.verify_and_decode_signed_transaction(
+                signed_transaction)
+        except Exception as exc:
+            try:
+                from appstoreserverlibrary.signed_data_verifier import VerificationException
+            except ImportError:
+                VerificationException = ()
+            if VerificationException and isinstance(exc, VerificationException):
+                raise StoreVerificationError(
+                    "invalid_store_receipt",
+                    "signature/chaîne JWS Apple invalide")
+            raise StoreVerificationError("invalid_store_receipt",
+                                         "transaction Apple inexploitable")
+
+        tx_id = str(getattr(transaction, "transactionId", "") or "")
+        product_id = getattr(transaction, "productId", None)
+        bundle_id = getattr(transaction, "bundleId", None)
+        environment = _apple_enum_str(getattr(transaction, "environment", None))
+        transaction_type = _apple_enum_str(getattr(transaction, "type", None))
+        original_transaction_id = getattr(transaction, "originalTransactionId", None)
+        purchase_at = _billing_parse_epoch_millis(
+            getattr(transaction, "purchaseDate", None))
+        revocation_date = getattr(transaction, "revocationDate", None)
+
+        expected_environment = "Sandbox" if env_label == "sandbox" else "Production"
+        if (tx_id != transaction_id
+                or product_id != expected_product_id
+                or bundle_id != _bundle
+                or environment not in (expected_environment, env_label)
+                or transaction_type not in ("Consumable", "consumable")
+                # Un consommable restauré ne doit jamais être recrédité. Pour
+                # une transaction d'achat directe, Apple conserve normalement
+                # le même transactionId/originalTransactionId ; si les deux
+                # sont présents et diffèrent, on refuse la preuve.
+                or (original_transaction_id is not None
+                    and str(original_transaction_id) != tx_id)
+                or purchase_at is None
+                or revocation_date is not None):
+            raise StoreVerificationError("invalid_store_receipt",
+                                         "transaction Apple non conforme")
+
+        return {
+            "store": "app_store",
+            "product_id": expected_product_id,
+            "purchase_key": transaction_id,
+            "order_id": None,
+            "purchased_at": purchase_at,
+            "raw_payload": {
+                "source": "app_store",
+                "environment": env_label,
+                "transaction_type": transaction_type,
+                "revoked": False,
+            },
+        }
+
+    raise last_not_found or StoreVerificationError("invalid_store_receipt",
+                                                   "transaction Apple inconnue")
+
+
 # ------------------------------------------------------------
 # ROUTE — POST /api/billing/verify
 # ------------------------------------------------------------
@@ -16287,7 +16397,8 @@ def api_billing_purchase():
     Body attendu (Android) :
       {"store":"google_play","product_id":"auryel_extra_hour",
        "purchase_token":"..."}
-    (app_store : consommables non supportés dans ce lot -> 422.)
+    (app_store) : {"store":"app_store","product_id":"auryel_extra_hour",
+                   "transaction_id":"..."}
 
     Mapping SERVEUR FIXE : auryel_extra_hour => 3600 s 'purchased'. La durée
     n'est JAMAIS lue du client. Chaque achat DISTINCT (nouveau purchaseToken)
@@ -16301,8 +16412,7 @@ def api_billing_purchase():
           missing_purchase_token
       401 unauthorized
       409 account_mismatch      (token déjà rattaché à un autre compte)
-      422 invalid_store_receipt (annulé / remboursé / token inconnu /
-                                 app_store non supporté)
+      422 invalid_store_receipt (annulé / remboursé / transaction inconnue)
       503 store_verification_unavailable / verification_not_configured
           (Google injoignable, achat encore en attente)
       500 internal_error
@@ -16321,18 +16431,18 @@ def api_billing_purchase():
         return _auth_json({"error": "invalid_store"}, 400)
     if product_id not in _MOBILE_CONSUMABLE_PRODUCT_IDS:
         return _auth_json({"error": "invalid_product"}, 400)
-    if store != "google_play":
-        # Vérification StoreKit des consommables = lot ultérieur (Android d'abord).
-        return _auth_json({"error": "invalid_store_receipt"}, 422)
-
-    token = data.get("purchase_token")
-    token = token.strip() if isinstance(token, str) else ""
-    if not token:
-        return _auth_json({"error": "missing_purchase_token"}, 400)
+    proof = (data.get("purchase_token") if store == "google_play"
+             else data.get("transaction_id"))
+    proof = proof.strip() if isinstance(proof, str) else ""
+    if not proof:
+        return _auth_json({"error": "missing_purchase_token" if store == "google_play"
+                           else "missing_transaction_id"}, 400)
 
     # 1) Vérification auprès du store officiel (RÉSEAU).
     try:
-        normalized = _google_verify_product(token, product_id)
+        normalized = (_google_verify_product(proof, product_id)
+                      if store == "google_play"
+                      else _apple_verify_consumable(proof, product_id))
     except StoreVerificationError as exc:
         return _auth_json({"error": exc.code}, 503 if exc.retryable else 422)
 
@@ -16357,14 +16467,15 @@ def api_billing_purchase():
 
     # 3) Acknowledge Google BEST-EFFORT (housekeeping ; le client consomme
     #    aussi via autoConsume). Aucune erreur ne remonte : déjà crédité.
-    try:
-        _google_acknowledge_product(
-            token, product_id,
-            ack_state=(normalized["raw_payload"] or {}).get("acknowledgement_state"),
-        )
-    except Exception:
-        print("[billing] ack produit best-effort échoué user=%s"
-              % _billing_mask(str(user_id)))
+    if store == "google_play":
+        try:
+            _google_acknowledge_product(
+                proof, product_id,
+                ack_state=(normalized["raw_payload"] or {}).get("acknowledgement_state"),
+            )
+        except Exception:
+            print("[billing] ack produit best-effort échoué user=%s"
+                  % _billing_mask(str(user_id)))
 
     # 4) Quota renvoyé (le portefeuille temps -> bloc `time` de
     #    GET /api/consultation/state, relu par le client juste après).
