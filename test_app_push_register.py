@@ -180,10 +180,14 @@ check("registered" not in str(r.get_json()).lower().replace("registered", "")
       or TOK_A not in r.get_data(as_text=True),
       "3c le jeton n'apparaît pas dans la réponse")
 
-# --- 4. plateforme hors allowlist -> repli 'android' ---------------
+# --- 4. iOS accepté, plateforme hors allowlist -> repli 'android' ---
+_reset(); _as(UID1)
+_reg({"fcm_token": TOK_A, "platform": "ios"})
+check(_DEVICES[TOK_A]["platform"] == "ios", "4a plateforme iOS acceptée")
+
 _reset(); _as(UID1)
 _reg({"fcm_token": TOK_A, "platform": "windows"})
-check(_DEVICES[TOK_A]["platform"] == "android", "4 plateforme inconnue -> 'android'")
+check(_DEVICES[TOK_A]["platform"] == "android", "4b plateforme inconnue -> 'android'")
 
 # --- 5. idempotence : 2e register même token -> toujours 200, 1 ligne
 _reset(); _as(UID1)
