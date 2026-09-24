@@ -438,13 +438,14 @@ check(_complete("99999999-9999-4999-8999-999999999999").status_code == 404,
       "4d game_id inconnu -> 404")
 
 # ===========================================================================
-# 5. easy sous 20 s -> +15 ⭐ ; à 20 s ou au-dessus -> aucun crédit
+# 5. easy sous 20 s finalise le jeu, mais l'ancien crédit Stars est retiré.
 # ===========================================================================
 _reset_db()
 _, out = _play(UID1, "easy", 19)
-check(out["outcome"] == "rewarded" and out["reward_credited"] is True
-      and out["stars_awarded"] == 15 and _balance(UID1) == 15,
-      "5a easy en 19 s -> +15 ⭐")
+check(out["outcome"] == "stars_economy_retired"
+      and out["reward_credited"] is False
+      and out["stars_awarded"] == 0 and _balance(UID1) == 0,
+      "5a easy en 19 s -> jeu finalisé sans crédit Stars")
 
 _reset_db()
 _, out = _play(UID1, "easy", 20)
@@ -458,20 +459,24 @@ check(out["reward_credited"] is False and _balance(UID1) == 0,
       "5c easy en 45 s -> aucun crédit")
 
 # ===========================================================================
-# 6. medium / hard : seuils de JEU exacts inchangés, récompense TOUJOURS 15 ⭐
+# 6. medium / hard : seuils de jeu inchangés, aucun crédit Stars historique
 # ===========================================================================
 _reset_db()
 _, out = _play(UID1, "medium", 39)
-check(out["reward_credited"] and out["stars_awarded"] == 15 and _balance(UID1) == 15,
-      "6a medium 39 s -> +15 ⭐ (même montant que easy — récompense unifiée)")
+check(out["outcome"] == "stars_economy_retired"
+      and not out["reward_credited"] and out["stars_awarded"] == 0
+      and _balance(UID1) == 0,
+      "6a medium 39 s -> aucun crédit Stars historique")
 _reset_db()
 _, out = _play(UID1, "medium", 40)
 check(not out["reward_credited"] and _balance(UID1) == 0,
       "6b medium 40 s PILE -> aucun crédit")
 _reset_db()
 _, out = _play(UID1, "hard", 79)
-check(out["reward_credited"] and out["stars_awarded"] == 15 and _balance(UID1) == 15,
-      "6c hard 79 s -> +15 ⭐ (même montant)")
+check(out["outcome"] == "stars_economy_retired"
+      and not out["reward_credited"] and out["stars_awarded"] == 0
+      and _balance(UID1) == 0,
+      "6c hard 79 s -> aucun crédit Stars historique")
 _reset_db()
 _, out = _play(UID1, "hard", 80)
 check(not out["reward_credited"] and _balance(UID1) == 0,
@@ -485,27 +490,27 @@ _reset_db()
 _, e = _play(UID1, "easy", 10)
 _, m = _play(UID1, "medium", 10)
 _, h = _play(UID1, "hard", 10)
-check(e["reward_credited"] is True, "7a la 1re partie gagnée du jour est récompensée")
-check(m["reward_credited"] is False and m["outcome"] == "daily_limit_reached",
-      "7b la 2e partie gagnée le MÊME jour -> aucun crédit (plafond quotidien "
-      "partagé, PAS un cooldown 7 j par difficulté)")
-check(h["reward_credited"] is False and h["outcome"] == "daily_limit_reached",
-      "7c la 3e non plus")
-check(_balance(UID1) == 15,
-      "7d solde = 15 (UNE seule récompense malgré 3 parties gagnées le même jour)")
+check(e["reward_credited"] is False and e["outcome"] == "stars_economy_retired",
+      "7a la 1re partie ne crédite plus les Stars historiques")
+check(m["reward_credited"] is False and m["outcome"] == "stars_economy_retired",
+      "7b la 2e partie ne crée pas de claim Stars")
+check(h["reward_credited"] is False and h["outcome"] == "stars_economy_retired",
+      "7c la 3e partie ne crée pas de claim Stars")
+check(_balance(UID1) == 0,
+      "7d aucune partie ne modifie le wallet historique")
 
 # ===========================================================================
 # 8. rejeu de /complete sur la même game -> aucun double crédit
 # ===========================================================================
 _reset_db()
 gid, out1 = _play(UID1, "easy", 10)
-check(_balance(UID1) == 15, "8a 1er complete -> +15 ⭐")
+check(_balance(UID1) == 0, "8a 1er complete -> aucun crédit Stars")
 out2 = _complete(gid).get_json()
 out3 = _complete(gid).get_json()
-check(_balance(UID1) == 15
+check(_balance(UID1) == 0
       and out2["reward_credited"] is False and out2.get("already_finalized") is True
       and out3["reward_credited"] is False,
-      "8b rejeux -> toujours 15, already_finalized, aucun double crédit")
+      "8b rejeux -> aucun crédit et already_finalized")
 
 # ===========================================================================
 # 9. partie déjà terminée (perdante) -> pas de crédit au rejeu
@@ -559,8 +564,9 @@ check(out["outcome"] == "implausible_time" and out["reward_credited"] is False
       "11a hard en 2 s -> implausible_time, aucun crédit")
 # éligibilité intacte : une vraie partie juste après crédite
 _, out2 = _play(UID1, "hard", 20)
-check(out2["reward_credited"] is True and _balance(UID1) == 15,
-      "11b partie impossible ne consomme PAS l'éligibilité -> +15 ensuite")
+check(out2["outcome"] == "stars_economy_retired"
+      and out2["reward_credited"] is False and _balance(UID1) == 0,
+      "11b partie valide -> aucun crédit Stars historique")
 
 # ===========================================================================
 # 12. plafond quotidien : lendemain -> nouvelle récompense
@@ -568,18 +574,19 @@ check(out2["reward_credited"] is True and _balance(UID1) == 15,
 _reset_db()
 base = _NOW["t"]
 _play(UID1, "easy", 10)
-check(_balance(UID1) == 15, "12a easy gagné à J0")
+check(_balance(UID1) == 0, "12a easy finalisé à J0 sans crédit Stars")
 
 _NOW["t"] = base + timedelta(hours=2)  # même jour Europe/Paris (base = 14h Paris)
 gid, out = _play(UID1, "medium", 10)
-check(out["outcome"] == "daily_limit_reached" and out["reward_credited"] is False
-      and _balance(UID1) == 15,
-      "12b même jour (autre difficulté) -> daily_limit_reached, aucun crédit")
+check(out["outcome"] == "stars_economy_retired" and out["reward_credited"] is False
+      and _balance(UID1) == 0,
+      "12b même jour -> aucun claim Stars historique")
 
 _NOW["t"] = base + timedelta(days=1)
 _, out = _play(UID1, "hard", 10)
-check(out["reward_credited"] is True and _balance(UID1) == 30,
-      "12c lendemain -> nouvelle récompense (+15, total 30)")
+check(out["outcome"] == "stars_economy_retired"
+      and out["reward_credited"] is False and _balance(UID1) == 0,
+      "12c lendemain -> aucun crédit Stars historique")
 _NOW["t"] = base
 
 # ===========================================================================
@@ -588,11 +595,12 @@ _NOW["t"] = base
 _reset_db()
 _play(UID1, "easy", 10)
 _, b = _play(UID2, "easy", 10)
-check(_balance(UID1) == 15 and _balance(UID2) == 15 and b["reward_credited"] is True,
-      "13a A et B gagnent chacun leur récompense indépendamment")
+check(_balance(UID1) == 0 and _balance(UID2) == 0
+      and b["reward_credited"] is False,
+      "13a A et B ne reçoivent aucun crédit Stars historique")
 _, a2 = _play(UID1, "medium", 10)
-check(a2["reward_credited"] is False and _balance(UID1) == 15,
-      "13b A reste plafonné pour aujourd'hui (indépendamment de B)")
+check(a2["reward_credited"] is False and _balance(UID1) == 0,
+      "13b A reste sans mutation de wallet historique")
 
 # ===========================================================================
 # 14. deux /complete « concurrents » sur la même game -> exactly once
@@ -604,9 +612,9 @@ _NOW["t"] = t0 + timedelta(seconds=10)
 first = _complete(gid).get_json()
 second = _complete(gid).get_json()
 _NOW["t"] = t0
-check(first["reward_credited"] is True and second["reward_credited"] is False
-      and _balance(UID1) == 15,
-      "14 complete rejoué immédiatement -> 1 seul crédit")
+check(first["reward_credited"] is False and first["outcome"] == "stars_economy_retired"
+      and second["reward_credited"] is False and _balance(UID1) == 0,
+      "14 complete rejoué immédiatement -> aucun crédit")
 
 # ===========================================================================
 # 15. GET /progress : nouveau contrat (plafond PARTAGÉ, plus de difficulties
@@ -623,8 +631,8 @@ check([d["difficulty"] for d in j["difficulties"]] == ["easy", "medium", "hard"]
       "15c les 3 difficultés listées (paramètres de JEU, inchangés)")
 _play(UID1, "easy", 10)
 j2 = _progress().get_json()
-check(j2["eligible_today"] is False and j2["next_reset_at"] is not None,
-      "15d après une victoire du jour -> non éligible, next_reset_at renseigné")
+check(j2["eligible_today"] is True and j2["next_reset_at"] is None,
+      "15d après une partie -> aucune claim Stars, éligibilité inchangée")
 before = _balance(UID1)
 for _ in range(3):
     _progress()

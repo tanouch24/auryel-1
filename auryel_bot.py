@@ -158,7 +158,23 @@ app.config["SESSION_REFRESH_EACH_REQUEST"] = True
 app.wsgi_app = ProxyFix(app.wsgi_app, x_for=1)
 limiter = Limiter(get_remote_address, app=app)
 
-CORS(app, resources={r"/stripe/*": {"origins": ["https://auryelvoyance.com"]}})
+_admin_cors_origins = [
+    origin.strip()
+    for origin in os.environ.get(
+        "AURYEL_CONTROL_CORS_ORIGINS",
+        "http://localhost:3000" if os.environ.get("AURYEL_ENV") == "development" else "https://dashboard.auryelvoyance.com",
+    ).split(",")
+    if origin.strip()
+]
+CORS(app, resources={
+    r"/stripe/*": {"origins": ["https://auryelvoyance.com"]},
+    r"/api/admin/*": {
+        "origins": _admin_cors_origins,
+        "methods": ["GET", "POST", "OPTIONS"],
+        "allow_headers": ["Authorization", "Content-Type"],
+        "max_age": 600,
+    },
+})
 
 WHATSAPP_TOKEN  = os.environ.get("WHATSAPP_TOKEN")
 PHONE_NUMBER_ID = os.environ.get("PHONE_NUMBER_ID")
@@ -3066,6 +3082,55 @@ def init_db():
             "Migration v69 (catalogue vidéos Réveil) échouée"
         ) from e
 
+    # Migration v70 — AURYEL CONTROL admin API. Additive only: the legacy
+    # /admin HTML login and mobile authentication remain untouched.
+    try:
+        migration_path = os.path.join(
+            os.path.dirname(__file__), "migrations", "043_admin_control.sql"
+        )
+        with open(migration_path, "r", encoding="utf-8") as migration_file:
+            c.execute(migration_file.read())
+        conn.commit()
+    except Exception as e:
+        conn.rollback()
+        conn.close()
+        raise CriticalSchemaMigrationError(
+            "Migration v70 (Auryel Control admin) échouée"
+        ) from e
+
+    # Migration v71 — first-party analytics, billing ledger, AI usage and
+    # acquisition attribution. Append-only and additive; no mobile contract is
+    # changed by the schema itself.
+    try:
+        migration_path = os.path.join(
+            os.path.dirname(__file__), "migrations", "044_analytics_tracking.sql"
+        )
+        with open(migration_path, "r", encoding="utf-8") as migration_file:
+            c.execute(migration_file.read())
+        conn.commit()
+    except Exception as e:
+        conn.rollback()
+        conn.close()
+        raise CriticalSchemaMigrationError(
+            "Migration v71 (analytics tracking) échouée"
+        ) from e
+
+    # Migration v72 — admin TOTP MFA. Additive only; existing admin sessions
+    # remain valid until expiry/revocation and no mobile table is changed.
+    try:
+        migration_path = os.path.join(
+            os.path.dirname(__file__), "migrations", "045_admin_mfa.sql"
+        )
+        with open(migration_path, "r", encoding="utf-8") as migration_file:
+            c.execute(migration_file.read())
+        conn.commit()
+    except Exception as e:
+        conn.rollback()
+        conn.close()
+        raise CriticalSchemaMigrationError(
+            "Migration v72 (admin MFA) échouée"
+        ) from e
+
     conn.close()
 
 def reset_db():
@@ -5294,6 +5359,14 @@ def api_app_auth_register():
         return _auth_json({"error": "email_taken",
                            "message": "Un compte existe déjà avec cette adresse email."}, 409)
     try:
+        record_analytics_event(
+            get_conn, app.secret_key, event_name="account_created",
+            account_id=str(user_id), source="server",
+            idempotency_key=f"account_created:{user_id}",
+        )
+    except Exception:
+        pass
+    try:
         payload = _session_payload(user_id, data)
     except Exception:
         print("[auth] register : compte cree, echec creation session")
@@ -5865,6 +5938,12 @@ def api_consultation_message():
     # interaction paid by a previously validated Rewarded entitlement.
     cid = flow["consultation"]["id"]
     advisor_real = flow["consultation"]["advisor_id"]   # figé si fenêtre active
+    _record_server_analytics(
+        "consultation_started", account_id=user_id,
+        properties={"advisor_id": str(advisor_real)[:80],
+                    "credit_source": str(flow["consultation"].get("credit_source") or "time")[:40]},
+        idempotency_key=f"consultation_started:{cid}",
+    )
 
     # Lecture ciblée LECTURE SEULE (started_at / expires_at / credit_source) pour
     # la compat du JSON consultation — aucun FOR UPDATE, aucune mutation de
@@ -5923,6 +6002,11 @@ def api_consultation_message():
         if flow.get("question_reservation_id"):
             _finish_rewarded_question(user_id, flow["question_reservation_id"], "released")
         _fail_consultation_message_request(user_id, request_key)
+        _record_server_analytics(
+            "consultation_interrupted", account_id=user_id,
+            properties={"advisor_id": str(advisor_real)[:80]},
+            idempotency_key=f"consultation_interrupted:{request_key or cid}",
+        )
         raise
     # Une panne totale des fournisseurs ne constitue pas une réponse
     # conseiller utilisable : la question réservée doit rester disponible.
@@ -11272,7 +11356,7 @@ def llm_last_recommendation():
     return value if isinstance(value, dict) else None
 
 
-def _record_llm_usage(*, model, mode, usage):
+def _record_llm_usage(*, model, mode, usage, provider=None, latency_ms=None):
     """Métrique minimale, sans contenu conversationnel ni secret."""
     if not isinstance(usage, dict):
         return
@@ -11286,6 +11370,22 @@ def _record_llm_usage(*, model, mode, usage):
         return
     log_event("llm_usage", model=str(model)[:80], mode=str(mode)[:32],
               timestamp=datetime.now(timezone.utc).isoformat(), **values)
+    # First-party durable telemetry is strictly metadata-only and fail-safe.
+    # It must never affect the response path if the analytics migration is not
+    # available yet or if the database is temporarily unavailable.
+    try:
+        record_ai_usage(
+            get_conn,
+            request_id=str(uuid.uuid4()),
+            provider=str(provider or "unknown")[:40],
+            model=str(model)[:120],
+            usage=usage,
+            latency_ms=latency_ms,
+            status="success",
+            fallback_used=False,
+        )
+    except Exception:
+        pass
 
 
 def _usage_dict(value):
@@ -11350,6 +11450,7 @@ def _call_llm_once(messages, temperature, max_tokens):
 
     for p in chain:
         try:
+            _llm_started = time.monotonic()
             if p == "openai":
                 if not OPENAI_API_KEY:
                     raise RuntimeError("OPENAI_API_KEY manquant")
@@ -11365,7 +11466,8 @@ def _call_llm_once(messages, temperature, max_tokens):
                 payload = resp.json()
                 _record_llm_usage(
                     model=model, mode=getattr(_LLM_STATE, "mode", "normal"),
-                    usage=_usage_dict(payload.get("usage")))
+                    usage=_usage_dict(payload.get("usage")), provider="openai",
+                    latency_ms=int((time.monotonic() - _llm_started) * 1000))
                 content = payload["choices"][0]["message"]["content"]
                 if not content:
                     raise RuntimeError("OpenAI response vide")
@@ -11387,7 +11489,8 @@ def _call_llm_once(messages, temperature, max_tokens):
                 payload = resp.json()
                 _record_llm_usage(
                     model=model, mode=getattr(_LLM_STATE, "mode", "normal"),
-                    usage=_usage_dict(payload.get("usage")))
+                    usage=_usage_dict(payload.get("usage")), provider="openrouter",
+                    latency_ms=int((time.monotonic() - _llm_started) * 1000))
                 content = payload["choices"][0]["message"]["content"]
                 if not content:
                     raise RuntimeError("OpenRouter response vide")
@@ -11407,7 +11510,8 @@ def _call_llm_once(messages, temperature, max_tokens):
                 _record_llm_usage(
                     model="llama-3.3-70b-versatile",
                     mode=getattr(_LLM_STATE, "mode", "normal"),
-                    usage=_usage_dict(getattr(resp, "usage", None)))
+                    usage=_usage_dict(getattr(resp, "usage", None)), provider="groq",
+                    latency_ms=int((time.monotonic() - _llm_started) * 1000))
                 content = resp.choices[0].message.content
                 if not content:
                     raise RuntimeError("Groq response vide")
@@ -16329,7 +16433,7 @@ def api_billing_verify():
     #    dans UNE SEULE transaction DB (rollback global si record OU resync
     #    échoue — jamais de demi-écriture). AUCUN appel réseau ici.
     try:
-        record_and_resync_mobile_subscription(
+        record_result = record_and_resync_mobile_subscription(
             user_id=user_id,
             store=normalized["store"],
             product_id=normalized["product_id"],
@@ -16350,6 +16454,21 @@ def api_billing_verify():
         print("[billing] échec transaction record+resync user=%s"
               % _billing_mask(str(user_id)))
         return _auth_json({"error": "internal_error"}, 500)
+
+    try:
+        subscription_event = "premium_purchased" if record_result["subscription"]["outcome"] == "created" else "premium_renewal"
+        record_billing_event(
+            get_conn, app.secret_key, account_id=user_id,
+            event_type=subscription_event, store=normalized["store"],
+            product_id=normalized["product_id"],
+            transaction_id=normalized.get("latest_transaction_id"),
+            currency=(normalized.get("raw_payload") or {}).get("currency"),
+            gross_amount=(normalized.get("raw_payload") or {}).get("gross_amount"),
+            occurred_at=normalized.get("current_period_start"),
+            idempotency_key=f"{subscription_event}:{normalized.get('latest_transaction_id') or normalized.get('subscription_key')}",
+        )
+    except Exception:
+        pass
 
     # 3) acknowledge Google (RÉSEAU — HORS transaction DB) + 4) état renvoyé.
     try:
@@ -16464,6 +16583,30 @@ def api_billing_purchase():
         print("[billing] échec crédit consommable user=%s"
               % _billing_mask(str(user_id)))
         return _auth_json({"error": "internal_error"}, 500)
+
+    try:
+        purchase_key = normalized.get("purchase_key") or normalized.get("order_id")
+        record_billing_event(
+            get_conn, app.secret_key, account_id=user_id,
+            event_type="extra_hour_purchase", store=normalized["store"],
+            product_id=normalized["product_id"], transaction_id=purchase_key,
+            currency=(normalized.get("raw_payload") or {}).get("currency"),
+            gross_amount=(normalized.get("raw_payload") or {}).get("gross_amount"),
+            occurred_at=normalized.get("purchased_at"),
+            idempotency_key=f"extra_hour_purchase:{purchase_key}",
+        )
+        if result.get("credited_seconds", 0) > 0:
+            record_billing_event(
+                get_conn, app.secret_key, account_id=user_id,
+                event_type="extra_hour_credited", store=normalized["store"],
+                product_id=normalized["product_id"], transaction_id=purchase_key,
+                currency=(normalized.get("raw_payload") or {}).get("currency"),
+                gross_amount=(normalized.get("raw_payload") or {}).get("gross_amount"),
+                occurred_at=normalized.get("purchased_at"),
+                idempotency_key=f"extra_hour_credited:{purchase_key}",
+            )
+    except Exception:
+        pass
 
     # 3) Acknowledge Google BEST-EFFORT (housekeeping ; le client consomme
     #    aussi via autoConsume). Aucune erreur ne remonte : déjà crédité.
@@ -19453,6 +19596,36 @@ def check_and_increment_daily_limit(phone, user):
 # (push_scheduler.push_tick), POST /cron/daily, POST /cron/morning.
 # `cron_relances_intraday()` reste une fonction appelable par un cron externe si
 # besoin, mais n'est jamais planifiée ici.
+
+# AURYEL CONTROL is registered after the existing application definitions so
+# its routes can reuse the canonical DB pool and advisor catalogue without
+# importing the monolithic mobile module back into itself.
+from admin_control import register_admin_control
+register_admin_control(app, get_conn, limiter, app.secret_key, GUIDES)
+from analytics_tracking import (
+    register_analytics_routes,
+    record_ai_usage,
+    record_analytics_event,
+    record_billing_event,
+)
+
+
+def _record_server_analytics(event_name, *, account_id=None, properties=None,
+                             idempotency_key=None):
+    """Best-effort server event writer; never part of a product transaction."""
+    if app.config.get("TESTING"):
+        return False
+    try:
+        return record_analytics_event(
+            get_conn, app.secret_key, event_name=event_name,
+            account_id=account_id, source="server", properties=properties,
+            idempotency_key=idempotency_key,
+        )
+    except Exception:
+        return False
+
+
+register_analytics_routes(app, get_conn, require_app_auth, app.secret_key, limiter)
 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 5000))
