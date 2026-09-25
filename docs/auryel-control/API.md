@@ -14,6 +14,18 @@ apply; a future cookie mode must add CSRF protection before activation.
 
 ## Authentication
 
+Password authentication is fail-closed for MFA. When an administrator has
+not enrolled MFA yet, a successful password login returns a short-lived
+opaque bearer session with `session_scope: "mfa_bootstrap"`. That session is
+accepted only by `/api/admin/auth/me`, `/api/admin/auth/logout`, and the MFA
+enrollment/confirmation endpoints. It cannot access dashboard data routes.
+
+After a valid TOTP confirmation, the current session is promoted to
+`session_scope: "full"` and receives the normal four-hour lifetime. Existing
+sessions for already-enrolled administrators remain full; any active session
+belonging to a non-enrolled administrator is narrowed to the short bootstrap
+scope by the additive migration.
+
 - `POST /api/admin/auth/login` — JSON `{email,password,mfa_code?}`; generic 401
   on failure. When MFA is enabled, password-only returns `mfa_required` and no
   session; a valid TOTP or one unused recovery code is required for the final

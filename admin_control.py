@@ -22,6 +22,7 @@ from cryptography.fernet import Fernet, InvalidToken
 
 
 ADMIN_SESSION_TTL = timedelta(hours=4)
+MFA_BOOTSTRAP_TTL = timedelta(minutes=10)
 MFA_PENDING_TTL = timedelta(minutes=10)
 MFA_STEP_SECONDS = 30
 MFA_WINDOW_STEPS = 1
@@ -165,7 +166,8 @@ def register_admin_control(app, get_conn, limiter, secret_key, guides=None):
         try:
             cur = conn.cursor()
             cur.execute(
-                "SELECT s.id,s.admin_id,s.expires_at,a.email,a.role,a.active,a.mfa_enabled "
+                "SELECT s.id,s.admin_id,s.expires_at,a.email,a.role,a.active,a.mfa_enabled,"
+                "COALESCE(s.scope,'full') "
                 "FROM admin_sessions s JOIN admin_accounts a ON a.id=s.admin_id "
                 "WHERE s.token_hash=%s AND s.revoked_at IS NULL AND s.expires_at>%s",
                 (_hash(token, secret_key), _now()),
@@ -177,7 +179,7 @@ def register_admin_control(app, get_conn, limiter, secret_key, guides=None):
             cur.execute("UPDATE admin_sessions SET last_used_at=%s WHERE id=%s", (_now(), row[0]))
             conn.commit()
             return {"session_id": row[0], "admin_id": row[1], "email": row[3],
-                    "role": row[4], "mfa_enabled": bool(row[6])}
+                    "role": row[4], "mfa_enabled": bool(row[6]), "scope": row[7]}
         except Exception:
             conn.rollback()
             raise
@@ -191,7 +193,18 @@ def register_admin_control(app, get_conn, limiter, secret_key, guides=None):
         @wraps(fn)
         def wrapped(*args, **kwargs):
             auth = _session_from_request()
-            if not auth:
+            if not auth or auth["scope"] != "full":
+                return _error("admin_auth_required", 401)
+            g.admin_auth = auth
+            return fn(*args, **kwargs)
+        return wrapped
+
+    def admin_bootstrap_or_full_required(fn):
+        """Allow only an opaque MFA bootstrap session or a full admin session."""
+        @wraps(fn)
+        def wrapped(*args, **kwargs):
+            auth = _session_from_request()
+            if not auth or auth["scope"] not in ("mfa_bootstrap", "full"):
                 return _error("admin_auth_required", 401)
             g.admin_auth = auth
             return fn(*args, **kwargs)
@@ -254,24 +267,28 @@ def register_admin_control(app, get_conn, limiter, secret_key, guides=None):
                     return _error("invalid_mfa", 401)
             raw_token = secrets.token_urlsafe(48)
             now = _now()
+            session_scope = "full" if row[5] else "mfa_bootstrap"
+            session_ttl = ADMIN_SESSION_TTL if session_scope == "full" else MFA_BOOTSTRAP_TTL
             cur.execute(
-                "INSERT INTO admin_sessions (id,admin_id,token_hash,expires_at,created_at,last_used_at,ip_hash,user_agent_hash) "
-                "VALUES (%s,%s,%s,%s,%s,%s,%s,%s)",
-                (secrets.token_hex(16), row[0], _hash(raw_token, secret_key), now + ADMIN_SESSION_TTL,
+                "INSERT INTO admin_sessions (id,admin_id,token_hash,expires_at,created_at,last_used_at,ip_hash,user_agent_hash,scope) "
+                "VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s)",
+                (secrets.token_hex(16), row[0], _hash(raw_token, secret_key), now + session_ttl,
                  now, now, _hash(request.remote_addr or "", secret_key),
-                 _hash(request.headers.get("User-Agent", "")[:256], secret_key)),
+                 _hash(request.headers.get("User-Agent", "")[:256], secret_key), session_scope),
             )
             cur.execute("UPDATE admin_accounts SET last_login_at=%s,updated_at=%s WHERE id=%s", (now, now, row[0]))
-            _audit(conn, row[0], "admin_login", "success")
+            _audit(conn, row[0], "admin_login", "mfa_bootstrap" if session_scope == "mfa_bootstrap" else "success")
             conn.commit()
-            return jsonify({"session_token": raw_token, "expires_at": _iso(now + ADMIN_SESSION_TTL),
+            return jsonify({"session_token": raw_token, "expires_at": _iso(now + session_ttl),
                             "admin": {"id": str(row[0]), "email": row[1], "role": row[3],
-                                       "mfa_required": bool(row[5])}}), 200
+                                       "mfa_required": bool(row[5]),
+                                       "mfa_enrollment_required": not bool(row[5])},
+                            "session_scope": session_scope}), 200
         finally:
             conn.close()
 
     @app.post("/api/admin/auth/logout", endpoint="admin_control_logout")
-    @admin_required
+    @admin_bootstrap_or_full_required
     def admin_logout():
         conn = get_conn()
         try:
@@ -284,11 +301,13 @@ def register_admin_control(app, get_conn, limiter, secret_key, guides=None):
             conn.close()
 
     @app.get("/api/admin/auth/me", endpoint="admin_control_me")
-    @admin_required
+    @admin_bootstrap_or_full_required
     def admin_me():
         return jsonify({"admin": {"id": str(g.admin_auth["admin_id"]), "email": g.admin_auth["email"],
                                    "role": g.admin_auth["role"], "mfa_enabled": g.admin_auth["mfa_enabled"]},
-                        "session": {"auth_mode": "bearer", "csrf": "not_applicable"}})
+                        "session": {"auth_mode": "bearer", "scope": g.admin_auth["scope"],
+                                    "mfa_verified": g.admin_auth["scope"] == "full",
+                                    "csrf": "not_applicable"}})
 
     def _mfa_admin_row(conn, admin_id):
         cur = conn.cursor()
@@ -316,7 +335,7 @@ def register_admin_control(app, get_conn, limiter, secret_key, guides=None):
         return True
 
     @app.post("/api/admin/auth/mfa/enroll", endpoint="admin_control_mfa_enroll")
-    @admin_required
+    @admin_bootstrap_or_full_required
     def admin_mfa_enroll():
         conn = get_conn()
         try:
@@ -335,7 +354,7 @@ def register_admin_control(app, get_conn, limiter, secret_key, guides=None):
             conn.close()
 
     @app.post("/api/admin/auth/mfa/confirm", endpoint="admin_control_mfa_confirm")
-    @admin_required
+    @admin_bootstrap_or_full_required
     def admin_mfa_confirm():
         conn = get_conn()
         try:
@@ -355,6 +374,8 @@ def register_admin_control(app, get_conn, limiter, secret_key, guides=None):
             codes, hashes = _recovery_codes(secret_key)
             cur = conn.cursor()
             cur.execute("UPDATE admin_accounts SET mfa_enabled=TRUE,mfa_method='totp',mfa_enrolled_at=%s,mfa_pending_expires_at=NULL,mfa_recovery_hashes=%s,mfa_recovery_generated_at=%s,mfa_last_step=%s,updated_at=%s WHERE id=%s", (_now(), json.dumps(hashes), _now(), step, _now(), g.admin_auth["admin_id"]))
+            if g.admin_auth["scope"] == "mfa_bootstrap":
+                cur.execute("UPDATE admin_sessions SET scope='full',expires_at=%s,last_used_at=%s WHERE id=%s AND revoked_at IS NULL", (_now() + ADMIN_SESSION_TTL, _now(), g.admin_auth["session_id"]))
             _audit(conn, g.admin_auth["admin_id"], "mfa_enrollment_confirm", "success")
             conn.commit()
             return jsonify({"mfa_enabled": True, "recovery_codes": codes})

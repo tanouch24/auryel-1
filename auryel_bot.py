@@ -3131,6 +3131,23 @@ def init_db():
             "Migration v72 (admin MFA) échouée"
         ) from e
 
+    # Migration v73 — MFA bootstrap session scope. Additive only; existing
+    # enrolled sessions remain full, while non-enrolled sessions and new
+    # password-only logins are restricted to the short-lived bootstrap scope.
+    try:
+        migration_path = os.path.join(
+            os.path.dirname(__file__), "migrations", "046_admin_mfa_bootstrap.sql"
+        )
+        with open(migration_path, "r", encoding="utf-8") as migration_file:
+            c.execute(migration_file.read())
+        conn.commit()
+    except Exception as e:
+        conn.rollback()
+        conn.close()
+        raise CriticalSchemaMigrationError(
+            "Migration v73 (admin MFA bootstrap) échouée"
+        ) from e
+
     conn.close()
 
 def reset_db():
