@@ -156,13 +156,15 @@ a:focus-visible,button:focus-visible,summary:focus-visible,input:focus-visible,s
 .product-showcase__intro{max-width:650px;margin-bottom:52px}
 .product-showcase__grid{display:grid;grid-template-columns:repeat(3,1fr);gap:22px;align-items:start}
 .product-showcase__item{margin:0;padding:18px;background:linear-gradient(145deg,rgba(255,255,255,.055),rgba(255,255,255,.015));border:1px solid var(--bdr);border-radius:8px}
+.product-showcase__item>img{display:block;width:min(100%,250px);height:auto;margin:0 auto}
+.product-showcase__item .product-device{width:min(100%,280px)}
 .product-showcase__item:nth-child(2){margin-top:42px}
 .product-showcase__item:nth-child(3){margin-top:84px}
 .product-showcase__item figcaption{padding:18px 4px 4px;color:var(--cs);font:13px/1.65 var(--fb)}
 .product-showcase__item figcaption strong{display:block;color:var(--gold-b);font:14px var(--fd);margin-bottom:5px}
 .product-demo-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:20px;margin-top:52px}
 .product-demo{margin:0;padding:14px;background:var(--card);border:1px solid var(--bdr);border-radius:8px}
-.product-demo video{display:block;width:100%;height:auto;border-radius:22px;background:#05030b}
+.product-demo video{display:block;width:min(100%,250px);height:auto;aspect-ratio:auto;object-fit:contain;margin:0 auto;border-radius:22px;background:#05030b}
 .product-demo figcaption{padding:16px 4px 2px;color:var(--cs);font:13px/1.6 var(--fb)}
 .product-demo figcaption strong{display:block;color:var(--gold-b);font:14px var(--fd);margin-bottom:4px}
 .wellbeing-hero-visual{display:grid;grid-template-columns:minmax(0,1fr) minmax(230px,330px);gap:60px;align-items:center;max-width:1120px;margin:0 auto}
@@ -170,7 +172,7 @@ a:focus-visible,button:focus-visible,summary:focus-visible,input:focus-visible,s
 .wellbeing-hero-visual .product-device{width:min(100%,300px)}
 .wellbeing-visual-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:28px;align-items:start;margin:20px 0 56px}
 .wellbeing-visual-card{margin:0;padding:16px;background:linear-gradient(145deg,rgba(255,255,255,.045),rgba(255,255,255,.01));border:1px solid var(--bdr);border-radius:8px}
-.wellbeing-visual-card img{display:block;width:100%;max-width:280px;height:auto;margin:0 auto;border-radius:22px}
+.wellbeing-visual-card img{display:block;width:100%;max-width:240px;height:auto;margin:0 auto;border-radius:22px}
 .wellbeing-visual-card figcaption{padding:14px 2px 2px;text-align:center;color:var(--cs);font:13px/1.6 var(--fb)}
 .wellbeing-feature-visual{display:grid;grid-template-columns:minmax(0,1fr) minmax(180px,250px);gap:28px;align-items:center}
 .wellbeing-feature-visual figure{margin:0;padding:12px;background:rgba(255,255,255,.03);border:1px solid var(--bdr);border-radius:8px}
@@ -190,4 +192,250 @@ a:focus-visible,button:focus-visible,summary:focus-visible,input:focus-visible,s
   .product-demo{max-width:300px;margin:0 auto}
   .wellbeing-feature-visual{grid-template-columns:1fr}
   .wellbeing-feature-visual figure{max-width:245px;margin:0 auto}
+}
+
+/* ── PRODUCT PAGES : shared editorial composition (lot 28) ── */
+.product-page-hero{position:relative;overflow:hidden;background:var(--deep);border-bottom:1px solid var(--bdr)}
+.pg-hero.product-page-hero,.pg-top.product-page-hero{padding:0}
+.product-page-hero::before{content:'';position:absolute;inset:0;background:radial-gradient(ellipse 62% 70% at 76% 50%,rgba(107,33,168,.2),transparent 62%),radial-gradient(ellipse 48% 55% at 12% 100%,rgba(212,175,55,.06),transparent 68%);pointer-events:none}
+.product-page-hero__inner{position:relative;z-index:1;display:grid;grid-template-columns:minmax(0,55fr) minmax(270px,45fr);gap:64px;align-items:center;max-width:1180px;margin:0 auto;padding:150px 40px 86px}
+.product-page-hero__copy{min-width:0}
+.product-page-hero__copy .pg-hero-in,.product-page-hero__copy .pg-top-in{max-width:620px;margin:0}
+.product-page-hero__media{display:flex;justify-content:center;align-items:center;min-width:0}
+.product-page-hero__media .product-device{width:min(100%,320px)}
+.product-page-hero__media figcaption{max-width:320px;margin:18px auto 0;color:var(--cs);font:13px/1.65 var(--fb);text-align:center}
+.product-page-hero__media figcaption strong{display:block;color:var(--gold-b);font:14px var(--fd);margin-bottom:5px}
+.product-feature-section{display:grid;grid-template-columns:minmax(0,1fr) minmax(260px,340px);gap:72px;align-items:center;max-width:1180px;margin:0 auto;padding:88px 40px;border-top:1px solid var(--bdr)}
+.product-feature-section--reverse{grid-template-columns:minmax(260px,340px) minmax(0,1fr)}
+.product-feature-copy{min-width:0}
+.product-feature-copy .ey{margin-bottom:18px}
+.product-feature-copy .hd{font-size:clamp(30px,4vw,48px);margin-bottom:18px}
+.product-feature-copy .bt{max-width:560px}
+.product-feature-media{display:flex;justify-content:center;align-items:center;min-width:0}
+.product-feature-media .product-device{width:min(100%,280px)}
+.product-feature-media video{display:block;width:min(100%,300px);height:auto;aspect-ratio:9/20;object-fit:contain;border-radius:22px;background:#05030b}
+.product-feature-caption{max-width:340px;color:var(--cs);font:13px/1.7 var(--fb)}
+.product-feature-caption strong{display:block;color:var(--gold-b);font:14px var(--fd);margin-bottom:5px}
+.product-feature-grid{display:grid;grid-template-columns:repeat(12,minmax(0,1fr));gap:34px;max-width:1180px;margin:0 auto;padding:70px 40px 82px;border-top:1px solid var(--bdr)}
+.product-feature-grid .wellbeing-visual-card{grid-column:span 4;margin:0;padding:0;background:none;border:0;border-radius:0}
+.product-feature-grid .wellbeing-visual-card:nth-child(4),.product-feature-grid .wellbeing-visual-card:nth-child(5){grid-column:span 4}
+.product-feature-grid .wellbeing-visual-card img{max-width:190px;border-radius:24px;box-shadow:0 22px 50px rgba(0,0,0,.32)}
+.product-feature-grid .wellbeing-visual-card figcaption{padding:16px 0 0;text-align:center;color:var(--cs);font:13px/1.6 var(--fb)}
+.product-page-stage{max-width:1180px;margin:0 auto;padding:0 40px}
+.pg-wrap.product-page-content{max-width:1180px;padding-left:40px;padding-right:40px}
+.product-page-content>.pg-sec{max-width:860px;margin-left:auto;margin-right:auto}
+.product-page-content>.pg-faq,.product-page-content>.pg-cta{max-width:860px;margin-left:auto;margin-right:auto}
+.product-feature-section--intro{display:block;max-width:860px;padding:62px 0 54px}
+.product-page-stage .product-showcase__inner{max-width:none}
+.product-page-stage .product-showcase__intro{max-width:620px;margin:0 0 42px}
+.product-page-stage .product-showcase__grid{display:block}
+.product-page-stage .product-showcase__item{display:grid;grid-template-columns:minmax(0,1fr) minmax(260px,340px);gap:72px;align-items:center;margin:0;padding:88px 0;background:none;border:0;border-top:1px solid var(--bdr);border-radius:0}
+.product-page-stage .product-showcase__item:nth-child(2){grid-template-columns:minmax(260px,340px) minmax(0,1fr);margin-top:0}
+.product-page-stage .product-showcase__item .product-device{grid-column:2;width:min(100%,280px)}
+.product-page-stage .product-showcase__item figcaption{grid-column:1;grid-row:1;padding:0;max-width:560px;color:var(--cs);font:15px/1.8 var(--fb)}
+.product-page-stage .product-showcase__item figcaption strong{font:22px var(--fd);color:var(--cream);margin-bottom:12px}
+.product-page-stage .product-showcase__item:nth-child(2) .product-device{grid-column:1;grid-row:1}
+.product-page-stage .product-showcase__item:nth-child(2) figcaption{grid-column:2}
+.product-page-stage .product-demo-grid{display:grid;grid-template-columns:minmax(0,1fr) minmax(260px,340px);gap:72px;align-items:center;margin:0;padding:88px 0;border-top:1px solid var(--bdr)}
+.product-page-stage .product-demo{display:contents}
+.product-page-stage .product-demo video{grid-column:2;grid-row:1;width:min(100%,300px);margin:0 auto}
+.product-page-stage .product-demo figcaption{grid-column:1;grid-row:1;max-width:560px;padding:0;color:var(--cs);font:15px/1.8 var(--fb)}
+.product-page-stage .product-demo figcaption strong{display:block;color:var(--cream);font:22px var(--fd);margin-bottom:12px}
+.advisor-page-stage{padding-top:0}
+.advisor-page-stage .product-showcase__intro{margin-bottom:0}
+@media(max-width:850px){
+  .product-page-hero__inner{grid-template-columns:1fr;gap:38px;padding:132px 32px 68px}
+  .product-page-hero__copy .pg-hero-in,.product-page-hero__copy .pg-top-in{max-width:720px}
+  .product-page-hero__media{justify-content:flex-start;padding-left:8px}
+  .product-feature-section,.product-feature-section--reverse{grid-template-columns:1fr;gap:34px;padding:70px 32px}
+  .product-feature-section--reverse .product-feature-copy{grid-row:1}
+  .product-feature-section--reverse .product-feature-media{grid-row:2}
+  .product-feature-grid{grid-template-columns:repeat(2,minmax(0,1fr));padding:60px 32px 70px}
+  .product-feature-grid .wellbeing-visual-card,.product-feature-grid .wellbeing-visual-card:nth-child(4),.product-feature-grid .wellbeing-visual-card:nth-child(5){grid-column:span 1}
+  .product-page-stage{padding:0 32px}
+  .product-page-stage .product-showcase__item,.product-page-stage .product-showcase__item:nth-child(2),.product-page-stage .product-demo-grid{grid-template-columns:1fr;gap:32px;padding:70px 0}
+  .product-page-stage .product-showcase__item .product-device,.product-page-stage .product-showcase__item:nth-child(2) .product-device,.product-page-stage .product-demo video{grid-column:1;grid-row:2;margin:0}
+  .product-page-stage .product-showcase__item figcaption,.product-page-stage .product-showcase__item:nth-child(2) figcaption,.product-page-stage .product-demo figcaption{grid-column:1;grid-row:1;max-width:620px}
+}
+@media(max-width:560px){
+  .product-page-hero__inner{padding:120px 20px 56px}
+  .product-page-hero__media{padding-left:0;justify-content:center}
+  .product-feature-section,.product-feature-section--reverse{padding:58px 20px}
+  .product-feature-grid{grid-template-columns:1fr;padding:52px 20px 60px;gap:42px}
+  .product-feature-grid .wellbeing-visual-card,.product-feature-grid .wellbeing-visual-card:nth-child(4),.product-feature-grid .wellbeing-visual-card:nth-child(5){grid-column:1}
+  .product-page-stage{padding:0 20px}
+  .product-page-stage .product-showcase__item,.product-page-stage .product-showcase__item:nth-child(2),.product-page-stage .product-demo-grid{padding:58px 0}
+}
+
+/* Meditation keeps one visual per narrative step: the library belongs to the hero. */
+body:has(.product-page-hero img[src*="auryel-meditations"]) .product-showcase{padding:0 40px 0;background:var(--void)}
+body:has(.product-page-hero img[src*="auryel-meditations"]) .product-showcase__inner{max-width:1180px;margin:0 auto}
+body:has(.product-page-hero img[src*="auryel-meditations"]) .product-showcase__intro{max-width:620px;margin:0;padding:82px 0 42px}
+body:has(.product-page-hero img[src*="auryel-meditations"]) .product-showcase__grid{display:block}
+body:has(.product-page-hero img[src*="auryel-meditations"]) .product-showcase__item:first-child{display:none}
+body:has(.product-page-hero img[src*="auryel-meditations"]) .product-showcase__item:nth-child(2){display:grid;grid-template-columns:minmax(0,340px) minmax(0,1fr);gap:72px;align-items:center;margin:0;padding:88px 0;background:none;border:0;border-top:1px solid var(--bdr);border-radius:0}
+body:has(.product-page-hero img[src*="auryel-meditations"]) .product-showcase__item:nth-child(2) .product-device{grid-column:1;width:min(100%,280px)}
+body:has(.product-page-hero img[src*="auryel-meditations"]) .product-showcase__item:nth-child(2) figcaption{grid-column:2;grid-row:1;padding:0;max-width:560px;color:var(--cs);font:15px/1.8 var(--fb)}
+body:has(.product-page-hero img[src*="auryel-meditations"]) .product-showcase__item:nth-child(2) figcaption strong{font:22px var(--fd);color:var(--cream);margin-bottom:12px}
+body:has(.product-page-hero img[src*="auryel-meditations"]) .product-demo-grid{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,340px);gap:72px;align-items:center;margin:0;padding:88px 0;border-top:1px solid var(--bdr)}
+body:has(.product-page-hero img[src*="auryel-meditations"]) .product-demo{display:contents}
+body:has(.product-page-hero img[src*="auryel-meditations"]) .product-demo video{grid-column:2;grid-row:1;width:min(100%,300px);margin:0 auto}
+body:has(.product-page-hero img[src*="auryel-meditations"]) .product-demo figcaption{grid-column:1;grid-row:1;max-width:560px;padding:0;color:var(--cs);font:15px/1.8 var(--fb)}
+body:has(.product-page-hero img[src*="auryel-meditations"]) .product-demo figcaption strong{display:block;color:var(--cream);font:22px var(--fd);margin-bottom:12px}
+
+/* Conseillers uses the same visual proof once: in the hero, then a concise editorial cue. */
+body:has(.product-page-hero img[src*="auryel-application-conseillers"]) .advisor-app-preview{padding:0 40px 76px;background:var(--void)}
+body:has(.product-page-hero img[src*="auryel-application-conseillers"]) .advisor-app-preview .product-showcase__inner{max-width:1180px;margin:0 auto}
+body:has(.product-page-hero img[src*="auryel-application-conseillers"]) .advisor-app-preview .product-showcase__intro{max-width:620px;margin:0;padding:72px 0 34px}
+body:has(.product-page-hero img[src*="auryel-application-conseillers"]) .advisor-app-preview .product-showcase__grid{display:block}
+body:has(.product-page-hero img[src*="auryel-application-conseillers"]) .advisor-app-preview .product-showcase__item{margin:0;padding:28px 0 0;background:none;border:0;border-radius:0}
+body:has(.product-page-hero img[src*="auryel-application-conseillers"]) .advisor-app-preview .product-device{display:none}
+body:has(.product-page-hero img[src*="auryel-application-conseillers"]) .advisor-app-preview figcaption{max-width:560px;padding:0;color:var(--cs);font:15px/1.8 var(--fb)}
+body:has(.product-page-hero img[src*="auryel-application-conseillers"]) .advisor-app-preview figcaption strong{font:22px var(--fd);color:var(--cream);margin-bottom:12px}
+
+@media(max-width:850px){
+  body:has(.product-page-hero img[src*="auryel-meditations"]) .product-showcase{padding:0 32px}
+  body:has(.product-page-hero img[src*="auryel-meditations"]) .product-showcase__item:nth-child(2),body:has(.product-page-hero img[src*="auryel-meditations"]) .product-demo-grid{grid-template-columns:1fr;gap:32px;padding:70px 0}
+  body:has(.product-page-hero img[src*="auryel-meditations"]) .product-showcase__item:nth-child(2) .product-device,body:has(.product-page-hero img[src*="auryel-meditations"]) .product-demo video{grid-column:1;grid-row:2;margin:0}
+  body:has(.product-page-hero img[src*="auryel-meditations"]) .product-showcase__item:nth-child(2) figcaption,body:has(.product-page-hero img[src*="auryel-meditations"]) .product-demo figcaption{grid-column:1;grid-row:1}
+  body:has(.product-page-hero img[src*="auryel-application-conseillers"]) .advisor-app-preview{padding:0 32px 62px}
+}
+@media(max-width:560px){
+  body:has(.product-page-hero img[src*="auryel-meditations"]) .product-showcase{padding:0 20px}
+  body:has(.product-page-hero img[src*="auryel-application-conseillers"]) .advisor-app-preview{padding:0 20px 54px}
+}
+
+/* ── MEDITATION : immersive editorial composition (lot 29) ── */
+body:has(.product-page-hero img[src*="auryel-meditations"]) .specialized-visual{
+  padding:0 40px 28px;
+  background:var(--void);
+}
+body:has(.product-page-hero img[src*="auryel-meditations"]) .specialized-visual .product-showcase__inner{
+  display:flex;
+  flex-direction:column;
+  max-width:1180px;
+  margin:0 auto;
+}
+body:has(.product-page-hero img[src*="auryel-meditations"]) .specialized-visual .product-showcase__intro{
+  order:1;
+  width:min(100%,680px);
+  margin:0 auto;
+  padding:112px 0 104px;
+  text-align:center;
+}
+body:has(.product-page-hero img[src*="auryel-meditations"]) .specialized-visual .product-showcase__intro .rule{
+  margin-left:auto;
+  margin-right:auto;
+}
+body:has(.product-page-hero img[src*="auryel-meditations"]) .specialized-visual .product-showcase__intro .bt{
+  max-width:560px;
+  margin-left:auto;
+  margin-right:auto;
+}
+body:has(.product-page-hero img[src*="auryel-meditations"]) .specialized-visual .product-demo-grid{
+  order:2;
+  width:100%;
+  display:grid;
+  grid-template-columns:minmax(0,1fr) minmax(280px,340px);
+  gap:104px;
+  align-items:center;
+  margin:0;
+  padding:100px 0;
+  border-top:1px solid var(--bdr);
+  background:radial-gradient(ellipse 46% 80% at 82% 50%,rgba(107,33,168,.12),transparent 70%);
+}
+body:has(.product-page-hero img[src*="auryel-meditations"]) .specialized-visual .product-demo{
+  display:contents;
+  padding:0;
+  border:0;
+  background:none;
+}
+body:has(.product-page-hero img[src*="auryel-meditations"]) .specialized-visual .product-demo figcaption{
+  grid-column:1;
+  grid-row:1;
+  max-width:540px;
+  padding:0;
+  color:var(--cs);
+  font:15px/1.85 var(--fb);
+}
+body:has(.product-page-hero img[src*="auryel-meditations"]) .specialized-visual .product-demo figcaption strong{
+  display:block;
+  margin-bottom:14px;
+  color:var(--cream);
+  font:clamp(28px,3.4vw,42px)/1.15 var(--fd);
+}
+body:has(.product-page-hero img[src*="auryel-meditations"]) .specialized-visual .product-demo video{
+  grid-column:2;
+  grid-row:1;
+  width:min(100%,300px);
+  height:auto;
+  aspect-ratio:9/20;
+  object-fit:contain;
+  margin:0 auto;
+  border-radius:0;
+  background:transparent;
+  box-shadow:0 28px 70px rgba(0,0,0,.45),0 0 50px rgba(107,33,168,.16);
+}
+body:has(.product-page-hero img[src*="auryel-meditations"]) .specialized-visual .product-showcase__grid{
+  order:3;
+  width:100%;
+  display:block;
+  margin:0;
+  padding:100px 0 86px;
+  border-top:1px solid var(--bdr);
+}
+body:has(.product-page-hero img[src*="auryel-meditations"]) .specialized-visual .product-showcase__item:first-child{display:none}
+body:has(.product-page-hero img[src*="auryel-meditations"]) .specialized-visual .product-showcase__item:nth-child(2){
+  display:grid;
+  grid-template-columns:minmax(280px,320px) minmax(0,1fr);
+  gap:104px;
+  align-items:center;
+  margin:0;
+  padding:0;
+  background:none;
+  border:0;
+  border-radius:0;
+}
+body:has(.product-page-hero img[src*="auryel-meditations"]) .specialized-visual .product-showcase__item:nth-child(2) .product-device{
+  grid-column:1;
+  width:min(100%,280px);
+  margin:0 auto;
+}
+body:has(.product-page-hero img[src*="auryel-meditations"]) .specialized-visual .product-showcase__item:nth-child(2) figcaption{
+  grid-column:2;
+  grid-row:1;
+  max-width:540px;
+  padding:0;
+  color:var(--cs);
+  font:15px/1.85 var(--fb);
+}
+body:has(.product-page-hero img[src*="auryel-meditations"]) .specialized-visual .product-showcase__item:nth-child(2) figcaption strong{
+  display:block;
+  margin-bottom:14px;
+  color:var(--cream);
+  font:clamp(28px,3.4vw,42px)/1.15 var(--fd);
+}
+@media(max-width:850px){
+  body:has(.product-page-hero img[src*="auryel-meditations"]) .specialized-visual{padding:0 32px 20px}
+  body:has(.product-page-hero img[src*="auryel-meditations"]) .specialized-visual .product-showcase__intro{padding:82px 0 76px}
+  body:has(.product-page-hero img[src*="auryel-meditations"]) .specialized-visual .product-demo-grid,
+  body:has(.product-page-hero img[src*="auryel-meditations"]) .specialized-visual .product-showcase__item:nth-child(2){
+    grid-template-columns:1fr;
+    gap:38px;
+    padding:76px 0;
+  }
+  body:has(.product-page-hero img[src*="auryel-meditations"]) .specialized-visual .product-demo figcaption,
+  body:has(.product-page-hero img[src*="auryel-meditations"]) .specialized-visual .product-showcase__item:nth-child(2) figcaption{grid-column:1;grid-row:1}
+  body:has(.product-page-hero img[src*="auryel-meditations"]) .specialized-visual .product-demo video,
+  body:has(.product-page-hero img[src*="auryel-meditations"]) .specialized-visual .product-showcase__item:nth-child(2) .product-device{grid-column:1;grid-row:2;margin:0 auto}
+  body:has(.product-page-hero img[src*="auryel-meditations"]) .specialized-visual .product-showcase__grid{padding:76px 0 64px}
+}
+@media(max-width:560px){
+  body:has(.product-page-hero img[src*="auryel-meditations"]) .specialized-visual{padding:0 20px 12px}
+  body:has(.product-page-hero img[src*="auryel-meditations"]) .specialized-visual .product-showcase__intro{padding:68px 0 62px}
+  body:has(.product-page-hero img[src*="auryel-meditations"]) .specialized-visual .product-demo-grid,
+  body:has(.product-page-hero img[src*="auryel-meditations"]) .specialized-visual .product-showcase__item:nth-child(2){padding:62px 0}
+  body:has(.product-page-hero img[src*="auryel-meditations"]) .specialized-visual .product-demo video{width:min(78vw,300px)}
+  body:has(.product-page-hero img[src*="auryel-meditations"]) .specialized-visual .product-showcase__item:nth-child(2) .product-device{width:min(78vw,280px)}
+  body:has(.product-page-hero img[src*="auryel-meditations"]) .specialized-visual .product-showcase__grid{padding:62px 0 48px}
 }

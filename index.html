@@ -95,6 +95,21 @@
 .sv{font-family:'Cinzel',serif;font-size:32px;font-weight:400;color:var(--gold-b);display:block;line-height:1}
 .sl{font-family:'Lora',serif;font-size:11px;color:var(--cd);margin-top:5px;display:block}
 @keyframes rise{from{opacity:0;transform:translateY(40px)}to{opacity:1;transform:translateY(0)}}
+@media(min-width:1024px){
+  .h-inner{display:grid;grid-template-columns:minmax(0,55fr) minmax(280px,45fr);column-gap:48px;align-items:center;max-width:1280px;text-align:left;padding:132px 64px 92px}
+  .h-inner>.h-eyebrow,.h-inner>.h-t1,.h-inner>.h-t2,.h-inner>.h-ctas,.h-inner>.store-badges,.h-inner>.h-reassurance,.h-inner>.h-sub{grid-column:1}
+  .h-inner>.h-eyebrow{margin-bottom:34px}
+  .h-inner>.h-t1{max-width:600px}
+  .h-inner>.h-t2{margin-left:0;margin-right:0;margin-bottom:32px}
+  .h-inner>.h-ctas{justify-content:flex-start;flex-wrap:wrap;gap:8px;margin-bottom:20px}
+  .h-ctas .cta-p,.h-ctas .cta-g{padding:12px 4px;font-size:9px;letter-spacing:.08em;white-space:nowrap}
+  .h-inner>.store-badges{justify-content:flex-start;margin-top:10px}
+  .h-inner>.h-reassurance{justify-content:flex-start;margin-left:0;margin-right:0;max-width:620px}
+  .h-inner>.h-sub{margin-left:0;margin-right:0}
+  .h-inner>.home-hero-visual{grid-column:2;grid-row:1 / 8;align-self:center;width:min(100%,clamp(280px,24vw,360px));margin:0 auto}
+  .product-device--hero{transform:none}
+}
+@media(max-width:1023px){.product-device--hero{transform:none}}
 
 /* ── ADVISOR SECTION ── */
 .adv-prev{background:var(--deep);padding:120px 64px;position:relative}
