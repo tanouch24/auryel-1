@@ -41,8 +41,8 @@ h1{font-family:'Cinzel',Georgia,serif;font-size:clamp(20px,4vw,28px);font-weight
   <span class="icon">✓</span>
   <h1>Accès Premium activé</h1>
   <div class="rule"></div>
-  <p class="sub">Ton accès Auryel est en cours d'activation.<br>Tu peux retourner sur WhatsApp — ton conseiller est prêt.</p>
-  <a href="https://wa.me/" class="btn">Retourner sur WhatsApp</a>
+  <p class="sub">Ton accès Auryel est en cours d'activation.<br>Tu peux poursuivre dans l'application mobile.</p>
+  <a href="/application" class="btn">Découvrir l'application</a>
   <p class="note">Si ton accès n'est pas encore actif dans quelques minutes,<br>écris à <a href="mailto:contact@auryelvoyance.com" style="color:var(--gold);text-decoration:none">contact@auryelvoyance.com</a></p>
 </div>
 <p style="text-align:center;font-size:11px;color:rgba(253,246,227,.4);padding:16px 24px;">
@@ -51,7 +51,7 @@ h1{font-family:'Cinzel',Georgia,serif;font-size:clamp(20px,4vw,28px);font-weight
 <script>
 if (typeof fbq !== 'undefined' && !sessionStorage.getItem('auryel_purchase_tracked')) {
   // TODO TUN-5 : value dynamique quand l'annuel sera achetable (successUrl ne porte pas le plan pour l'instant)
-  fbq('track', 'Purchase', {value: 9.90, currency: 'EUR'});
+  fbq('track', 'Purchase', {currency: 'EUR'});
   sessionStorage.setItem('auryel_purchase_tracked', '1');
 }
 </script>

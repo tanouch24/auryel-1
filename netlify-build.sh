@@ -19,11 +19,16 @@ OUT="_site"
 ROOT_FILES=(
   index.html
   application.html
+  bien-etre.html
+  meditation.html
+  exercices.html
+  ebooks.html
   blog.html
   conseillers.html
   comment-ca-marche.html
   tarifs.html
   recrutement.html
+  candidature-envoyee.html
   voyance.html
   voyance-en-ligne.html
   voyance-amour.html
@@ -64,6 +69,7 @@ ROOT_FILES=(
 ROOT_DIRS=(
   blog
   images
+  videos
 )
 
 # 1. Repartir d'un _site/ propre. On ne supprime QUE le dossier genere.

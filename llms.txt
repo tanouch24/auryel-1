@@ -4,9 +4,10 @@
 
 ## Offre actuelle
 
-- Première heure de consultation offerte une seule fois par compte.
-- Abonnement Premium : 7,99 € par mois.
-- Premium comprend 8 heures de consultation par mois, consommées selon l’utilisation réelle.
+- Première expérience de 20 minutes offerte une seule fois par compte.
+- Abonnement Premium : 4,99 € par mois.
+- Premium comprend 4 heures de consultation par mois, consommées selon l’utilisation réelle, sans publicité.
+- Extra Hour ajoute 1 heure de consultation pour 1,99 €.
 - Les échanges restent accessibles dans l’historique de l’application.
 - Les messages sont illimités pendant chaque consultation.
 - Une partie des échanges est gérée par une intelligence artificielle.

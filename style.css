@@ -85,3 +85,109 @@ footer{background:var(--void);border-top:1px solid var(--bdr);padding:100px 64px
 /* RESPONSIVE */
 @media(max-width:1100px){nav{padding:20px 32px}nav.sc{padding:16px 32px}nav.solid{padding:16px 32px}.n-links{display:none}.n-ham{display:flex}.ft{grid-template-columns:1fr 1fr;gap:40px}}
 @media(max-width:640px){footer{padding:60px 24px 36px}.ft{grid-template-columns:1fr}.ck-bar{flex-direction:column;padding:20px}}
+
+/* ── POLISH : accessibilité + responsive (lot mobile-a11y) ── */
+img,svg,video{max-width:100%}
+
+/* Focus clavier visible (ne s'affiche pas au clic souris) */
+a:focus-visible,button:focus-visible,summary:focus-visible,input:focus-visible,select:focus-visible,textarea:focus-visible,[tabindex]:focus-visible{outline:2px solid var(--gold-b);outline-offset:3px;border-radius:2px}
+.n-btn:focus-visible,.cta-p:focus-visible,.cta-g:focus-visible,.ck-ok:focus-visible,.ck-no:focus-visible,.btn-bk:focus-visible,.sec-cta-btn:focus-visible,.pc-cta:focus-visible{outline:2px solid var(--void);outline-offset:-4px;box-shadow:0 0 0 2px var(--gold-b)}
+
+/* Cibles tactiles >= 44px */
+.n-ham{padding:10px;min-width:44px;min-height:44px;align-items:center;justify-content:center}
+.n-mob-close,.leg-cl{min-height:44px;display:inline-flex;align-items:center}
+.ck-ok,.ck-no{min-height:44px}
+
+/* Curseur décoratif : sans objet sur écran tactile */
+@media(hover:none){.cursor{display:none}}
+
+/* Respect de prefers-reduced-motion */
+@media(prefers-reduced-motion:reduce){
+  html{scroll-behavior:auto}
+  *,*::before,*::after{animation-duration:.001ms!important;animation-iteration-count:1!important;transition-duration:.001ms!important;scroll-behavior:auto!important}
+  .h-tword{transform:none!important;opacity:1!important}
+  .reveal{opacity:1!important;transform:none!important}
+  .rv-ticker,.h-orb-v,.h-orb-g,.o1,.o2,.bd{animation:none!important}
+}
+
+/* H1 / titres : taille adaptée aux petits écrans (override des clamp inline) */
+@media(max-width:560px){
+  .pg-title{font-size:clamp(30px,8vw,42px)!important;line-height:1.15!important}
+  .leg-h1{font-size:clamp(28px,7vw,40px)!important;line-height:1.18!important}
+  .hd{font-size:clamp(28px,7vw,34px);line-height:1.2}
+}
+
+/* Header mobile : la nav passe au menu déroulant, on retire le CTA redondant
+   de la barre du haut (il reste dans le tiroir et dans le hero) pour éviter
+   le chevauchement logo / bouton / hamburger sur petit écran */
+@media(max-width:600px){
+  nav>.n-btn{display:none}
+}
+@media(max-width:400px){
+  nav,nav.sc,nav.solid{padding-left:20px;padding-right:20px}
+}
+
+/* Badges stores : centrés et sans débordement sur mobile */
+@media(max-width:600px){
+  .store-badges{justify-content:center;gap:12px}
+  .store-badges .store-soon{width:100%;text-align:center;margin-top:4px}
+}
+
+/* Légèreté de lecture sur mobile (textes de contenu, pas les labels décoratifs) */
+@media(max-width:640px){
+  .fdesc{font-size:13px}
+  .fcp{font-size:12px}
+  .fdi{font-size:11px}
+  .ac-desc{font-size:12px}
+  .leg-dt{font-size:12px}
+  .lb p,.lb li{font-size:15px}
+  .n-mob .n-btn{font-size:11px;padding:14px 30px}
+}
+
+/* ── PRODUCT VISUALS : real Auryel app screens (lot 17H) ── */
+.product-device{position:relative;width:min(100%,360px);margin:0 auto;padding:10px;border:1px solid rgba(212,175,55,.28);border-radius:38px;background:linear-gradient(145deg,#21183d,#05030b);box-shadow:0 34px 90px rgba(0,0,0,.55),0 0 70px rgba(107,33,168,.22)}
+.product-device::before{content:'';position:absolute;top:7px;left:50%;width:72px;height:5px;transform:translateX(-50%);border-radius:0 0 8px 8px;background:rgba(4,2,10,.8);z-index:2}
+.product-device img{display:block;width:100%;height:auto;border-radius:29px}
+.product-device--hero{transform:rotate(2deg)}
+.product-visual img{display:block;width:100%;height:auto;border-radius:26px}
+.product-showcase{padding:110px 64px;background:var(--void);position:relative;overflow:hidden}
+.product-showcase::before{content:'';position:absolute;top:0;left:0;right:0;height:1px;background:linear-gradient(to right,transparent,var(--gold-m),transparent)}
+.product-showcase__inner{max-width:1180px;margin:0 auto}
+.product-showcase__intro{max-width:650px;margin-bottom:52px}
+.product-showcase__grid{display:grid;grid-template-columns:repeat(3,1fr);gap:22px;align-items:start}
+.product-showcase__item{margin:0;padding:18px;background:linear-gradient(145deg,rgba(255,255,255,.055),rgba(255,255,255,.015));border:1px solid var(--bdr);border-radius:8px}
+.product-showcase__item:nth-child(2){margin-top:42px}
+.product-showcase__item:nth-child(3){margin-top:84px}
+.product-showcase__item figcaption{padding:18px 4px 4px;color:var(--cs);font:13px/1.65 var(--fb)}
+.product-showcase__item figcaption strong{display:block;color:var(--gold-b);font:14px var(--fd);margin-bottom:5px}
+.product-demo-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:20px;margin-top:52px}
+.product-demo{margin:0;padding:14px;background:var(--card);border:1px solid var(--bdr);border-radius:8px}
+.product-demo video{display:block;width:100%;height:auto;border-radius:22px;background:#05030b}
+.product-demo figcaption{padding:16px 4px 2px;color:var(--cs);font:13px/1.6 var(--fb)}
+.product-demo figcaption strong{display:block;color:var(--gold-b);font:14px var(--fd);margin-bottom:4px}
+.wellbeing-hero-visual{display:grid;grid-template-columns:minmax(0,1fr) minmax(230px,330px);gap:60px;align-items:center;max-width:1120px;margin:0 auto}
+.wellbeing-hero-visual .pg-hero-in{max-width:none}
+.wellbeing-hero-visual .product-device{width:min(100%,300px)}
+.wellbeing-visual-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:28px;align-items:start;margin:20px 0 56px}
+.wellbeing-visual-card{margin:0;padding:16px;background:linear-gradient(145deg,rgba(255,255,255,.045),rgba(255,255,255,.01));border:1px solid var(--bdr);border-radius:8px}
+.wellbeing-visual-card img{display:block;width:100%;max-width:280px;height:auto;margin:0 auto;border-radius:22px}
+.wellbeing-visual-card figcaption{padding:14px 2px 2px;text-align:center;color:var(--cs);font:13px/1.6 var(--fb)}
+.wellbeing-feature-visual{display:grid;grid-template-columns:minmax(0,1fr) minmax(180px,250px);gap:28px;align-items:center}
+.wellbeing-feature-visual figure{margin:0;padding:12px;background:rgba(255,255,255,.03);border:1px solid var(--bdr);border-radius:8px}
+.wellbeing-feature-visual img{display:block;width:100%;height:auto;border-radius:20px}
+@media(max-width:850px){
+  .product-showcase{padding-left:24px;padding-right:24px}
+  .product-showcase__grid,.product-demo-grid{grid-template-columns:repeat(2,1fr)}
+  .product-showcase__item:nth-child(2),.product-showcase__item:nth-child(3){margin-top:0}
+  .wellbeing-hero-visual{grid-template-columns:1fr;gap:34px}
+  .wellbeing-hero-visual .product-device{width:min(100%,280px)}
+}
+@media(max-width:560px){
+  .product-device--hero{transform:none}
+  .product-showcase{padding-top:76px;padding-bottom:76px}
+  .product-showcase__grid,.product-demo-grid,.wellbeing-visual-grid{grid-template-columns:1fr}
+  .product-showcase__item{max-width:300px;margin:0 auto!important}
+  .product-demo{max-width:300px;margin:0 auto}
+  .wellbeing-feature-visual{grid-template-columns:1fr}
+  .wellbeing-feature-visual figure{max-width:245px;margin:0 auto}
+}

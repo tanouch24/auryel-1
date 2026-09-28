@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1.0">
-<title>Continuer avec Auryel</title>
+<title>Auryel évolue vers l'application</title>
 <meta name="robots" content="noindex">
 <link rel="canonical" href="https://auryelvoyance.com/payer">
 <link rel="icon" href="favicon.svg" type="image/svg+xml">
@@ -156,91 +156,14 @@ body{
 
 <a href="https://auryelvoyance.com" class="py-logo">Auryel</a>
 
-<h1 class="py-title" id="py-title">Continue avec Auryel</h1>
+<h1 class="py-title" id="py-title">Auryel évolue vers l'application</h1>
 <div class="py-rule"></div>
-<p class="py-sub">Accès complet · Résiliable à tout moment</p>
+<p class="py-sub">Retrouvez l'expérience Auryel dans l'application mobile.</p>
 
-<div class="py-grid">
+<p class="py-note">Cette ancienne page de paiement n'est plus utilisée pour le parcours principal Auryel.</p>
 
-  <div class="pc">
-    <div class="pc-period">Premium</div>
-    <div class="pc-amount">
-      <span class="pc-curr">&euro;</span>
-      <span class="pc-num">9</span>
-      <span class="pc-dec">,90</span>
-    </div>
-    <div class="pc-lbl">par mois · résiliable à tout moment</div>
-    <div class="pc-note">Accès complet à 10 conseillers · 24h/24</div>
-    <button class="pc-cta" id="btn-mensuel" onclick="checkout('mensuel')">
-      <span class="spin"></span>
-      <span class="btn-label">Activer mon accès Premium</span>
-    </button>
-  </div>
-
-
-</div>
-
-<div class="py-error" id="py-error"></div>
-
-<p class="py-note">Paiement sécurisé par Stripe &middot; Résiliation possible à tout moment</p>
-
-<a href="https://auryelvoyance.com" class="py-back">&larr; Retour au site</a>
-
-<script>
-(function () {
-  var params = new URLSearchParams(window.location.search);
-  var conseiller = params.get('conseiller');
-  var phone = params.get('phone');
-
-  if (conseiller) {
-    document.getElementById('py-title').textContent = conseiller + ' est encore là pour toi';
-  }
-
-  window.checkout = function (plan) {
-    var btnM = document.getElementById('btn-mensuel');
-    var errEl = document.getElementById('py-error');
-
-    errEl.style.display = 'none';
-
-    if (!phone) {
-      errEl.textContent = 'Ton numéro WhatsApp est manquant. Reviens dans la conversation Auryel et utilise le lien de paiement reçu par WhatsApp.';
-      errEl.style.display = 'block';
-      return;
-    }
-
-    btnM.classList.add('loading');
-    btnM.disabled = true;
-
-    var body = {
-      plan: plan,
-      successUrl: 'https://auryelvoyance.com/success.html',
-      cancelUrl: 'https://auryelvoyance.com/payer'
-    };
-    body.phone = phone;
-
-    fetch('/stripe/create-checkout', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(body)
-    })
-    .then(function (res) {
-      if (!res.ok) return res.json().then(function (d) { throw new Error(d.error || 'Erreur serveur'); });
-      return res.json();
-    })
-    .then(function (data) {
-      if (!data.url) throw new Error('Lien Stripe manquant');
-      if (typeof fbq !== 'undefined') fbq('track', 'InitiateCheckout');
-      window.location.href = data.url;
-    })
-    .catch(function () {
-      errEl.textContent = 'Une erreur est survenue. Merci de réessayer ou de contacter contact@auryelvoyance.com.';
-      errEl.style.display = 'block';
-      btnM.classList.remove('loading');
-      btnM.disabled = false;
-    });
-  };
-})();
-</script>
+<a href="/application" class="pc-cta">Découvrir l'application</a>
+<a href="/" class="py-back">&larr; Retour à l'accueil</a>
 
 </body>
 </html>
