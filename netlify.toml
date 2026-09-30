@@ -278,8 +278,9 @@
 
 # ── Clean URLs : pages légales (200 rewrite) ────────────────────────────────
 # ── Doublons SEO blog : /blog/<slug>.html → /blog/<slug> (301 forcé, AVANT les rewrites 200) ─
-#    57 articles vivants. Exclus : voyance-par-chat-sans-attente / voyance-tchat-en-ligne
-#    (dépréciés, déjà redirigés vers /voyance-par-chat plus haut). Aucune règle wildcard.
+#    Articles vivants. Exclus : comment-choisir-son-voyant-en-ligne / reves-et-leur-signification
+#    / voyance-par-chat-sans-attente / voyance-tchat-en-ligne (dépréciés, redirigés plus haut).
+#    Aucune règle wildcard.
 [[redirects]]
   from = "/blog/23h23-signification-amour.html"
   to = "/blog/23h23-signification-amour"
@@ -336,8 +337,13 @@
   status = 301
   force = true
 [[redirects]]
+  from = "/blog/comment-choisir-son-voyant-en-ligne"
+  to = "/blog/voyance-serieuse-en-ligne"
+  status = 301
+  force = true
+[[redirects]]
   from = "/blog/comment-choisir-son-voyant-en-ligne.html"
-  to = "/blog/comment-choisir-son-voyant-en-ligne"
+  to = "/blog/voyance-serieuse-en-ligne"
   status = 301
   force = true
 [[redirects]]
@@ -476,8 +482,13 @@
   status = 301
   force = true
 [[redirects]]
+  from = "/blog/reves-et-leur-signification"
+  to = "/blog/interpretation-reves-symbolique"
+  status = 301
+  force = true
+[[redirects]]
   from = "/blog/reves-et-leur-signification.html"
-  to = "/blog/reves-et-leur-signification"
+  to = "/blog/interpretation-reves-symbolique"
   status = 301
   force = true
 [[redirects]]
@@ -607,7 +618,7 @@
   status = 301
 [[redirects]]
   from = "/comment-choisir-son-voyant-en-ligne"
-  to = "/blog/comment-choisir-son-voyant-en-ligne"
+  to = "/blog/voyance-serieuse-en-ligne"
   status = 301
 [[redirects]]
   from = "/compatibilite-amoureuse-signe-astrologique"
@@ -651,7 +662,7 @@
   status = 301
 [[redirects]]
   from = "/reves-et-leur-signification"
-  to = "/blog/reves-et-leur-signification"
+  to = "/blog/interpretation-reves-symbolique"
   status = 301
 [[redirects]]
   from = "/signification-des-lames-du-tarot"
