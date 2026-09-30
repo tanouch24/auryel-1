@@ -1,4 +1,3 @@
-@import url("https://fonts.googleapis.com/css2?family=Cinzel:wght@400;600;700&family=Cinzel+Decorative:wght@400;700&family=Lora:ital,wght@0,300;0,400;0,500;1,300;1,400&display=swap");
 :root{--void:#04020A;--deep:#08051A;--surface:#0E0A20;--card:#120E2A;--card-h:#1A1535;--gold:#D4AF37;--gold-b:#F0D060;--gold-m:#8B6914;--cream:#FDF6E3;--cs:#C0B8A8;--cd:#8A8070;--bdr:rgba(212,175,55,0.1);--bdrm:rgba(212,175,55,0.2);--fd:'Cinzel',Georgia,serif;--fs:'Cinzel',Georgia,serif;--fb:'Lora',Georgia,serif;--violet:#6B21A8;--violet-d:#3B0764;--violet-g:#7C3AED}
 *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
 html{scroll-behavior:smooth}
