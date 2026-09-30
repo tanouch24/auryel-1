@@ -273,6 +273,11 @@
 
 # ── Clean URLs : pages principales (200 rewrite) ────────────────────────────
 [[redirects]]
+  from = "/presse"
+  to = "/presse.html"
+  status = 200
+
+[[redirects]]
   from = "/success"
   to = "/success.html"
   status = 200

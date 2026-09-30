@@ -19,6 +19,7 @@ Auryel présente la guidance comme un outil de réflexion personnelle, jamais co
 ## Pages principales
 
 - Accueil : https://auryelvoyance.com/
+- Espace presse officiel : https://auryelvoyance.com/presse
 - Application : https://auryelvoyance.com/application
 - Conseillers : https://auryelvoyance.com/conseillers
 - Comment ça marche : https://auryelvoyance.com/comment-ca-marche
