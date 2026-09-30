@@ -18,6 +18,7 @@ OUT="_site"
 # Fichiers publics de la racine a copier tels quels.
 ROOT_FILES=(
   index.html
+  a-propos.html
   application.html
   bien-etre.html
   meditation.html

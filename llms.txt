@@ -1,6 +1,6 @@
 # Auryel — application mobile de guidance
 
-> Auryel est une application mobile Android et iOS consacrée à la voyance, au tarot et à la guidance personnelle. Elle propose 10 conseillers et des consultations privées par messages.
+> Auryel est une application mobile ciblant Android et iOS, actuellement en préparation. Elle est consacrée à la voyance, au tarot, à la guidance personnelle et au bien-être. Les liens de téléchargement seront ajoutés après publication officielle sur les stores.
 
 ## Offre actuelle
 
@@ -10,7 +10,7 @@
 - Extra Hour ajoute 1 heure de consultation pour 1,99 €.
 - Les échanges restent accessibles dans l’historique de l’application.
 - Les messages sont illimités pendant chaque consultation.
-- Une partie des échanges est gérée par une intelligence artificielle.
+- Auryel propose 10 profils de guidance virtuels. Les réponses sont générées par une intelligence artificielle orientée par le profil choisi ; aucune intervention individuelle d’un conseiller humain n’est incluse ou garantie.
 
 ## Positionnement et limites
 
@@ -42,7 +42,7 @@ Auryel présente la guidance comme un outil de réflexion personnelle, jamais co
 - Heure miroir : https://auryelvoyance.com/heure-miroir
 - Flamme jumelle : https://auryelvoyance.com/flamme-jumelle
 
-## Les 10 conseillers
+## Les 10 profils de guidance
 
 - Séléna — relations et sentiments.
 - Myriam — situations familiales et conflits relationnels.
