@@ -35,7 +35,6 @@ ROOT_FILES=(
   voyance-gratuite.html
   voyance-ia.html
   voyance-par-chat.html
-  voyance-par-whatsapp.html
   guidance-spirituelle.html
   medium-serieux.html
   flamme-jumelle.html

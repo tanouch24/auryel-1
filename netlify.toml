@@ -106,14 +106,20 @@
 
 [[redirects]]
   from = "/voyance-par-whatsapp.html"
-  to = "/voyance-par-whatsapp"
+  to = "/voyance-par-chat"
+  status = 301
+  force = true
+
+[[redirects]]
+  from = "/voyance-par-whatsapp"
+  to = "/voyance-par-chat"
   status = 301
   force = true
 
 # ── Doublons SEO : /page.html → /page (301 forcé, AVANT les rewrites 200) ───
 #    Supprime l'accès direct en 200 aux variantes .html des pages racine.
 #    Exclus volontairement : /payer.html, /success.html (tunnel Stripe/WhatsApp),
-#    /inscription.html et /voyance-par-whatsapp.html (déjà traités plus haut),
+#    /inscription.html et /voyance-par-whatsapp.html (redirigé plus haut),
 #    /blog/*.html (audité séparément).
 [[redirects]]
   from = "/conseillers.html"
