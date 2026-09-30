@@ -19,6 +19,7 @@ OUT="_site"
 ROOT_FILES=(
   index.html
   a-propos.html
+  presse.html
   application.html
   bien-etre.html
   meditation.html
