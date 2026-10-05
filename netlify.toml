@@ -54,6 +54,12 @@
   force = false
 
 [[redirects]]
+  from = "/app-ads.txt"
+  to = "/app-ads.txt"
+  status = 200
+  force = false
+
+[[redirects]]
   from = "/llms.txt"
   to = "/llms.txt"
   status = 200
