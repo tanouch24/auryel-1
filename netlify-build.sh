@@ -61,6 +61,7 @@ ROOT_FILES=(
   sitemap.xml
   robots.txt
   llms.txt
+  app-ads.txt
 )
 
 # Dossiers publics a copier entierement.
