@@ -3148,6 +3148,22 @@ def init_db():
             "Migration v73 (admin MFA bootstrap) échouée"
         ) from e
 
+    # Migration v75 — droits de génération Explorer issus d'un Rewarded.
+    # Additive : le ledger Consultation/Rewarded existant reste inchangé.
+    try:
+        migration_path = os.path.join(
+            os.path.dirname(__file__), "migrations", "049_explorer_rewarded_entitlements.sql"
+        )
+        with open(migration_path, "r", encoding="utf-8") as migration_file:
+            c.execute(migration_file.read())
+        conn.commit()
+    except Exception as e:
+        conn.rollback()
+        conn.close()
+        raise CriticalSchemaMigrationError(
+            "Migration v75 (Explorer rewarded entitlements) échouée"
+        ) from e
+
     conn.close()
 
 def reset_db():
@@ -5910,7 +5926,6 @@ def api_consultation_message():
         return _auth_json({"error": "unauthorized"}, 401)
     # Fil ciblé -> l'advisor de CE fil prime ; sinon conseiller préféré du profil.
     preferred_advisor = target_advisor or (profile.get("guide") or "selena")
-
     now = _utcnow()
     try:
         flow = _open_time_consultation_flow_tx(
@@ -6901,11 +6916,85 @@ def api_tirages_create():
         return _auth_json({"error": "unauthorized"}, 401)
     advisor_id = profile.get("guide") or None   # dérivé du profil app, jamais du body
 
+    # Explorer Tarot is a new-generation path. The existing daily draw keeps
+    # its stable one-per-day contract when this flag is absent.
+    explorer_type = data.get("experience_type")
+    if explorer_type is not None:
+        explorer_type = _validate_explorer_experience_type(explorer_type)
+        if explorer_type != "tarot":
+            return _auth_json({"error": "invalid_experience_type"}, 400)
+    explorer_generation = explorer_type == "tarot"
+    idempotency_key = data.get("idempotency_key")
+    if explorer_generation and (
+            not isinstance(idempotency_key, str) or
+            not idempotency_key.strip() or len(idempotency_key.strip()) > 200):
+        return _auth_json({"error": "invalid_idempotency_key"}, 400)
+
+    if explorer_generation:
+        now = _utcnow()
+        conn = get_conn()
+        try:
+            c = conn.cursor()
+            key = idempotency_key.strip()
+            c.execute(
+                "SELECT result_id FROM explorer_generation_attempts "
+                "WHERE user_id=%s AND experience_type=%s AND idempotency_key=%s",
+                (str(user_id), "tarot", key),
+            )
+            previous = c.fetchone()
+            if previous:
+                existing = get_tirage(user_id, previous[0])
+                if existing is not None:
+                    conn.rollback()
+                    return _auth_json(_tirage_public(existing), 200)
+            reservation = _explorer_generation_access_tx(c, user_id, "tarot", now)
+            if not reservation["allowed"]:
+                conn.rollback()
+                return _auth_json({
+                    "error": "explorer_reward_required",
+                    "experience_type": "tarot",
+                }, 402)
+            tid = str(uuid.uuid4())
+            c.execute(
+                "INSERT INTO tirages "
+                "(id, user_id, card_keys, advisor_id, consultation_id, draw_date, created_at) "
+                "VALUES (%s, %s, %s::jsonb, %s, NULL, NULL, %s)",
+                (tid, str(user_id), _json.dumps(list(keys)), advisor_id, now),
+            )
+            _finalize_explorer_generation_tx(c, user_id, "tarot", reservation, now)
+            c.execute(
+                "INSERT INTO explorer_generation_attempts "
+                "(user_id, experience_type, idempotency_key, result_id) "
+                "VALUES (%s, %s, %s, %s)",
+                (str(user_id), "tarot", key, tid),
+            )
+            conn.commit()
+            row = {"id": tid, "user_id": str(user_id), "card_keys": list(keys),
+                   "advisor_id": advisor_id, "consultation_id": None,
+                   "draw_date": None, "created_at": now}
+            return _auth_json(_tirage_public(row), 201)
+        except Exception:
+            conn.rollback()
+            raise
+        finally:
+            conn.close()
+
     row, created = save_tirage(user_id, keys, advisor_id)
     if not created:
         return _auth_json(_tirage_public(row), 200)
     # Le Tarot est autonome : il ne déclenche aucune récompense Bien-être.
     return _auth_json(_tirage_public(row), 201)
+
+
+@app.route("/api/app/explorer/generation-status", methods=["GET"])
+@require_app_auth
+def api_explorer_generation_status():
+    experience_type = _validate_explorer_experience_type(
+        request.args.get("experience_type"))
+    if experience_type is None:
+        return _auth_json({"error": "invalid_experience_type"}, 400)
+    status = _explorer_generation_status(g.app_account["user_id"], experience_type)
+    return _auth_json(status, 200)
 
 
 @app.route("/api/tirages", methods=["GET"])
@@ -7163,6 +7252,148 @@ _ADMOB_REWARD_AMOUNT = 1
 _ADMOB_REWARD_ITEM = "consultation_question"
 _ADMOB_SESSION_TTL = timedelta(hours=24)
 
+_EXPLORER_EXPERIENCE_TYPES = frozenset({
+    "tarot", "crystal_ball", "dreams", "compatibility", "palm", "coffee",
+    "soulmate",
+})
+_EXPLORER_REWARD_PREFIX = "explorer_"
+
+
+def _validate_explorer_experience_type(value):
+    if not isinstance(value, str):
+        return None
+    value = value.strip().lower()
+    return value if value in _EXPLORER_EXPERIENCE_TYPES else None
+
+
+def _explorer_premium_tx(cursor, user_id, now):
+    """Premium remains the existing consultation allowance source of truth."""
+    cursor.execute(
+        """SELECT 1 FROM consultation_allowance
+           WHERE user_id=%s AND period_start <= %s AND period_end > %s
+           LIMIT 1""",
+        (str(user_id), now, now),
+    )
+    return cursor.fetchone() is not None
+
+
+def _explorer_generation_access_tx(cursor, user_id, experience_type, now):
+    """Reserve one generation inside the caller's transaction.
+
+    The returned reservation is finalized only after the new result is stored.
+    A rollback therefore restores both the first-free slot and any rewarded
+    entitlement. Row locks make concurrent devices safe for the same account.
+    """
+    experience_type = _validate_explorer_experience_type(experience_type)
+    if experience_type is None:
+        raise ValueError("invalid_experience_type")
+    uid = str(user_id)
+    if _explorer_premium_tx(cursor, uid, now):
+        return {"allowed": True, "mode": "premium", "entitlement_id": None}
+
+    cursor.execute(
+        """INSERT INTO explorer_generation_usage (user_id, experience_type)
+           VALUES (%s, %s) ON CONFLICT (user_id, experience_type) DO NOTHING""",
+        (uid, experience_type),
+    )
+    cursor.execute(
+        """SELECT generation_count FROM explorer_generation_usage
+           WHERE user_id=%s AND experience_type=%s FOR UPDATE""",
+        (uid, experience_type),
+    )
+    usage = cursor.fetchone()
+    if usage is not None and int(usage[0]) == 0:
+        return {"allowed": True, "mode": "first_free", "entitlement_id": None}
+
+    cursor.execute(
+        """SELECT id FROM explorer_reward_entitlements
+           WHERE user_id=%s AND experience_type=%s AND status='available'
+           ORDER BY created_at ASC LIMIT 1 FOR UPDATE SKIP LOCKED""",
+        (uid, experience_type),
+    )
+    entitlement = cursor.fetchone()
+    if entitlement is None:
+        return {"allowed": False, "mode": "reward_required", "entitlement_id": None}
+    return {"allowed": True, "mode": "entitlement", "entitlement_id": str(entitlement[0])}
+
+
+def _finalize_explorer_generation_tx(cursor, user_id, experience_type,
+                                     reservation, now):
+    if not reservation.get("allowed"):
+        return
+    uid = str(user_id)
+    mode = reservation.get("mode")
+    if mode == "first_free":
+        cursor.execute(
+            """UPDATE explorer_generation_usage
+               SET generation_count=generation_count + 1, updated_at=%s
+               WHERE user_id=%s AND experience_type=%s AND generation_count=0""",
+            (now, uid, experience_type),
+        )
+        if cursor.rowcount != 1:
+            raise RuntimeError("explorer_generation_race")
+    elif mode == "entitlement":
+        cursor.execute(
+            """UPDATE explorer_reward_entitlements
+               SET status='consumed', consumed_at=%s
+               WHERE id=%s AND user_id=%s AND experience_type=%s
+                 AND status='available'""",
+            (now, reservation["entitlement_id"], uid, experience_type),
+        )
+        if cursor.rowcount != 1:
+            raise RuntimeError("explorer_entitlement_already_consumed")
+
+
+def _explorer_generation_status(user_id, experience_type, now=None):
+    experience_type = _validate_explorer_experience_type(experience_type)
+    if experience_type is None:
+        return None
+    now = now or _utcnow()
+    conn = get_conn()
+    try:
+        c = conn.cursor()
+        premium = _explorer_premium_tx(c, user_id, now)
+        c.execute(
+            "SELECT generation_count FROM explorer_generation_usage "
+            "WHERE user_id=%s AND experience_type=%s",
+            (str(user_id), experience_type),
+        )
+        usage = c.fetchone()
+        generation_count = int(usage[0]) if usage else 0
+        c.execute(
+            """SELECT COUNT(*) FROM explorer_reward_entitlements
+               WHERE user_id=%s AND experience_type=%s AND status='available'""",
+            (str(user_id), experience_type),
+        )
+        entitlements = int(c.fetchone()[0])
+        return {
+            "experience_type": experience_type,
+            "is_premium": premium,
+            "generation_count": generation_count,
+            "first_free_available": generation_count == 0,
+            "entitlements_available": entitlements,
+            "can_generate": premium or generation_count == 0 or entitlements > 0,
+            "reward_required": not (premium or generation_count == 0 or entitlements > 0),
+        }
+    finally:
+        conn.close()
+
+
+def _credit_explorer_entitlement_tx(cursor, user_id, session_id,
+                                    experience_type, now):
+    """One validated SSV session creates exactly one account-owned right."""
+    cursor.execute(
+        """INSERT INTO explorer_reward_entitlements
+           (id, user_id, experience_type, reward_session_id, created_at)
+           VALUES (%s, %s, %s, %s, %s)
+           ON CONFLICT (reward_session_id) DO NOTHING
+           RETURNING id""",
+        (str(uuid.uuid4()), str(user_id), experience_type, str(session_id), now),
+    )
+    created = cursor.fetchone()
+    return {"explorer_entitlement_created": created is not None,
+            "experience_type": experience_type}
+
 
 def _rewarded_state_tx(cursor, user_id):
     cursor.execute(
@@ -7253,6 +7484,20 @@ def api_admob_reward_session():
     compte authentifié avant l'ouverture de la publicité.
     """
     user_id = g.app_account["user_id"]
+    data = request.get_json(silent=True) or {}
+    purpose = data.get("purpose", "consultation_question")
+    experience_type = None
+    if purpose == "consultation_question":
+        pass
+    elif isinstance(purpose, str) and purpose.startswith(_EXPLORER_REWARD_PREFIX):
+        experience_type = _validate_explorer_experience_type(
+            purpose[len(_EXPLORER_REWARD_PREFIX):]
+        )
+        if experience_type is None:
+            return _auth_json({"error": "invalid_reward_purpose"}, 400)
+        purpose = f"{_EXPLORER_REWARD_PREFIX}{experience_type}"
+    else:
+        return _auth_json({"error": "invalid_reward_purpose"}, 400)
     session_id = uuid.uuid4()
     now = _utcnow()
     conn = get_conn()
@@ -7260,14 +7505,16 @@ def api_admob_reward_session():
         c = conn.cursor()
         c.execute(
             "INSERT INTO admob_reward_sessions "
-            "(id, user_id, ad_unit, created_at, expires_at) "
-            "VALUES (%s, %s, %s, %s, %s)",
+            "(id, user_id, ad_unit, created_at, expires_at, purpose, experience_type) "
+            "VALUES (%s, %s, %s, %s, %s, %s, %s)",
             (str(session_id), user_id, _ADMOB_REWARDED_AD_UNIT, now,
-             now + _ADMOB_SESSION_TTL),
+             now + _ADMOB_SESSION_TTL, purpose, experience_type),
         )
         conn.commit()
         return _auth_json({"session_id": str(session_id),
-                           "ad_unit": _ADMOB_REWARDED_AD_UNIT}, 201)
+                           "ad_unit": _ADMOB_REWARDED_AD_UNIT,
+                           "purpose": purpose,
+                           "experience_type": experience_type}, 201)
     except Exception:
         conn.rollback()
         return _auth_json({"error": "temporarily_unavailable"}, 503)
@@ -7288,7 +7535,8 @@ def api_admob_reward_session_status(session_id):
     try:
         c = conn.cursor()
         c.execute(
-            "SELECT status, credited_transaction_id FROM admob_reward_sessions "
+            "SELECT status, credited_transaction_id, purpose, experience_type "
+            "FROM admob_reward_sessions "
             "WHERE id=%s AND user_id=%s",
             (sid, user_id),
         )
@@ -7296,7 +7544,9 @@ def api_admob_reward_session_status(session_id):
         if row is None:
             return _auth_json({"error": "not_found"}, 404)
         return _auth_json({"status": row[0],
-                           "credited": row[0] == "credited"}, 200)
+                           "credited": row[0] == "credited",
+                           "purpose": row[2],
+                           "experience_type": row[3]}, 200)
     finally:
         conn.close()
 
@@ -7344,7 +7594,8 @@ def api_admob_reward_ssv():
     try:
         c = conn.cursor()
         c.execute(
-            "SELECT user_id, ad_unit, expires_at FROM admob_reward_sessions "
+            "SELECT user_id, ad_unit, expires_at, purpose, experience_type, status "
+            "FROM admob_reward_sessions "
             "WHERE id=%s AND user_id=%s FOR UPDATE",
             (sid, uid),
         )
@@ -7352,6 +7603,9 @@ def api_admob_reward_ssv():
         if session_row is None or session_row[1] != _ADMOB_REWARDED_AD_UNIT:
             conn.rollback()
             return jsonify({"error": "unknown_reward_session"}), 400
+        if session_row[5] == "credited":
+            conn.commit()
+            return jsonify({"status": "already_processed"}), 200
         if session_row[2] < _utcnow():
             conn.rollback()
             return jsonify({"error": "expired_reward_session"}), 400
@@ -7371,7 +7625,15 @@ def api_admob_reward_ssv():
             conn.commit()
             return jsonify({"status": "already_processed"}), 200
 
-        result = _credit_rewarded_entitlement_tx(c, uid, transaction_id, _utcnow())
+        if session_row[3] == "consultation_question":
+            result = _credit_rewarded_entitlement_tx(c, uid, transaction_id, _utcnow())
+        elif (session_row[3].startswith(_EXPLORER_REWARD_PREFIX)
+              and _validate_explorer_experience_type(session_row[4]) is not None):
+            result = _credit_explorer_entitlement_tx(
+                c, uid, sid, session_row[4], _utcnow())
+        else:
+            conn.rollback()
+            return jsonify({"error": "invalid_reward_purpose"}), 400
         c.execute(
             "UPDATE admob_reward_events SET credited_at=NOW() "
             "WHERE transaction_id=%s",
@@ -9989,10 +10251,13 @@ def api_content_today():
 _ACCOUNT_DELETE_CHILD_TABLES = (
     # ordre : tables qui référencent consultations(id) ou accounts d'abord,
     # puis consultations, puis profil, table récompense et sessions.
-    "messages",
-    "ai_reports",
-    "time_ledger",
-    "tirages",
+        "messages",
+        "ai_reports",
+        "time_ledger",
+        "tirages",
+        "explorer_generation_attempts",
+        "explorer_reward_entitlements",
+        "explorer_generation_usage",
     "earned_credits",
     "user_advisor_memory",
     "consultations",
@@ -11738,7 +12003,8 @@ def gerer_onboarding(phone, user, user_message):
 def _reply_core(user, key, user_message, io, *, depuis_pub=False,
                 user_msg_pre_inserted=False, onboarding_vient_de_finir=False,
                 channel="whatsapp", advisor_override=None, tirage_context=None,
-                onboarding_profile_intro=False, rewarded_micro=False):
+                onboarding_profile_intro=False,
+                rewarded_micro=False):
     """Cœur PARTAGÉ de get_reply : détecteurs, assemblage du system prompt,
     personas, garde-fous détresse/sécurité, appel LLM, persistance de l'historique.
     `io` injecte les accès données/canal (legacy = phone ; app = user_id).
@@ -12205,7 +12471,8 @@ def _app_persist_emotional_context(user_id, message):
 
 
 def get_reply_for_user_id(user_id, user_message, advisor_override=None, consultation_id=None,
-                          tirage_context=None, rewarded_micro=False):
+                          tirage_context=None,
+                          rewarded_micro=False):
     """Chemin APP (utilisateur = accounts.user_id, sans phone). Réutilise
     intégralement _reply_core (prompts / personas / détecteurs / garde-fous).
     AUCUN quota DAILY_LIMIT, AUCUN onboarding legacy, AUCUN WhatsApp/Telegram,
