@@ -34,6 +34,8 @@ ROOT_FILES=(
   voyance.html
   voyance-en-ligne.html
   voyance-amour.html
+  compatibilite-amoureuse.html
+  ame-soeur.html
   voyance-gratuite.html
   voyance-ia.html
   voyance-par-chat.html
