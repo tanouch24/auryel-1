@@ -139,7 +139,10 @@ def test_rewarded_code_remains_present_but_daily_quota_takes_priority():
 def test_failed_generation_does_not_finalize_daily_quota():
     class Cursor:
         rowcount = 1
+        def __init__(self):
+            self.statements = []
         def execute(self, sql, args):
+            self.statements.append(sql)
             self.sql = sql
             self.args = args
 
