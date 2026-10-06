@@ -31,6 +31,14 @@
   if (consent === '0') return;
 
   document.addEventListener('DOMContentLoaded', function () {
+    function clearBannerOffset() {
+      document.documentElement.classList.remove('cookie-consent-visible');
+      document.documentElement.style.removeProperty('--cookie-banner-offset');
+      window.removeEventListener('resize', syncBannerOffset);
+    }
+    function syncBannerOffset() {
+      document.documentElement.style.setProperty('--cookie-banner-offset', banner.offsetHeight + 'px');
+    }
     var banner = document.createElement('div');
     banner.id = 'cookie-banner';
     banner.style.cssText = [
@@ -65,16 +73,21 @@
       '</div></div>'
     ].join('');
     document.body.appendChild(banner);
+    document.documentElement.classList.add('cookie-consent-visible');
+    syncBannerOffset();
+    window.addEventListener('resize', syncBannerOffset);
 
     document.getElementById('cb-accept').addEventListener('click', function () {
       localStorage.setItem('auryel_cookie_ok', '1');
       banner.remove();
+      clearBannerOffset();
       loadGA();
       loadPixel();
     });
     document.getElementById('cb-refuse').addEventListener('click', function () {
       localStorage.setItem('auryel_cookie_ok', '0');
       banner.remove();
+      clearBannerOffset();
     });
   });
 })();

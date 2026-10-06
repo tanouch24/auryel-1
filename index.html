@@ -297,6 +297,7 @@ footer{background:var(--void)!important}
 /* ── STICKY MOBILE CTA ── */
 .sticky-mob{display:none;position:fixed;bottom:0;left:0;right:0;z-index:9999;background:rgba(4,2,10,.97);backdrop-filter:blur(20px);border-top:1px solid var(--bdrm);padding:12px 20px 16px}
 .sticky-mob-btn{display:block;text-align:center;padding:15px 24px;background:linear-gradient(135deg,var(--gold),var(--gold-b));color:var(--void);font-family:'Cinzel',serif;font-size:9px;font-weight:700;letter-spacing:.2em;text-transform:uppercase;text-decoration:none}
+html.cookie-consent-visible .sticky-mob{bottom:var(--cookie-banner-offset,0px)}
 @media(max-width:768px){.sticky-mob{display:block}body{padding-bottom:76px}}
 /* ── FOOTER TRUST STRIP ── */
 .ft-trust{background:var(--card);border-top:1px solid var(--bdr);border-bottom:1px solid var(--bdr);padding:0}
@@ -308,7 +309,7 @@ footer{background:var(--void)!important}
 @media(max-width:640px){.ft-trust-item{min-width:50%;border-right:none;border-bottom:1px solid var(--bdr)}.ft-trust-item:last-child{border-bottom:none}}
 </style>
 <!-- Google Analytics — chargé après consentement RGPD -->
-<script src="/cookie-consent.js"></script>
+<script src="/cookie-consent.js" defer></script>
 </head>
 <body>
 <div class="cursor" id="cur"></div>
@@ -556,6 +557,8 @@ document.getElementById('adv-grid').innerHTML=adv.map((a,i)=>`
 <script>const cur=document.getElementById("cur");if(cur)document.addEventListener("mousemove",e=>{cur.style.left=e.clientX+"px";cur.style.top=e.clientY+"px"});window.addEventListener("scroll",()=>{const n=document.getElementById("nav");if(n)n.classList.toggle("sc",scrollY>60)});function initReveal(){const io=new IntersectionObserver(e=>{e.forEach(x=>{if(x.isIntersecting){x.target.style.transition="opacity .7s ease,transform .7s ease";x.target.style.opacity="1";x.target.style.transform="translateY(0)"}})},{threshold:.06});document.querySelectorAll(".reveal:not(.ac)").forEach(el=>{el.style.opacity="0";el.style.transform="translateY(24px)";io.observe(el)})}document.addEventListener("DOMContentLoaded",initReveal);
 document.querySelectorAll('.faq-q').forEach(btn=>{btn.addEventListener('click',()=>{const open=btn.getAttribute('aria-expanded')==='true';document.querySelectorAll('.faq-q').forEach(b=>b.setAttribute('aria-expanded','false'));document.querySelectorAll('.faq-a').forEach(a=>a.classList.remove('open'));if(!open){btn.setAttribute('aria-expanded','true');btn.nextElementSibling.classList.add('open');}});});</script>
 <script>
+function initGsapAnimations(){
+if(!window.gsap||!window.ScrollTrigger)return;
 gsap.registerPlugin(ScrollTrigger);
 
 // ── CANVAS PARTICLES ──
@@ -638,6 +641,10 @@ gsap.utils.toArray('.ey,.hd,.rule').forEach(el=>{
   gsap.fromTo(el,{opacity:0,y:20},{opacity:1,y:0,duration:.8,ease:'power3.out',
     scrollTrigger:{trigger:el,start:'top 88%'}});
 });
+
+}
+if(window.gsap&&window.ScrollTrigger)initGsapAnimations();
+else window.addEventListener('load',initGsapAnimations,{once:true});
 </script>
 
 <p style="text-align:center;padding:24px;color:rgba(253,246,227,.55);font-family:var(--fb);font-size:13px;">Pour comprendre l’identité et le fonctionnement du service, consultez <a href="/a-propos" style="color:var(--gold-b)">À propos d’Auryel</a>.</p>
