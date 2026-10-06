@@ -7245,6 +7245,7 @@ _ADMOB_REWARDED_AD_UNIT = "ca-app-pub-9787163762873138/6173561021"
 _ADMOB_REWARDED_AD_UNIT_FORMS = frozenset(
     {_ADMOB_REWARDED_AD_UNIT, _ADMOB_REWARDED_AD_UNIT.rsplit("/", 1)[1]}
 )
+_ADMOB_CONSOLE_PROBE_AD_UNIT = "1234567890"
 # Rewarded Consultation V1 is the only active AdMob entitlement. These values
 # are server-owned: an environment override cannot turn the callback into
 # Stars or another product.
@@ -7559,25 +7560,10 @@ def api_admob_reward_ssv():
     transaction métier. Une transaction déjà reçue répond 200 sans nouveau
     crédit, afin que les retries Google restent idempotents.
     """
-    parameter_names = sorted({str(name) for name in request.args.keys()})
-    safe_parameter_names = ",".join(
-        re.sub(r"[^A-Za-z0-9_.-]", "_", name)
-        for name in parameter_names
-    ) or "<none>"
-    presence = lambda name: "YES" if name in request.args else "NO"
-    print(
-        "[admob-ssv] fields="
-        f"{safe_parameter_names} "
-        f"ad_unit={request.args.get('ad_unit', '<missing>')} "
-        f"signature={presence('signature')} "
-        f"key_id={presence('key_id')} "
-        f"transaction_id={presence('transaction_id')} "
-        f"user_id={presence('user_id')} "
-        f"custom_data={presence('custom_data')}"
-    )
-
     try:
         values = verify_callback(request.query_string)
+        if values.get("ad_unit") == _ADMOB_CONSOLE_PROBE_AD_UNIT:
+            return jsonify({"status": "verification_ok"}), 200
         # Google documente `ad_unit` sous sa forme numérique. Certains
         # environnements renvoient l'identifiant complet utilisé par le SDK;
         # les deux représentations sont acceptées, mais uniquement pour cette
@@ -7604,33 +7590,7 @@ def api_admob_reward_ssv():
         callback_at = datetime.fromtimestamp(callback_ms / 1000, timezone.utc)
         if abs((_utcnow() - callback_at).total_seconds()) > 7 * 24 * 3600:
             return jsonify({"error": "stale_callback"}), 400
-    except SsvError as exc:
-        error_code = str(exc)
-        if error_code in {
-            "signature_not_last",
-            "invalid_signature_parameter",
-            "missing_signature_or_key",
-        }:
-            failure_stage = "missing_signature"
-        elif error_code in {"key_id_not_last", "invalid_key_parameter"}:
-            failure_stage = "missing_key_id"
-        elif error_code == "no_trusted_keys":
-            failure_stage = "public_key_fetch"
-        elif error_code == "unknown_key_id":
-            failure_stage = "key_not_found"
-        elif error_code == "invalid_signature_encoding":
-            failure_stage = "signature_decode"
-        elif error_code == "invalid_signature":
-            failure_stage = "signature_verify"
-        else:
-            failure_stage = "other_exception"
-        print(f"[admob-ssv] validation_failure={failure_stage}")
-        return jsonify({"error": "invalid_signature"}), 400
-    except requests.RequestException:
-        print("[admob-ssv] validation_failure=public_key_fetch")
-        return jsonify({"error": "invalid_signature"}), 400
-    except (ValueError, TypeError):
-        print("[admob-ssv] validation_failure=other_exception")
+    except (SsvError, ValueError, TypeError, requests.RequestException):
         return jsonify({"error": "invalid_signature"}), 400
 
     conn = get_conn()
