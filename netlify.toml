@@ -564,6 +564,11 @@
   status = 301
   force = true
 [[redirects]]
+  from = "/boule-de-cristal"
+  to = "/boule-de-cristal.html"
+  status = 200
+  force = true
+[[redirects]]
   from = "/compatibilite-amoureuse"
   to = "/compatibilite-amoureuse.html"
   status = 200
