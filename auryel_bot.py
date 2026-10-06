@@ -7568,6 +7568,7 @@ def api_admob_reward_ssv():
     print(
         "[admob-ssv] fields="
         f"{safe_parameter_names} "
+        f"ad_unit={request.args.get('ad_unit', '<missing>')} "
         f"signature={presence('signature')} "
         f"key_id={presence('key_id')} "
         f"transaction_id={presence('transaction_id')} "
