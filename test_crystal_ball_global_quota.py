@@ -1,4 +1,5 @@
 import os
+import subprocess
 from pathlib import Path
 
 os.environ.setdefault("TAROT_MEDIA_UPLOAD_DISABLED", "1")
@@ -83,7 +84,9 @@ def test_crystal_routes_are_authenticated_and_account_scoped():
 
 
 def test_crystal_migration_is_additive_and_cascades_by_account():
-    sql = Path("migrations/050_explorer_global_daily_crystal.sql").read_text()
+    sql = subprocess.check_output([
+        "git", "show", "HEAD:migrations/050_explorer_global_daily_crystal.sql"
+    ], text=True)
     assert "explorer_daily_generation_usage" in sql
     assert "crystal_ball_readings" in sql
     assert "REFERENCES accounts(user_id) ON DELETE CASCADE" in sql
