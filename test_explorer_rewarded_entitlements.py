@@ -81,7 +81,10 @@ def test_explorer_entitlement_credit_is_idempotent_at_schema_level():
 def test_explorer_entitlement_consumption_is_single_use():
     class Cursor:
         rowcount = 1
+        def __init__(self):
+            self.statements = []
         def execute(self, sql, args):
+            self.statements.append(sql)
             self.sql = sql
             self.args = args
 
@@ -146,7 +149,7 @@ def test_failed_generation_does_not_finalize_daily_quota():
         {"allowed": True, "mode": "daily_free", "usage_day": A._wellbeing_day()},
         A._utcnow(),
     )
-    assert "explorer_daily_generation_usage" in cursor.sql
+    assert any("explorer_daily_generation_usage" in sql for sql in cursor.statements)
 
 
 def test_consultation_reward_state_transition_remains_unchanged():
