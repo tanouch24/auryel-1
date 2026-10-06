@@ -81,6 +81,8 @@ def test_crystal_routes_are_authenticated_and_account_scoped():
     assert "user_id=%s AND idempotency_key=%s" in create
     assert "WHERE id=%s AND user_id=%s" in fetch
     assert "add_message_for_user_id" not in create
+    assert "render_crystal_context" in source
+    assert "explorer_context_id" in source
 
 
 def test_crystal_migration_is_additive_and_cascades_by_account():
