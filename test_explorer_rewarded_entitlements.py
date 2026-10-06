@@ -108,28 +108,45 @@ class _AccessCursor:
         return self.fetches.pop(0)
 
 
-def test_first_free_is_per_experience_and_reserved_before_generation():
+def test_first_free_is_global_and_reserved_before_generation():
     cursor = _AccessCursor([None, (0,)])
     result = A._explorer_generation_access_tx(
         cursor, "user-1", "tarot", A._utcnow())
-    assert result == {"allowed": True, "mode": "first_free",
-                      "entitlement_id": None}
+    assert result["allowed"] is True
+    assert result["mode"] == "daily_free"
+    assert result["entitlement_id"] is None
 
 
-def test_used_experience_without_entitlement_requires_reward():
-    cursor = _AccessCursor([None, (1,), None])
+def test_used_global_quota_blocks_every_experience_without_rewarded_bypass():
+    cursor = _AccessCursor([None, (1,)])
     result = A._explorer_generation_access_tx(
         cursor, "user-1", "dreams", A._utcnow())
     assert result["allowed"] is False
-    assert result["mode"] == "reward_required"
+    assert result["mode"] == "daily_quota_exhausted"
 
 
-def test_available_explorer_entitlement_is_reserved_for_its_experience():
-    cursor = _AccessCursor([None, (1,), ("entitlement-1",)])
+def test_rewarded_code_remains_present_but_daily_quota_takes_priority():
+    cursor = _AccessCursor([None, (1,)])
     result = A._explorer_generation_access_tx(
         cursor, "user-1", "crystal_ball", A._utcnow())
-    assert result == {"allowed": True, "mode": "entitlement",
-                      "entitlement_id": "entitlement-1"}
+    assert result["allowed"] is False
+    assert result["mode"] == "daily_quota_exhausted"
+
+
+def test_failed_generation_does_not_finalize_daily_quota():
+    class Cursor:
+        rowcount = 1
+        def execute(self, sql, args):
+            self.sql = sql
+            self.args = args
+
+    cursor = Cursor()
+    A._finalize_explorer_generation_tx(
+        cursor, "user-1", "crystal_ball",
+        {"allowed": True, "mode": "daily_free", "usage_day": A._wellbeing_day()},
+        A._utcnow(),
+    )
+    assert "explorer_daily_generation_usage" in cursor.sql
 
 
 def test_consultation_reward_state_transition_remains_unchanged():
