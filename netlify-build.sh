@@ -36,6 +36,7 @@ ROOT_FILES=(
   voyance-amour.html
   compatibilite-amoureuse.html
   ame-soeur.html
+  boule-de-cristal.html
   voyance-gratuite.html
   voyance-ia.html
   voyance-par-chat.html
