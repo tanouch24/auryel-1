@@ -1,6 +1,7 @@
 import io
 import json
 import os
+import pytest
 
 from PIL import Image
 from werkzeug.datastructures import FileStorage
@@ -155,6 +156,98 @@ def test_palm_rejects_poor_visible_only_result(monkeypatch):
         assert str(exc) == "explorer_invalid_generation"
     else:
         raise AssertionError("a generic visible-only Palm result must be rejected")
+
+
+@pytest.mark.parametrize(
+    "photo_case",
+    [
+        "NORMAL_PHONE_PALM_PHOTO",
+        "SLIGHTLY_IMPERFECT_LIGHTING",
+        "MINOR_CROP",
+        "MAIN_LINES_VISIBLE",
+    ],
+)
+def test_palm_usable_phone_photos_are_accepted_even_with_uncertainty(
+    monkeypatch, photo_case
+):
+    calls = []
+
+    class Response:
+        def raise_for_status(self):
+            pass
+
+        def json(self):
+            return {"choices": [{"message": {"content": json.dumps({
+                "quality_ok": True,
+                "quality_reason": "",
+                "hook": "Ta paume reste lisible malgré une légère variation de lumière, et ses lignes principales offrent une base suffisante à cette lecture symbolique.",
+                "observations": {
+                    "heart_line": {"visible": True, "description": "La ligne est discernable sur la majeure partie visible de la paume, avec une courbe douce.", "features": ["courbe douce"], "confidence": 0.48},
+                    "head_line": {"visible": True, "description": "Le tracé central reste identifiable malgré un contraste modéré sur son extrémité.", "features": ["tracé identifiable"], "confidence": 0.43},
+                    "life_line": {"visible": True, "description": "L'arc autour du pouce apparaît sur la zone cadrée, sans détail secondaire certain.", "features": ["arc visible"], "confidence": 0.39},
+                },
+                "reading": {
+                    "heart_line": "Sur la partie visible, ta ligne de cœur semble dessiner une courbe assez douce. Dans une lecture symbolique, elle peut évoquer une manière d'approcher les liens avec sensibilité, sans que cette image définisse qui tu es.",
+                    "head_line": "Le tracé central paraît identifiable, même si son extrémité manque un peu de contraste. Symboliquement, on peut y voir une invitation à laisser coexister réflexion et intuition, sans tirer de conclusion trop précise.",
+                    "life_line": "L'arc autour du pouce est visible dans la zone cadrée, mais ses détails restent incertains. Cette ligne est lue symboliquement comme une image d'élan et ne renseigne pas sur la durée de vie.",
+                    "synthesis": "Les lignes principales offrent ici des repères suffisants, tandis que leur contraste inégal invite à garder la lecture ouverte. Le lien entre sensibilité et réflexion peut servir de piste, plutôt que de portrait définitif.",
+                    "guide_question": "Quelle part de cette lecture résonne le plus avec ce que tu traverses en ce moment ?",
+                },
+                "guide_summary": "Paume globalement lisible; lignes principales visibles avec détails incertains. Lecture symbolique prudente autour du lien et de la réflexion.",
+                "confidence": 0.44,
+            })}}], "usage": {}}
+
+    def fake_post(url, **kwargs):
+        calls.append(kwargs)
+        return Response()
+
+    monkeypatch.setattr(A, "OPENAI_API_KEY", "test-key")
+    monkeypatch.setattr(A.requests, "post", fake_post)
+    monkeypatch.setattr(A, "_record_llm_usage", lambda **kwargs: None)
+    monkeypatch.setattr(A, "_llm_output_safety_filter", lambda _value: (True, None))
+    result = A._explorer_photo_generate_once("palm", {"case": photo_case}, b"jpeg")
+
+    assert len(calls) == 1
+    assert result["quality_ok"] is True
+    assert result["confidence"] == 0.44
+    assert result["observations"]["life_line"]["confidence"] == 0.39
+    prompt = calls[0]["json"]["messages"][0]["content"]
+    assert "seuil de qualité inclusif" in prompt
+    assert "flou sévère" in prompt
+    assert "petit décentrage" in prompt
+
+
+@pytest.mark.parametrize(
+    "reason",
+    [
+        "Aucune main identifiable.",
+        "Le dos de la main est seul visible.",
+        "La paume est presque entièrement hors cadre.",
+        "L'image est presque totalement noire.",
+        "Le flou sévère empêche de distinguer les lignes principales.",
+    ],
+)
+def test_palm_still_rejects_unusable_photos_in_single_vision_call(
+    monkeypatch, reason
+):
+    calls = []
+
+    class Response:
+        def raise_for_status(self):
+            pass
+
+        def json(self):
+            return {"choices": [{"message": {"content": json.dumps({
+                "quality_ok": False,
+                "quality_reason": reason,
+            })}}], "usage": {}}
+
+    monkeypatch.setattr(A, "OPENAI_API_KEY", "test-key")
+    monkeypatch.setattr(A.requests, "post", lambda *args, **kwargs: (calls.append(1) or Response()))
+    monkeypatch.setattr(A, "_record_llm_usage", lambda **kwargs: None)
+    result = A._explorer_photo_generate_once("palm", {}, b"jpeg")
+    assert result == {"quality_ok": False, "quality_reason": reason}
+    assert len(calls) == 1
 
 
 def test_palm_safety_rejects_lifespan_and_medical_claims():

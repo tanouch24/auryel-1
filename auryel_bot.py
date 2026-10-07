@@ -7458,6 +7458,17 @@ def _explorer_photo_generate_once(experience_type, input_data, photo_jpeg):
         )
         guidance = (
             "Lis symboliquement cette paume à partir de détails effectivement visibles. "
+            "Applique un seuil de qualité inclusif : accepte une photo prise au téléphone "
+            "dès qu'une paume humaine est identifiable, que l'essentiel de la paume apparaît "
+            "et que les lignes principales sont raisonnablement discernables. Une lumière "
+            "ordinaire, une légère imperfection, un petit décentrage ou un bord de doigt "
+            "partiellement coupé ne justifient pas un refus. Une confiance modérée ou faible "
+            "sur certains détails doit réduire leur confidence et conduire à les omettre ou "
+            "les nuancer, jamais à rejeter une paume autrement exploitable. Réserve "
+            "quality_ok=false aux cas où l'analyse honnête est réellement impossible : aucune "
+            "main, dos de la main seul, paume presque hors cadre, obscurité quasi totale, "
+            "flou sévère empêchant de distinguer les lignes principales, obstruction majeure, "
+            "plusieurs mains ambiguës ou image sans rapport. "
             "Pour cœur, tête et vie, observe seulement si la ligne est discernable puis décris "
             "sa longueur apparente, profondeur, courbure, trajectoire, régularité, départ, "
             "branches ou interruptions uniquement si la photo les montre clairement. Ne transforme "
@@ -7476,10 +7487,15 @@ def _explorer_photo_generate_once(experience_type, input_data, photo_jpeg):
             "des aspects de ta personnalité’. Aucune clé ou section liée à la durée de vie."
         )
         image_prompt = (
-            "Examine attentivement la paume fournie. Si la main ou les lignes principales ne sont "
-            "pas assez visibles pour une lecture honnête, quality_ok=false. Sinon, appuie chaque "
-            "observation sur la photo et construis une lecture symbolique singulière, mesurée et "
-            "utile à partir de ces seuls détails."
+            "Examine attentivement la paume fournie. Accepte une photo normale de téléphone si "
+            "la paume est identifiable, largement visible et si ses lignes principales sont "
+            "raisonnablement discernables; n'exige ni lumière parfaite, ni netteté parfaite, ni "
+            "centrage parfait, ni doigts tous entièrement visibles. Si un détail est incertain, "
+            "baisse sa confidence et omets-le plutôt que de refuser toute la photo. Retourne "
+            "quality_ok=false uniquement si aucune lecture honnête n'est possible (pas de paume, "
+            "dos seul, paume presque hors cadre, noir quasi total, flou sévère, obstruction majeure, "
+            "mains ambiguës ou contenu sans rapport). Sinon, appuie chaque observation sur la photo "
+            "et construis une lecture symbolique singulière et mesurée."
         )
     else:
         schema = (
