@@ -53,8 +53,17 @@ def test_daily_home_feature_is_server_day_deterministic():
     block = source[source.index("_EXPLORER_DAILY_FEATURES"):source.index("def _crystal_theme")]
     assert "_wellbeing_day(_utcnow())" in block
     assert "random" not in block.lower()
-    for experience in ("tarot", "crystal_ball", "dreams", "compatibility"):
+    for experience in (
+        "tarot", "crystal_ball", "dreams", "compatibility", "palm", "coffee"
+    ):
         assert f'"{experience}"' in block
+
+
+def test_photo_reading_migration_only_expands_structured_types():
+    sql = Path("migrations/052_explorer_photo_readings.sql").read_text()
+    assert "DROP CONSTRAINT IF EXISTS explorer_structured_type_valid" in sql
+    assert "'palm'" in sql and "'coffee'" in sql
+    assert "DROP TABLE" not in sql.upper()
 
 
 def test_structured_context_is_server_scoped_and_attached_on_real_message():

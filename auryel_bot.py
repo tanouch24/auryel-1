@@ -3187,6 +3187,22 @@ def init_db():
             "Migration v76 (Explorer global daily Crystal) échouée"
         ) from e
 
+    # Migration v77 — autorise les lectures photo dans le stockage Explorer
+    # structuré commun, sans modifier les lectures existantes.
+    try:
+        migration_path = os.path.join(
+            os.path.dirname(__file__), "migrations", "052_explorer_photo_readings.sql"
+        )
+        with open(migration_path, "r", encoding="utf-8") as migration_file:
+            c.execute(migration_file.read())
+        conn.commit()
+    except Exception as e:
+        conn.rollback()
+        conn.close()
+        raise CriticalSchemaMigrationError(
+            "Migration v77 (Explorer photo readings) échouée"
+        ) from e
+
     conn.close()
 
 def reset_db():
@@ -7070,7 +7086,9 @@ def api_explorer_generation_status():
     return _auth_json(status, 200)
 
 
-_EXPLORER_DAILY_FEATURES = ("tarot", "crystal_ball", "dreams", "compatibility")
+_EXPLORER_DAILY_FEATURES = (
+    "tarot", "crystal_ball", "dreams", "compatibility", "palm", "coffee",
+)
 
 
 @app.route("/api/app/explorer/daily-feature", methods=["GET"])
@@ -7314,6 +7332,8 @@ def _structured_explorer_public(row):
 
 
 def _structured_explorer_generate_once(experience_type, input_data):
+    if experience_type in ("palm", "coffee"):
+        raise ValueError("photo_required")
     if experience_type == "dreams":
         instruction = (
             "Réponds uniquement en JSON avec title, symbols, atmosphere, "
@@ -7360,6 +7380,228 @@ def _structured_explorer_generate_once(experience_type, input_data):
     return normalized
 
 
+_EXPLORER_PHOTO_MAX_BYTES = 5 * 1024 * 1024
+_EXPLORER_PHOTO_MAX_PIXELS = 20_000_000
+_EXPLORER_PHOTO_MAX_EDGE = 1280
+_EXPLORER_VISION_MODEL = "gpt-4o-mini"
+
+
+class ExplorerPhotoError(ValueError):
+    def __init__(self, code, status=400):
+        super().__init__(code)
+        self.code = code
+        self.status = status
+
+
+def _normalize_explorer_photo(upload):
+    """Validate and normalize a photo in memory; never persist or log bytes."""
+    if upload is None or not getattr(upload, "filename", ""):
+        raise ExplorerPhotoError("photo_required")
+    if request.content_length and request.content_length > _EXPLORER_PHOTO_MAX_BYTES + 128 * 1024:
+        raise ExplorerPhotoError("photo_too_large", 413)
+    mime = (upload.mimetype or "").lower()
+    if mime not in ("image/jpeg", "image/png", "image/webp"):
+        raise ExplorerPhotoError("invalid_photo_type", 415)
+    raw = upload.stream.read(_EXPLORER_PHOTO_MAX_BYTES + 1)
+    if not raw:
+        raise ExplorerPhotoError("invalid_photo")
+    if len(raw) > _EXPLORER_PHOTO_MAX_BYTES:
+        raise ExplorerPhotoError("photo_too_large", 413)
+    try:
+        from PIL import Image, ImageOps
+        from io import BytesIO
+
+        with Image.open(BytesIO(raw)) as source:
+            if source.format not in ("JPEG", "PNG", "WEBP"):
+                raise ExplorerPhotoError("invalid_photo_type", 415)
+            expected_mime = {
+                "JPEG": "image/jpeg", "PNG": "image/png", "WEBP": "image/webp"
+            }[source.format]
+            if mime != expected_mime:
+                raise ExplorerPhotoError("invalid_photo_type", 415)
+            width, height = source.size
+            if width < 480 or height < 480:
+                raise ExplorerPhotoError("photo_resolution_too_low")
+            if width * height > _EXPLORER_PHOTO_MAX_PIXELS:
+                raise ExplorerPhotoError("photo_dimensions_too_large", 413)
+            source.load()
+            image = ImageOps.exif_transpose(source).convert("RGB")
+        image.thumbnail((_EXPLORER_PHOTO_MAX_EDGE, _EXPLORER_PHOTO_MAX_EDGE))
+        output = BytesIO()
+        image.save(output, format="JPEG", quality=82, optimize=True)
+        normalized = output.getvalue()
+        if len(normalized) > 2 * 1024 * 1024:
+            raise ExplorerPhotoError("photo_too_large", 413)
+        return normalized
+    except ExplorerPhotoError:
+        raise
+    except Exception as exc:
+        raise ExplorerPhotoError("invalid_photo") from exc
+
+
+def _explorer_photo_generate_once(experience_type, input_data, photo_jpeg):
+    """One vision request returns both visual quality and final interpretation."""
+    import base64
+
+    if not OPENAI_API_KEY:
+        raise RuntimeError("explorer_generation_unavailable")
+    if experience_type == "palm":
+        schema = (
+            "quality_ok (bool), quality_reason (string), visible_elements (array of strings), "
+            "interpretation (object with heart_line, head_line, life_line, overall strings), "
+            "reflection (string), guide_summary (string), confidence (number 0..1)"
+        )
+        guidance = (
+            "Lecture symbolique de la paume. Décris uniquement les lignes réellement nettes. "
+            "Une ligne peu visible doit être signalée comme non lisible, jamais inventée. "
+            "Aucun diagnostic de santé, aucune prédiction de longévité ou de décès, aucune certitude."
+        )
+        image_prompt = "Évalue d'abord si une paume ouverte, nette et suffisamment éclairée est visible."
+    else:
+        schema = (
+            "quality_ok (bool), quality_reason (string), visible_shapes (array of strings), "
+            "dominant_zone (string), symbols (array of strings), interpretation (string), "
+            "reflection (string), guide_summary (string), confidence (number 0..1)"
+        )
+        guidance = (
+            "Lecture symbolique du marc. Ne nomme que les formes réellement identifiables. "
+            "Aucune prédiction certaine ni promesse financière, amoureuse ou médicale."
+        )
+        image_prompt = "Évalue d'abord si l'intérieur de la tasse et le marc sont nets et visibles."
+    system = (
+        "Tu produis une lecture Explorer Auryel en français, douce, mesurée et non prédictive. "
+        f"{guidance} Si la photo ne permet pas une lecture fiable, retourne quality_ok=false, "
+        "une quality_reason courte et aucune interprétation symbolique. "
+        f"Réponds uniquement en JSON avec exactement ces champs : {schema}. "
+        "Les résumés destinés au guide doivent rester compacts (400 caractères maximum)."
+    )
+    payload = {
+        "model": _EXPLORER_VISION_MODEL,
+        "messages": [
+            {"role": "system", "content": system},
+            {"role": "user", "content": [
+                {"type": "text", "text": image_prompt},
+                {"type": "image_url", "image_url": {
+                    "url": "data:image/jpeg;base64," + base64.b64encode(photo_jpeg).decode("ascii"),
+                    "detail": "high",
+                }},
+            ]},
+        ],
+        "temperature": 0.4,
+        "max_tokens": 700,
+        "response_format": {"type": "json_object"},
+    }
+    started = time.monotonic()
+    try:
+        response = requests.post(
+            "https://api.openai.com/v1/chat/completions",
+            headers={"Authorization": f"Bearer {OPENAI_API_KEY}",
+                     "Content-Type": "application/json"},
+            json=payload,
+            timeout=LLM_HTTP_TIMEOUT,
+        )
+        response.raise_for_status()
+        body = response.json()
+        _record_llm_usage(
+            model=_EXPLORER_VISION_MODEL,
+            mode="explorer_vision",
+            usage=_usage_dict(body.get("usage")),
+            provider="openai",
+            latency_ms=int((time.monotonic() - started) * 1000),
+        )
+        raw = body["choices"][0]["message"]["content"]
+    except Exception as exc:
+        # Never include request, response, image, or provider error text.
+        print(f"[explorer-vision] provider failed ({type(exc).__name__})")
+        raise RuntimeError("explorer_generation_failed") from exc
+    try:
+        result = _json.loads(raw)
+    except Exception as exc:
+        raise RuntimeError("explorer_invalid_generation") from exc
+    if not isinstance(result, dict) or not isinstance(result.get("quality_ok"), bool):
+        raise RuntimeError("explorer_invalid_generation")
+    quality_reason = result.get("quality_reason", "")
+    if not isinstance(quality_reason, str) or len(quality_reason) > 240:
+        raise RuntimeError("explorer_invalid_generation")
+    if not result["quality_ok"]:
+        safe, _reason = _llm_output_safety_filter(quality_reason)
+        if not safe:
+            raise RuntimeError("explorer_invalid_generation")
+        return {"quality_ok": False, "quality_reason": quality_reason.strip()[:240]}
+    confidence = result.get("confidence")
+    if isinstance(confidence, bool) or not isinstance(confidence, (int, float)) or not 0 <= confidence <= 1:
+        raise RuntimeError("explorer_invalid_generation")
+    if experience_type == "palm":
+        visible = result.get("visible_elements")
+        interpretation = result.get("interpretation")
+        if not isinstance(visible, list) or not isinstance(interpretation, dict):
+            raise RuntimeError("explorer_invalid_generation")
+        normalized_interpretation = {}
+        for field in ("heart_line", "head_line", "life_line", "overall"):
+            value = interpretation.get(field)
+            if not isinstance(value, str) or len(value) > 1000:
+                raise RuntimeError("explorer_invalid_generation")
+            normalized_interpretation[field] = value.strip()
+        normalized = {
+            "quality_ok": True,
+            "visible_elements": _bounded_string_list(visible, 10, 240),
+            "interpretation": normalized_interpretation,
+            "reflection": _bounded_result_string(result, "reflection", 1000),
+            "guide_summary": _bounded_result_string(result, "guide_summary", 400),
+            "confidence": float(confidence),
+        }
+    else:
+        visible = result.get("visible_shapes")
+        symbols = result.get("symbols")
+        if not isinstance(visible, list) or not isinstance(symbols, list):
+            raise RuntimeError("explorer_invalid_generation")
+        normalized = {
+            "quality_ok": True,
+            "visible_shapes": _bounded_string_list(visible, 10, 240),
+            "dominant_zone": _bounded_result_string(result, "dominant_zone", 240),
+            "symbols": _bounded_string_list(symbols, 10, 240),
+            "interpretation": _bounded_result_string(result, "interpretation", 1200),
+            "reflection": _bounded_result_string(result, "reflection", 1000),
+            "guide_summary": _bounded_result_string(result, "guide_summary", 400),
+            "confidence": float(confidence),
+        }
+    for value in _iter_result_strings(normalized):
+        safe, _reason = _llm_output_safety_filter(value)
+        if not safe:
+            raise RuntimeError("explorer_invalid_generation")
+    return normalized
+
+
+def _bounded_result_string(data, key, maximum):
+    value = data.get(key)
+    if not isinstance(value, str) or not value.strip() or len(value.strip()) > maximum:
+        raise RuntimeError("explorer_invalid_generation")
+    return value.strip()
+
+
+def _bounded_string_list(values, maximum_items, maximum_length):
+    if len(values) > maximum_items:
+        raise RuntimeError("explorer_invalid_generation")
+    output = []
+    for value in values:
+        if not isinstance(value, str) or len(value.strip()) > maximum_length:
+            raise RuntimeError("explorer_invalid_generation")
+        if value.strip():
+            output.append(value.strip())
+    return output
+
+
+def _iter_result_strings(value):
+    if isinstance(value, dict):
+        for child in value.values():
+            yield from _iter_result_strings(child)
+    elif isinstance(value, list):
+        for child in value:
+            yield from _iter_result_strings(child)
+    elif isinstance(value, str):
+        yield value
+
+
 def _structured_explorer_row(cursor, user_id, experience_type, reading_id=None,
                              idempotency_key=None, latest=False):
     query = (
@@ -7388,6 +7630,8 @@ def _structured_explorer_input(experience_type, data):
         if len(dream.strip()) > 4000:
             return None, "dream_too_long"
         return {"dream": dream.strip()}, None
+    if experience_type in ("palm", "coffee"):
+        return {}, None
     other_name = data.get("other_name")
     relation = data.get("relation", "")
     if not isinstance(other_name, str) or not other_name.strip():
@@ -7399,10 +7643,18 @@ def _structured_explorer_input(experience_type, data):
     return {"other_name": other_name.strip(), "relation": relation.strip()}, None
 
 
-def _structured_explorer_create(experience_type):
-    data = request.get_json(silent=True)
-    if not isinstance(data, dict):
-        return _auth_json({"error": "invalid_request"}, 400)
+def _structured_explorer_create(experience_type, photo_upload=None):
+    if experience_type in ("palm", "coffee"):
+        data = request.form.to_dict()
+        try:
+            photo_jpeg = _normalize_explorer_photo(photo_upload)
+        except ExplorerPhotoError as exc:
+            return _auth_json({"error": exc.code}, exc.status)
+    else:
+        data = request.get_json(silent=True)
+        photo_jpeg = None
+        if not isinstance(data, dict):
+            return _auth_json({"error": "invalid_request"}, 400)
     input_data, error = _structured_explorer_input(experience_type, data)
     if error:
         return _auth_json({"error": error}, 400)
@@ -7444,7 +7696,18 @@ def _structured_explorer_create(experience_type):
                 "error": "explorer_reward_required",
                 "experience_type": experience_type,
             }, 402)
-        result_data = _structured_explorer_generate_once(experience_type, input_data)
+        if experience_type in ("palm", "coffee"):
+            result_data = _explorer_photo_generate_once(
+                experience_type, input_data, photo_jpeg)
+            if not result_data.get("quality_ok"):
+                conn.rollback()
+                return _auth_json({
+                    "error": "photo_quality_insufficient",
+                    "quality_ok": False,
+                    "quality_reason": result_data.get("quality_reason", ""),
+                }, 422)
+        else:
+            result_data = _structured_explorer_generate_once(experience_type, input_data)
         reading_id = str(uuid.uuid4())
         cursor.execute(
             """INSERT INTO explorer_structured_readings
@@ -7463,6 +7726,9 @@ def _structured_explorer_create(experience_type):
         return _auth_json(_structured_explorer_public(row), 201)
     except Exception:
         conn.rollback()
+        if experience_type in ("palm", "coffee"):
+            print(f"[explorer-vision] generation failed for {experience_type}")
+            return _auth_json({"error": "explorer_generation_failed"}, 503)
         raise
     finally:
         conn.close()
@@ -7480,11 +7746,23 @@ def api_compatibility_create():
     return _structured_explorer_create("compatibility")
 
 
+@app.route("/api/explorer/palm", methods=["POST"])
+@require_app_auth
+def api_palm_create():
+    return _structured_explorer_create("palm", request.files.get("photo"))
+
+
+@app.route("/api/explorer/coffee", methods=["POST"])
+@require_app_auth
+def api_coffee_create():
+    return _structured_explorer_create("coffee", request.files.get("photo"))
+
+
 @app.route("/api/explorer/<experience_type>/latest", methods=["GET"])
 @require_app_auth
 def api_structured_explorer_latest(experience_type):
     experience_type = _validate_explorer_experience_type(experience_type)
-    if experience_type not in ("dreams", "compatibility"):
+    if experience_type not in ("dreams", "compatibility", "palm", "coffee"):
         return _auth_json({"error": "not_found"}, 404)
     conn = get_conn()
     try:
@@ -7501,7 +7779,7 @@ def api_structured_explorer_latest(experience_type):
 @require_app_auth
 def api_structured_explorer_get(experience_type, reading_id):
     experience_type = _validate_explorer_experience_type(experience_type)
-    if experience_type not in ("dreams", "compatibility"):
+    if experience_type not in ("dreams", "compatibility", "palm", "coffee"):
         return _auth_json({"error": "not_found"}, 404)
     try:
         uuid.UUID(str(reading_id))
