@@ -20,6 +20,54 @@ def _photo_bytes(fmt="JPEG", size=(720, 960)):
     return output.getvalue()
 
 
+def _valid_palm_payload():
+    line_reading = (
+        "Sur ta photo, ce tracé apparaît avec une courbe assez régulière et une présence "
+        "plus marquée au centre. Dans une lecture symbolique, cette forme peut évoquer "
+        "une manière de prendre le temps de sentir ce qui compte, tout en laissant à "
+        "l'expérience la possibilité de nuancer tes premières impressions."
+    )
+    return {
+        "quality_ok": True,
+        "quality_reason": "",
+        "hook": "Ta paume laisse apparaître trois lignes principales dont les trajectoires ne racontent pas exactement la même chose. Leur contraste offre une piste de lecture singulière, à prendre comme une invitation plutôt qu'un portrait figé.",
+        "observations": {
+            line: {
+                "visible": True,
+                "description": "La ligne suit une courbe lisible sur la zone visible, avec un relief modéré et une trajectoire assez régulière.",
+                "features": ["courbe lisible", "relief modéré"],
+                "confidence": 0.7,
+            }
+            for line in ("heart_line", "head_line", "life_line")
+        },
+        "reading": {
+            "heart_line": line_reading,
+            "head_line": line_reading,
+            "life_line": line_reading,
+            "synthesis": "L'ensemble rapproche une expression affective plutôt posée et une façon de réfléchir qui semble chercher ses propres repères. L'arc de la ligne de vie ajoute une image de mouvement, sans indiquer une durée de vie ni annoncer un événement. Cette combinaison peut simplement ouvrir une réflexion sur la place que tu donnes à la sécurité et à l'élan dans tes choix actuels.",
+            "guide_question": "Dans tes choix récents, où ressens-tu le mieux cet équilibre entre besoin de repères et envie d'avancer à ta manière ?",
+        },
+        "guide_summary": "Lecture symbolique : lignes principales régulières, avec une piste autour de l'équilibre entre repères, réflexion et élan personnel.",
+        "confidence": 0.7,
+    }
+
+
+def _mock_palm_vision(monkeypatch, raw):
+    class Response:
+        def raise_for_status(self):
+            pass
+
+        def json(self):
+            return {"choices": [{"message": {"content": raw}}], "usage": {}}
+
+    calls = []
+    monkeypatch.setattr(A, "OPENAI_API_KEY", "test-key")
+    monkeypatch.setattr(A.requests, "post", lambda *args, **kwargs: (calls.append(1) or Response()))
+    monkeypatch.setattr(A, "_record_llm_usage", lambda **kwargs: None)
+    monkeypatch.setattr(A, "_llm_output_safety_filter", lambda _value: (True, None))
+    return calls
+
+
 def test_photo_normalization_orients_and_resizes_in_memory():
     with A.app.test_request_context("/", method="POST"):
         upload = FileStorage(
@@ -152,10 +200,209 @@ def test_palm_rejects_poor_visible_only_result(monkeypatch):
     monkeypatch.setattr(A, "_record_llm_usage", lambda **kwargs: None)
     try:
         A._explorer_photo_generate_once("palm", {}, b"normalized-jpeg")
-    except RuntimeError as exc:
-        assert str(exc) == "explorer_invalid_generation"
+    except A._PalmDiagnosticError as exc:
+        assert exc.stage == "richness_validation"
+        assert exc.rule_id == "observation_description_too_short"
     else:
         raise AssertionError("a generic visible-only Palm result must be rejected")
+
+
+@pytest.mark.parametrize(
+    ("case", "stage", "rule_id"),
+    [
+        ("invalid_json", "json_parse", "invalid_json"),
+        ("missing_field", "structure_validation", "required_fields_missing"),
+        ("wrong_structure", "structure_validation", "top_level_wrong_type"),
+        ("poor_reading", "richness_validation", "hook_length_invalid"),
+        ("safety", "safety_validation", "palm_claim_blocked"),
+    ],
+)
+def test_palm_diagnostic_logs_identify_failure_without_generated_content(
+    monkeypatch, capsys, case, stage, rule_id
+):
+    request_id = "diagnostic-attempt-123"
+    marker = "DO_NOT_LOG_GENERATED_PRIVATE_TEXT"
+    payload = _valid_palm_payload()
+    if case == "invalid_json":
+        raw = f"invalid json {marker}"
+    else:
+        if case == "missing_field":
+            payload.pop("reading")
+        elif case == "wrong_structure":
+            payload["observations"] = [marker]
+        elif case == "poor_reading":
+            payload["hook"] = "court {marker}"
+        elif case == "safety":
+            payload["reading"]["life_line"] = (
+                payload["reading"]["life_line"] + " Tu vivras longtemps."
+            )
+        raw = json.dumps(payload, ensure_ascii=False)
+    calls = _mock_palm_vision(monkeypatch, raw)
+
+    with pytest.raises(A._PalmDiagnosticError) as caught:
+        A._explorer_photo_generate_once(
+            "palm", {}, b"normalized-jpeg", request_id=request_id
+        )
+
+    assert caught.value.stage == stage
+    assert caught.value.rule_id == rule_id
+    assert len(calls) == 1
+    logs = capsys.readouterr().out
+    assert f"request_id={request_id}" in logs
+    assert f"event=PALM_{stage.upper()}_FAIL" in logs
+    assert marker not in logs
+    assert "Tu vivras longtemps" not in logs
+    assert "guide_summary" not in logs
+
+
+def test_palm_diagnostic_logs_all_success_stages_and_only_one_vision_call(
+    monkeypatch, capsys
+):
+    request_id = "diagnostic-valid-attempt"
+    payload = _valid_palm_payload()
+    calls = _mock_palm_vision(monkeypatch, json.dumps(payload, ensure_ascii=False))
+    result = A._explorer_photo_generate_once(
+        "palm", {}, b"normalized-jpeg", request_id=request_id
+    )
+    logs = capsys.readouterr().out
+    assert len(calls) == 1
+    assert result["quality_ok"] is True
+    for stage in (
+        "VISION_RESPONSE_RECEIVED", "JSON_PARSE_PASS",
+        "STRUCTURE_VALIDATION_PASS", "RICHNESS_VALIDATION_PASS",
+        "SAFETY_VALIDATION_PASS",
+    ):
+        assert f"event=PALM_{stage} request_id={request_id}" in logs
+
+
+@pytest.mark.parametrize("failure", ["vision_validation", "persistence"])
+def test_palm_route_correlates_persistence_and_rolls_back_quota(
+    monkeypatch, capsys, failure
+):
+    class Cursor:
+        def execute(self, query, _params=None):
+            if failure == "persistence" and query.lstrip().startswith("INSERT INTO explorer_structured_readings"):
+                raise RuntimeError("DATABASE_ERROR_CONTAINS_PRIVATE_VALUE")
+
+        def fetchone(self):
+            return None
+
+    class Connection:
+        def __init__(self):
+            self.rollbacks = 0
+            self.commits = 0
+
+        def cursor(self):
+            return Cursor()
+
+        def rollback(self):
+            self.rollbacks += 1
+
+        def commit(self):
+            self.commits += 1
+
+        def close(self):
+            pass
+
+    connection = Connection()
+    monkeypatch.setattr(A, "resolve_app_session", lambda _token: {
+        "session_id": "session", "user_id": "test-user", "email": "private@example.invalid"
+    })
+    monkeypatch.setattr(A, "get_or_create_app_profile", lambda _uid: {"guide": "luna"})
+    monkeypatch.setattr(A, "get_conn", lambda: connection)
+    monkeypatch.setattr(A, "_normalize_explorer_photo", lambda _upload: b"normalized")
+    monkeypatch.setattr(A, "_explorer_generation_access_tx", lambda *_args: {
+        "allowed": True, "mode": "daily_quota"
+    })
+    monkeypatch.setattr(A, "_finalize_explorer_generation_tx", lambda *_args: None)
+    if failure == "vision_validation":
+        def fail_vision(*_args, request_id=None, **_kwargs):
+            A._palm_diagnostic_fail(
+                request_id, "richness_validation", "hook_length_invalid"
+            )
+        monkeypatch.setattr(A, "_explorer_photo_generate_once", fail_vision)
+    else:
+        monkeypatch.setattr(A, "_explorer_photo_generate_once", lambda *_args, **_kwargs: {
+            "quality_ok": True, "hook": "safe result"
+        })
+
+    response = A.app.test_client().post(
+        "/api/explorer/palm",
+        headers={"Authorization": "Bearer test-session"},
+        data={"idempotency_key": "palm-diagnostic-test", "photo": (io.BytesIO(b"x"), "palm.jpg")},
+        content_type="multipart/form-data",
+    )
+    assert response.status_code == 503
+    assert connection.rollbacks == 1
+    assert connection.commits == 0
+    logs = capsys.readouterr().out
+    request_ids = {
+        token.split("=", 1)[1]
+        for token in logs.split()
+        if token.startswith("request_id=")
+    }
+    assert len(request_ids) == 1
+    assert "event=PALM_QUOTA_ROLLBACK" in logs
+    if failure == "persistence":
+        assert "event=PALM_PERSISTENCE_START" in logs
+        assert "event=PALM_PERSISTENCE_FAIL" in logs
+    else:
+        assert "event=PALM_RICHNESS_VALIDATION_FAIL" in logs
+    assert "DATABASE_ERROR_CONTAINS_PRIVATE_VALUE" not in logs
+    assert "private@example.invalid" not in logs
+
+
+def test_palm_route_logs_persistence_success_with_same_request_id(monkeypatch, capsys):
+    class Cursor:
+        def execute(self, *_args):
+            pass
+
+        def fetchone(self):
+            return None
+
+    class Connection:
+        def cursor(self):
+            return Cursor()
+
+        def rollback(self):
+            pass
+
+        def commit(self):
+            pass
+
+        def close(self):
+            pass
+
+    monkeypatch.setattr(A, "resolve_app_session", lambda _token: {
+        "session_id": "session", "user_id": "test-user", "email": "private@example.invalid"
+    })
+    monkeypatch.setattr(A, "get_or_create_app_profile", lambda _uid: {"guide": "luna"})
+    monkeypatch.setattr(A, "get_conn", Connection)
+    monkeypatch.setattr(A, "_normalize_explorer_photo", lambda _upload: b"normalized")
+    monkeypatch.setattr(A, "_explorer_generation_access_tx", lambda *_args: {
+        "allowed": True, "mode": "daily_quota"
+    })
+    monkeypatch.setattr(A, "_finalize_explorer_generation_tx", lambda *_args: None)
+    monkeypatch.setattr(A, "_explorer_photo_generate_once", lambda *_args, **_kwargs: {
+        "quality_ok": True, "hook": "safe result"
+    })
+    response = A.app.test_client().post(
+        "/api/explorer/palm",
+        headers={"Authorization": "Bearer test-session"},
+        data={"idempotency_key": "palm-persistence-test", "photo": (io.BytesIO(b"x"), "palm.jpg")},
+        content_type="multipart/form-data",
+    )
+    assert response.status_code == 201
+    logs = capsys.readouterr().out
+    request_ids = {
+        token.split("=", 1)[1]
+        for token in logs.split()
+        if token.startswith("request_id=")
+    }
+    assert len(request_ids) == 1
+    assert "event=PALM_PERSISTENCE_START" in logs
+    assert "event=PALM_PERSISTENCE_PASS" in logs
+    assert "private@example.invalid" not in logs
 
 
 @pytest.mark.parametrize(

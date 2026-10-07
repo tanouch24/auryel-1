@@ -7396,6 +7396,44 @@ class ExplorerPhotoError(ValueError):
         self.status = status
 
 
+class _PalmDiagnosticError(RuntimeError):
+    def __init__(self, stage, rule_id, exception_class=None):
+        super().__init__("palm_validation_failed")
+        self.stage = stage
+        self.rule_id = rule_id
+        self.exception_class = exception_class
+
+
+def _palm_diagnostic_log(request_id, event, **metadata):
+    """Log only fixed event/rule identifiers and safe scalar metadata."""
+    safe = {"request_id": str(request_id)[:36]}
+    for key, value in metadata.items():
+        if key in {"rule_id", "category", "exception_class", "json_present", "root_type",
+                   "field", "length", "word_count", "response_status", "model"}:
+            if isinstance(value, (str, int, float, bool)) or value is None:
+                rendered = str(value)[:64] if value is not None else "none"
+                if key == "category" and rendered not in {
+                    "medical", "certainty", "longevity", "vision_quality_declined",
+                    "provider_or_response_access", "persistence_failure",
+                    "medical_diagnosis", "cure_promise", "legal_advice",
+                    "financial_advice", "human_claim",
+                    "vision_or_unclassified_failure", "invalid_photo_type",
+                    "photo_required", "photo_too_large", "invalid_photo",
+                    "photo_resolution_too_low", "photo_dimensions_too_large",
+                }:
+                    rendered = "other"
+                safe[key] = rendered
+    fields = " ".join(f"{key}={value}" for key, value in safe.items())
+    print(f"[PALM_DIAGNOSTIC] event={event} {fields}")
+
+
+def _palm_diagnostic_fail(request_id, stage, rule_id, **metadata):
+    _palm_diagnostic_log(
+        request_id, f"PALM_{stage.upper()}_FAIL", rule_id=rule_id, **metadata
+    )
+    raise _PalmDiagnosticError(stage, rule_id, metadata.get("exception_class"))
+
+
 def _normalize_explorer_photo(upload):
     """Validate and normalize a photo in memory; never persist or log bytes."""
     if upload is None or not getattr(upload, "filename", ""):
@@ -7442,9 +7480,12 @@ def _normalize_explorer_photo(upload):
         raise ExplorerPhotoError("invalid_photo") from exc
 
 
-def _explorer_photo_generate_once(experience_type, input_data, photo_jpeg):
+def _explorer_photo_generate_once(experience_type, input_data, photo_jpeg,
+                                  request_id=None):
     """One vision request returns both visual quality and final interpretation."""
     import base64
+
+    request_id = request_id or str(uuid.uuid4())
 
     if not OPENAI_API_KEY:
         raise RuntimeError("explorer_generation_unavailable")
@@ -7533,6 +7574,9 @@ def _explorer_photo_generate_once(experience_type, input_data, photo_jpeg):
         "response_format": {"type": "json_object"},
     }
     started = time.monotonic()
+    if experience_type == "palm":
+        _palm_diagnostic_log(request_id, "PALM_VISION_CALL_START",
+                             model=_EXPLORER_VISION_MODEL)
     try:
         response = requests.post(
             "https://api.openai.com/v1/chat/completions",
@@ -7553,14 +7597,135 @@ def _explorer_photo_generate_once(experience_type, input_data, photo_jpeg):
         raw = body["choices"][0]["message"]["content"]
     except Exception as exc:
         # Never include request, response, image, or provider error text.
-        print(f"[explorer-vision] provider failed ({type(exc).__name__})")
+        if experience_type == "palm":
+            _palm_diagnostic_log(
+                request_id, "PALM_VISION_CALL_FAIL",
+                category="provider_or_response_access",
+                exception_class=type(exc).__name__,
+            )
+        else:
+            print(f"[explorer-vision] provider failed ({type(exc).__name__})")
         raise RuntimeError("explorer_generation_failed") from exc
+    if experience_type == "palm":
+        _palm_diagnostic_log(
+            request_id, "PALM_VISION_RESPONSE_RECEIVED",
+            response_status="2xx", model=_EXPLORER_VISION_MODEL,
+        )
+        _palm_diagnostic_log(request_id, "PALM_JSON_PARSE_START",
+                             json_present=bool(raw))
     try:
         result = _json.loads(raw)
     except Exception as exc:
+        if experience_type == "palm":
+            _palm_diagnostic_fail(
+                request_id, "json_parse", "invalid_json",
+                exception_class=type(exc).__name__, json_present=bool(raw),
+            )
         raise RuntimeError("explorer_invalid_generation") from exc
-    if not isinstance(result, dict) or not isinstance(result.get("quality_ok"), bool):
-        raise RuntimeError("explorer_invalid_generation")
+    if experience_type == "palm":
+        root_type = type(result).__name__
+        _palm_diagnostic_log(request_id, "PALM_JSON_PARSE_PASS", root_type=root_type)
+        _palm_diagnostic_log(request_id, "PALM_STRUCTURE_VALIDATION_START")
+        if not isinstance(result, dict):
+            _palm_diagnostic_fail(request_id, "structure_validation",
+                                  "root_not_object", root_type=root_type)
+        required_top = {"quality_ok": bool, "quality_reason": str}
+        if isinstance(result, dict) and result.get("quality_ok") is True:
+            required_top.update({
+                "hook": str, "observations": dict, "reading": dict,
+                "guide_summary": str, "confidence": (int, float),
+            })
+        missing_top = [key for key in required_top if key not in result]
+        if missing_top:
+            _palm_diagnostic_fail(
+                request_id, "structure_validation", "required_fields_missing",
+                field=",".join(missing_top),
+            )
+        wrong_top = []
+        for key, expected in required_top.items():
+            value = result[key]
+            if key == "quality_ok":
+                valid = isinstance(value, bool)
+            elif key == "confidence":
+                valid = (not isinstance(value, bool) and
+                         isinstance(value, (int, float)))
+            else:
+                valid = isinstance(value, expected)
+            if not valid:
+                wrong_top.append(key)
+        if wrong_top:
+            _palm_diagnostic_fail(
+                request_id, "structure_validation", "top_level_wrong_type",
+                field=",".join(wrong_top),
+            )
+        if len(result["quality_reason"]) > 240:
+            _palm_diagnostic_fail(
+                request_id, "structure_validation", "quality_reason_too_long",
+                length=len(result["quality_reason"]),
+            )
+        if not result["quality_ok"]:
+            _palm_diagnostic_log(request_id, "PALM_STRUCTURE_VALIDATION_PASS")
+            _palm_diagnostic_log(request_id, "PALM_SAFETY_VALIDATION_START")
+            safe, safety_rule = _llm_output_safety_filter(result["quality_reason"])
+            if not safe:
+                _palm_diagnostic_fail(
+                    request_id, "safety_validation", "quality_reason_unsafe",
+                    category=safety_rule,
+                )
+            _palm_diagnostic_log(request_id, "PALM_SAFETY_VALIDATION_PASS")
+            _palm_diagnostic_log(request_id, "PALM_QUALITY_REJECTED",
+                                 category="vision_quality_declined")
+            return {"quality_ok": False,
+                    "quality_reason": result["quality_reason"].strip()[:240]}
+        if not 0 <= result["confidence"] <= 1:
+            _palm_diagnostic_fail(
+                request_id, "structure_validation", "confidence_out_of_range"
+            )
+        observations = result["observations"]
+        reading = result["reading"]
+        expected_observations = {"heart_line", "head_line", "life_line"}
+        expected_readings = expected_observations | {"synthesis", "guide_question"}
+        missing_observations = sorted(expected_observations - observations.keys())
+        missing_readings = sorted(expected_readings - reading.keys())
+        if missing_observations or missing_readings:
+            _palm_diagnostic_fail(
+                request_id, "structure_validation", "nested_fields_missing",
+                field=",".join(missing_observations + missing_readings),
+            )
+        if not all(isinstance(observations[k], dict) for k in expected_observations):
+            _palm_diagnostic_fail(request_id, "structure_validation",
+                                  "observation_not_object")
+        for field in sorted(expected_observations):
+            observation = observations[field]
+            bad = []
+            if not isinstance(observation.get("visible"), bool):
+                bad.append("visible")
+            if not isinstance(observation.get("description"), str):
+                bad.append("description")
+            if not isinstance(observation.get("features"), list):
+                bad.append("features")
+            line_confidence = observation.get("confidence")
+            if isinstance(line_confidence, bool) or not isinstance(line_confidence, (int, float)):
+                bad.append("confidence")
+            elif not 0 <= line_confidence <= 1:
+                _palm_diagnostic_fail(
+                    request_id, "structure_validation", "line_confidence_out_of_range",
+                    field=field,
+                )
+            if bad:
+                _palm_diagnostic_fail(
+                    request_id, "structure_validation", "observation_wrong_type",
+                    field=f"{field}:{','.join(bad)}",
+                )
+        wrong_readings = [k for k in expected_readings
+                          if not isinstance(reading[k], str)]
+        if wrong_readings:
+            _palm_diagnostic_fail(
+                request_id, "structure_validation", "reading_wrong_type",
+                field=",".join(sorted(wrong_readings)),
+            )
+        _palm_diagnostic_log(request_id, "PALM_STRUCTURE_VALIDATION_PASS")
+        _palm_diagnostic_log(request_id, "PALM_RICHNESS_VALIDATION_START")
     quality_reason = result.get("quality_reason", "")
     if not isinstance(quality_reason, str) or len(quality_reason) > 240:
         raise RuntimeError("explorer_invalid_generation")
@@ -7573,40 +7738,52 @@ def _explorer_photo_generate_once(experience_type, input_data, photo_jpeg):
     if isinstance(confidence, bool) or not isinstance(confidence, (int, float)) or not 0 <= confidence <= 1:
         raise RuntimeError("explorer_invalid_generation")
     if experience_type == "palm":
-        observations = result.get("observations")
-        reading = result.get("reading")
-        if not isinstance(observations, dict) or not isinstance(reading, dict):
-            raise RuntimeError("explorer_invalid_generation")
         normalized_observations = {}
         normalized_reading = {}
         for field in ("heart_line", "head_line", "life_line"):
             observation = observations.get(field)
-            if not isinstance(observation, dict) or not isinstance(observation.get("visible"), bool):
-                raise RuntimeError("explorer_invalid_generation")
             description = observation.get("description")
             features = observation.get("features")
             line_confidence = observation.get("confidence")
-            if (not isinstance(description, str) or len(description.strip()) > 360
-                    or not isinstance(features, list)
-                    or isinstance(line_confidence, bool)
-                    or not isinstance(line_confidence, (int, float))
-                    or not 0 <= line_confidence <= 1):
-                raise RuntimeError("explorer_invalid_generation")
-            normalized_features = _bounded_string_list(features, 6, 180)
+            if len(description.strip()) > 360:
+                _palm_diagnostic_fail(request_id, "richness_validation",
+                                      "observation_description_too_long", field=field,
+                                      length=len(description.strip()))
+            if len(features) > 6:
+                _palm_diagnostic_fail(request_id, "richness_validation",
+                                      "too_many_features", field=field,
+                                      length=len(features))
+            if any(not isinstance(item, str) or len(item.strip()) > 180
+                   for item in features):
+                _palm_diagnostic_fail(request_id, "richness_validation",
+                                      "feature_invalid_or_too_long", field=field)
+            normalized_features = [item.strip() for item in features if item.strip()]
             if observation["visible"]:
-                if len(description.strip()) < 24 or not normalized_features:
-                    raise RuntimeError("explorer_invalid_generation")
+                if len(description.strip()) < 24:
+                    _palm_diagnostic_fail(request_id, "richness_validation",
+                                          "observation_description_too_short",
+                                          field=field, length=len(description.strip()))
+                if not normalized_features:
+                    _palm_diagnostic_fail(request_id, "richness_validation",
+                                          "visible_line_features_missing", field=field)
                 if description.strip().lower() in ("visible", "ligne visible", "visible."):
-                    raise RuntimeError("explorer_invalid_generation")
+                    _palm_diagnostic_fail(request_id, "richness_validation",
+                                          "placeholder_observation", field=field)
             else:
                 normalized_features = []
             line_reading = reading.get(field)
-            if not isinstance(line_reading, str) or len(line_reading.strip()) > 1000:
-                raise RuntimeError("explorer_invalid_generation")
+            if len(line_reading.strip()) > 1000:
+                _palm_diagnostic_fail(request_id, "richness_validation",
+                                      "line_reading_too_long", field=field,
+                                      length=len(line_reading.strip()))
             if observation["visible"] and len(line_reading.strip()) < 70:
-                raise RuntimeError("explorer_invalid_generation")
+                _palm_diagnostic_fail(request_id, "richness_validation",
+                                      "line_reading_too_short", field=field,
+                                      length=len(line_reading.strip()))
             if not observation["visible"] and len(line_reading.strip()) < 24:
-                raise RuntimeError("explorer_invalid_generation")
+                _palm_diagnostic_fail(request_id, "richness_validation",
+                                      "unseen_line_reading_too_short", field=field,
+                                      length=len(line_reading.strip()))
             normalized_observations[field] = {
                 "visible": observation["visible"],
                 "description": description.strip(),
@@ -7618,17 +7795,32 @@ def _explorer_photo_generate_once(experience_type, input_data, photo_jpeg):
             ("synthesis", 90, 1100), ("guide_question", 35, 320),
         ):
             value = reading.get(field)
-            if not isinstance(value, str) or not minimum <= len(value.strip()) <= maximum:
-                raise RuntimeError("explorer_invalid_generation")
+            length = len(value.strip())
+            if length < minimum or length > maximum:
+                rule_id = "synthesis_length_invalid" if field == "synthesis" else "guide_question_length_invalid"
+                _palm_diagnostic_fail(request_id, "richness_validation",
+                                      rule_id, field=field, length=length)
             normalized_reading[field] = value.strip()
-        if not 70 <= len(str(result.get("hook", "")).strip()) <= 420:
-            raise RuntimeError("explorer_invalid_generation")
+        hook_length = len(result["hook"].strip())
+        if not 70 <= hook_length <= 420:
+            _palm_diagnostic_fail(request_id, "richness_validation",
+                                  "hook_length_invalid", field="hook",
+                                  length=hook_length)
+        summary_length = len(result["guide_summary"].strip())
+        if not summary_length or summary_length > 400:
+            _palm_diagnostic_fail(request_id, "richness_validation",
+                                  "guide_summary_length_invalid",
+                                  field="guide_summary", length=summary_length)
         total_words = sum(len(text.split()) for text in _iter_result_strings({
             "hook": result.get("hook", ""), "reading": reading,
             "guide_summary": result.get("guide_summary", "")
         }))
         if total_words < 180 or total_words > 500:
-            raise RuntimeError("explorer_invalid_generation")
+            _palm_diagnostic_fail(request_id, "richness_validation",
+                                  "total_word_count_invalid",
+                                  word_count=total_words)
+        _palm_diagnostic_log(request_id, "PALM_RICHNESS_VALIDATION_PASS",
+                             word_count=total_words)
         normalized = {
             "quality_ok": True,
             "hook": _bounded_result_string(result, "hook", 420),
@@ -7637,8 +7829,12 @@ def _explorer_photo_generate_once(experience_type, input_data, photo_jpeg):
             "guide_summary": _bounded_result_string(result, "guide_summary", 400),
             "confidence": float(confidence),
         }
-        if not _palm_result_claims_safe(normalized):
-            raise RuntimeError("explorer_invalid_generation")
+        _palm_diagnostic_log(request_id, "PALM_SAFETY_VALIDATION_START")
+        palm_safety_category = _palm_safety_violation(normalized)
+        if palm_safety_category:
+            _palm_diagnostic_fail(request_id, "safety_validation",
+                                  "palm_claim_blocked",
+                                  category=palm_safety_category)
     else:
         visible = result.get("visible_shapes")
         symbols = result.get("symbols")
@@ -7657,12 +7853,22 @@ def _explorer_photo_generate_once(experience_type, input_data, photo_jpeg):
     for value in _iter_result_strings(normalized):
         safe, _reason = _llm_output_safety_filter(value)
         if not safe:
+            if experience_type == "palm":
+                _palm_diagnostic_fail(request_id, "safety_validation",
+                                      "output_safety_filter_blocked",
+                                      category=_reason)
             raise RuntimeError("explorer_invalid_generation")
+    if experience_type == "palm":
+        _palm_diagnostic_log(request_id, "PALM_SAFETY_VALIDATION_PASS")
     return normalized
 
 
 def _palm_result_claims_safe(result):
     """Reject explicit high-risk Palm claims before persistence/quota commit."""
+    return _palm_safety_violation(result) is None
+
+
+def _palm_safety_violation(result):
     palm_unsafe = re.compile(
         r"\b(tu vivras (longtemps|jusqu'à)|dur[ée]e de vie de|"
         r"tu mourras|date de ta mort|tu (as|souffres d') (une )?(maladie|pathologie)|"
@@ -7673,7 +7879,15 @@ def _palm_result_claims_safe(result):
         r"tu vas (forc[ée]ment|certainement|sans aucun doute) (te marier|divorcer|gu[ée]rir|r[ée]ussir)|"
         r"tu deviendras riche|tu vas devenir riche)\b", re.I
     )
-    return not any(palm_unsafe.search(value) for value in _iter_result_strings(result))
+    for value in _iter_result_strings(result):
+        if palm_unsafe.search(value):
+            lowered = value.lower()
+            if re.search(r"longtemps|dur[ée]e de vie|mourras|date de ta mort", lowered):
+                return "longevity"
+            if re.search(r"maladie|pathologie|cancer|tumeur|diab|diagnostic|enceinte|fertile|infertilit", lowered):
+                return "medical"
+            return "certainty"
+    return None
 
 
 def _bounded_result_string(data, key, maximum):
@@ -7747,13 +7961,22 @@ def _structured_explorer_input(experience_type, data):
     return {"other_name": other_name.strip(), "relation": relation.strip()}, None
 
 
-def _structured_explorer_create(experience_type, photo_upload=None):
+def _structured_explorer_create(experience_type, photo_upload=None,
+                               request_id=None):
+    if experience_type == "palm":
+        request_id = request_id or str(uuid.uuid4())
     if experience_type in ("palm", "coffee"):
         data = request.form.to_dict()
         try:
             photo_jpeg = _normalize_explorer_photo(photo_upload)
         except ExplorerPhotoError as exc:
+            if experience_type == "palm":
+                _palm_diagnostic_log(request_id, "PALM_UPLOAD_REJECTED",
+                                     category=exc.code)
             return _auth_json({"error": exc.code}, exc.status)
+        if experience_type == "palm":
+            _palm_diagnostic_log(request_id, "PALM_UPLOAD_ACCEPTED",
+                                 mime="image/jpeg")
     else:
         data = request.get_json(silent=True)
         photo_jpeg = None
@@ -7772,6 +7995,7 @@ def _structured_explorer_create(experience_type, photo_upload=None):
         return _auth_json({"error": "unauthorized"}, 401)
     now = _utcnow()
     conn = get_conn()
+    palm_stage = "request" if experience_type == "palm" else None
     try:
         cursor = conn.cursor()
         existing = _structured_explorer_row(
@@ -7800,11 +8024,16 @@ def _structured_explorer_create(experience_type, photo_upload=None):
                 "error": "explorer_reward_required",
                 "experience_type": experience_type,
             }, 402)
+        palm_stage = "vision" if experience_type == "palm" else None
         if experience_type in ("palm", "coffee"):
             result_data = _explorer_photo_generate_once(
-                experience_type, input_data, photo_jpeg)
+                experience_type, input_data, photo_jpeg,
+                request_id=request_id if experience_type == "palm" else None)
             if not result_data.get("quality_ok"):
                 conn.rollback()
+                if experience_type == "palm":
+                    _palm_diagnostic_log(request_id, "PALM_QUOTA_ROLLBACK",
+                                         category="vision_quality_declined")
                 return _auth_json({
                     "error": "photo_quality_insufficient",
                     "quality_ok": False,
@@ -7813,6 +8042,9 @@ def _structured_explorer_create(experience_type, photo_upload=None):
         else:
             result_data = _structured_explorer_generate_once(experience_type, input_data)
         reading_id = str(uuid.uuid4())
+        if experience_type == "palm":
+            palm_stage = "persistence"
+            _palm_diagnostic_log(request_id, "PALM_PERSISTENCE_START")
         cursor.execute(
             """INSERT INTO explorer_structured_readings
                (id, user_id, experience_type, advisor_id, input_data,
@@ -7825,13 +8057,38 @@ def _structured_explorer_create(experience_type, photo_upload=None):
         _finalize_explorer_generation_tx(
             cursor, uid, experience_type, reservation, now)
         conn.commit()
+        if experience_type == "palm":
+            _palm_diagnostic_log(request_id, "PALM_PERSISTENCE_PASS")
         row = (reading_id, uid, experience_type, profile["guide"],
                input_data, result_data, now)
         return _auth_json(_structured_explorer_public(row), 201)
-    except Exception:
+    except Exception as exc:
         conn.rollback()
         if experience_type in ("palm", "coffee"):
-            print(f"[explorer-vision] generation failed for {experience_type}")
+            if experience_type == "palm":
+                if palm_stage == "persistence":
+                    _palm_diagnostic_log(
+                        request_id, "PALM_PERSISTENCE_FAIL",
+                        rule_id="database_write_failed",
+                        exception_class=type(exc).__name__,
+                    )
+                    _palm_diagnostic_log(
+                        request_id, "PALM_QUOTA_ROLLBACK",
+                        category="persistence_failure",
+                    )
+                elif isinstance(exc, _PalmDiagnosticError):
+                    _palm_diagnostic_log(
+                        request_id, "PALM_QUOTA_ROLLBACK",
+                        category=exc.stage, rule_id=exc.rule_id,
+                    )
+                else:
+                    _palm_diagnostic_log(
+                        request_id, "PALM_QUOTA_ROLLBACK",
+                        category="vision_or_unclassified_failure",
+                        exception_class=type(exc).__name__,
+                    )
+            else:
+                print(f"[explorer-vision] generation failed for {experience_type}")
             return _auth_json({"error": "explorer_generation_failed"}, 503)
         raise
     finally:
@@ -7853,7 +8110,9 @@ def api_compatibility_create():
 @app.route("/api/explorer/palm", methods=["POST"])
 @require_app_auth
 def api_palm_create():
-    return _structured_explorer_create("palm", request.files.get("photo"))
+    return _structured_explorer_create(
+        "palm", request.files.get("photo"), request_id=str(uuid.uuid4())
+    )
 
 
 @app.route("/api/explorer/coffee", methods=["POST"])
