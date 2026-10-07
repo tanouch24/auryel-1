@@ -7436,108 +7436,34 @@ def _palm_diagnostic_fail(request_id, stage, rule_id, **metadata):
     raise _PalmDiagnosticError(stage, rule_id, metadata.get("exception_class"))
 
 
-_PALM_GENERIC_TEXT = (
-    "visible", "ligne visible", "les lignes sont nettes", "les lignes sont visibles",
-    "cela indique des aspects de la personnalite et de la vie",
-    "les lignes indiquent des aspects de la personnalite et de la vie",
-)
-_PALM_OBSERVATION_ANCHORS = (
-    "courb", "arc", "trace", "trajectoire", "relief", "profond", "inclina",
-    "marque", "continu", "ramification", "interruption", "longueur", "ouvert",
-    "regulier", "droit", "paume", "ligne", "main",
-)
-_PALM_SYMBOLIC_CUES = (
-    "symbol", "evoqu", "sugger", "peut", "invite", "associe", "renvoie",
-    "image", "piste", "lecture", "tendance",
-)
-_PALM_CROSS_CUES = (
-    "ensemble", "contraste", "equilibre", "association", "tandis", "entre",
-    "croise", "relie", "dialogue", "coexiste", "articule", "en revanche",
-)
-_PALM_STOP_WORDS = {
-    "avec", "dans", "pour", "cette", "cette", "cela", "comme", "plus",
-    "moins", "ainsi", "aussi", "semble", "peut", "sont", "est", "les",
-    "des", "une", "qui", "que", "sur", "ta", "tes", "ton", "dans",
-    "elle", "elles", "ligne", "lignes", "main", "paume", "photo",
-}
+def _palm_required_section_issue(result):
+    """Validate required content presence without scoring wording or keywords."""
+    required = [("hook", result.get("hook"))]
+    observations = result["observations"]
+    reading = result["reading"]
+    required.extend(
+        (field, reading[field])
+        for field in ("heart_line", "head_line", "life_line")
+        if observations[field]["visible"]
+    )
+    required.extend((
+        ("synthesis", reading["synthesis"]),
+        ("guide_question", reading["guide_question"]),
+        ("guide_summary", result.get("guide_summary")),
+    ))
+    for field, value in required:
+        if not isinstance(value, str) or not value.strip():
+            return field
 
-
-def _palm_normalized_text(value):
-    value = unicodedata.normalize("NFKD", str(value or "").lower())
-    return "".join(char for char in value if not unicodedata.combining(char))
-
-
-def _palm_is_generic_text(value):
-    normalized = " ".join(_palm_normalized_text(value).split()).strip(" .,!?:;-")
-    return (not normalized or normalized in _PALM_GENERIC_TEXT or
-            normalized in {"ligne du coeur", "ligne de tete", "ligne de vie"})
-
-
-def _palm_has_cue(value, cues):
-    normalized = _palm_normalized_text(value)
-    return any(cue in normalized for cue in cues)
-
-
-def _palm_content_tokens(value):
-    return {
-        token for token in re.findall(r"[a-z]+", _palm_normalized_text(value))
-        if len(token) > 3 and token not in _PALM_STOP_WORDS
-    }
-
-
-def _palm_substance_issue(result):
-    """Return a fixed rule/field when Palm text is empty, generic or untethered."""
-    hook = result.get("hook", "")
-    observations = result.get("observations", {})
-    reading = result.get("reading", {})
-    if _palm_is_generic_text(hook) or not _palm_has_cue(hook, _PALM_OBSERVATION_ANCHORS):
-        return "hook_not_personalized", "hook"
-
-    for field in ("heart_line", "head_line", "life_line"):
-        observation = observations[field]
-        description = observation["description"]
-        if _palm_is_generic_text(description):
-            return "observation_is_generic", field
-        if observation["visible"] and not _palm_has_cue(
-            description + " " + " ".join(observation["features"]),
-            _PALM_OBSERVATION_ANCHORS,
-        ):
-            return "observation_not_grounded", field
-        line_text = reading[field]
-        if _palm_is_generic_text(line_text):
-            return "line_reading_is_generic", field
-        if observation["visible"] and not _palm_has_cue(
-            line_text, _PALM_OBSERVATION_ANCHORS
-        ):
-            return "line_reading_not_grounded", field
-        if observation["visible"] and not _palm_has_cue(
-            line_text, _PALM_SYMBOLIC_CUES
-        ):
-            return "line_reading_lacks_interpretation", field
-
-    visible_readings = [
-        _palm_content_tokens(reading[field])
+    # Repeated placeholder sections carry no distinct reading. This is a
+    # structure check only; wording is never classified or keyword-scored.
+    visible_sections = [
+        reading[field].strip()
         for field in ("heart_line", "head_line", "life_line")
         if observations[field]["visible"]
     ]
-    for index, first in enumerate(visible_readings):
-        for second in visible_readings[index + 1:]:
-            union = first | second
-            similarity = len(first & second) / len(union) if union else 1.0
-            if similarity >= 0.82:
-                return "line_readings_repetitive", "reading"
-
-    synthesis = reading["synthesis"]
-    if _palm_is_generic_text(synthesis):
-        return "synthesis_is_generic", "synthesis"
-    if not _palm_has_cue(synthesis, _PALM_CROSS_CUES):
-        return "synthesis_not_crossed", "synthesis"
-    guide_question = reading["guide_question"]
-    if _palm_is_generic_text(guide_question) or not guide_question.rstrip().endswith("?"):
-        return "guide_question_not_personalized", "guide_question"
-    guide_summary = result.get("guide_summary", "")
-    if _palm_is_generic_text(guide_summary):
-        return "guide_summary_is_generic", "guide_summary"
+    if len(visible_sections) > 1 and len(set(visible_sections)) == 1:
+        return "repeated_line_sections"
     return None
 
 
@@ -7911,11 +7837,11 @@ def _explorer_photo_generate_once(experience_type, input_data, photo_jpeg,
             "guide_summary": _bounded_result_string(result, "guide_summary", 400),
             "confidence": float(confidence),
         }
-        substance_issue = _palm_substance_issue(normalized)
-        if substance_issue:
-            rule_id, field = substance_issue
+        required_section_issue = _palm_required_section_issue(normalized)
+        if required_section_issue:
             _palm_diagnostic_fail(request_id, "richness_validation",
-                                  rule_id, field=field)
+                                  "required_section_empty_or_repeated",
+                                  field=required_section_issue)
         _palm_diagnostic_log(request_id, "PALM_RICHNESS_VALIDATION_PASS")
         _palm_diagnostic_log(request_id, "PALM_SAFETY_VALIDATION_START")
         palm_safety_category = _palm_safety_violation(normalized)

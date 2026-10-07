@@ -211,7 +211,8 @@ def test_palm_rejects_poor_visible_only_result(monkeypatch):
         A._explorer_photo_generate_once("palm", {}, b"normalized-jpeg")
     except A._PalmDiagnosticError as exc:
         assert exc.stage == "richness_validation"
-        assert exc.rule_id == "observation_is_generic"
+        assert exc.rule_id == "required_section_empty_or_repeated"
+        assert exc.exception_class is None
     else:
         raise AssertionError("a generic visible-only Palm result must be rejected")
 
@@ -222,7 +223,7 @@ def test_palm_rejects_poor_visible_only_result(monkeypatch):
         ("invalid_json", "json_parse", "invalid_json"),
         ("missing_field", "structure_validation", "required_fields_missing"),
         ("wrong_structure", "structure_validation", "top_level_wrong_type"),
-        ("poor_reading", "richness_validation", "observation_is_generic"),
+        ("poor_reading", "richness_validation", "required_section_empty_or_repeated"),
         ("safety", "safety_validation", "palm_claim_blocked"),
     ],
 )
@@ -240,8 +241,8 @@ def test_palm_diagnostic_logs_identify_failure_without_generated_content(
         elif case == "wrong_structure":
             payload["observations"] = [marker]
         elif case == "poor_reading":
-            payload["observations"]["heart_line"]["description"] = "visible"
-            payload["observations"]["heart_line"]["features"] = ["visible"]
+            for field in ("heart_line", "head_line", "life_line"):
+                payload["reading"][field] = "visible"
         elif case == "safety":
             payload["reading"]["life_line"] = (
                 payload["reading"]["life_line"] + " Tu vivras longtemps."
@@ -449,26 +450,40 @@ def test_palm_173_word_rich_result_is_accepted_in_one_vision_call(monkeypatch):
     assert len(calls) == 1
 
 
-def test_palm_300_word_repetitive_generic_result_is_rejected(monkeypatch):
+def test_palm_accepts_text_without_preferred_keywords(monkeypatch):
     payload = _valid_palm_payload()
-    generic = (
-        "Cette ligne visible et régulière évoque symboliquement une manière "
-        "personnelle d'avancer avec équilibre et confiance. "
-    ) * 4
-    for field in ("heart_line", "head_line", "life_line"):
-        payload["reading"][field] = generic
-    payload["hook"] = "Ta paume montre des lignes visibles et régulières, symboliquement."
-    payload["hook"] += " Le volume supplémentaire ne rend pas ces formules plus personnelles du tout."
-    total_words = sum(len(text.split()) for text in A._iter_result_strings({
-        "hook": payload["hook"], "reading": payload["reading"],
-        "guide_summary": payload["guide_summary"],
-    }))
-    assert total_words >= 300
-    _mock_palm_vision(monkeypatch, json.dumps(payload, ensure_ascii=False))
+    payload["hook"] = "Trois tracés se répondent de façon singulière sur cette paume."
+    payload["reading"].update({
+        "heart_line": "La courbe supérieure se prolonge vers le bord externe. Elle accompagne une histoire tournée vers les liens.",
+        "head_line": "Au centre, le dessin change de direction près de la zone éclairée. Cela raconte une pensée qui prend plusieurs chemins.",
+        "life_line": "Près du pouce, l'arc s'ouvre largement avant de rejoindre le poignet. Il évoque un élan qui trouve ses propres appuis.",
+        "synthesis": "La première trajectoire reste ouverte, tandis que le mouvement central bifurque. Leur dialogue met en scène un équilibre entre attachement et autonomie.",
+        "guide_question": "Où reconnais-tu cet équilibre entre attachement et autonomie dans ta vie en ce moment ?",
+    })
+    payload["guide_summary"] = "Courbe supérieure prolongée; trajet central bifurqué; arc ouvert près du pouce. Piste autour de l'équilibre entre attachement et autonomie."
+    calls = _mock_palm_vision(monkeypatch, json.dumps(payload, ensure_ascii=False))
+    result = A._explorer_photo_generate_once("palm", {}, b"normalized-jpeg")
+    assert result["quality_ok"] is True
+    assert len(calls) == 1
+
+
+@pytest.mark.parametrize("field", [
+    "hook", "heart_line", "synthesis", "guide_question", "guide_summary",
+])
+def test_palm_rejects_empty_required_sections(monkeypatch, field):
+    payload = _valid_palm_payload()
+    if field in {"heart_line", "synthesis", "guide_question"}:
+        payload["reading"][field] = "  "
+    else:
+        payload[field] = "  "
+    calls = _mock_palm_vision(monkeypatch, json.dumps(payload, ensure_ascii=False))
     with pytest.raises(A._PalmDiagnosticError) as caught:
         A._explorer_photo_generate_once("palm", {}, b"normalized-jpeg")
     assert caught.value.stage == "richness_validation"
-    assert caught.value.rule_id == "line_readings_repetitive"
+    assert caught.value.rule_id in {
+        "required_section_empty_or_repeated", "guide_summary_length_invalid"
+    }
+    assert len(calls) == 1
 
 
 @pytest.mark.parametrize(
