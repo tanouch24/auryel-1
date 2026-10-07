@@ -21,12 +21,23 @@ def _photo_bytes(fmt="JPEG", size=(720, 960)):
 
 
 def _valid_palm_payload():
-    line_reading = (
-        "Sur ta photo, ce tracé apparaît avec une courbe assez régulière et une présence "
-        "plus marquée au centre. Dans une lecture symbolique, cette forme peut évoquer "
-        "une manière de prendre le temps de sentir ce qui compte, tout en laissant à "
-        "l'expérience la possibilité de nuancer tes premières impressions."
-    )
+    line_readings = {
+        "heart_line": (
+            "Sur ta photo, la ligne de cœur suit une courbe douce et assez régulière. "
+            "Dans une lecture symbolique, ce tracé peut évoquer une façon de vivre les "
+            "liens avec sensibilité, sans devoir précipiter chaque émotion."
+        ),
+        "head_line": (
+            "Le tracé central paraît long et légèrement incliné sur la partie visible. "
+            "Symboliquement, cette orientation peut suggérer une réflexion qui garde "
+            "une place à l'intuition avant de choisir une direction."
+        ),
+        "life_line": (
+            "L'arc autour du pouce semble assez ouvert et continu dans la zone cadrée. "
+            "Dans une lecture symbolique, cette forme peut représenter un élan qui "
+            "cherche à avancer tout en conservant des repères familiers."
+        ),
+    }
     return {
         "quality_ok": True,
         "quality_reason": "",
@@ -41,9 +52,7 @@ def _valid_palm_payload():
             for line in ("heart_line", "head_line", "life_line")
         },
         "reading": {
-            "heart_line": line_reading,
-            "head_line": line_reading,
-            "life_line": line_reading,
+            **line_readings,
             "synthesis": "L'ensemble rapproche une expression affective plutôt posée et une façon de réfléchir qui semble chercher ses propres repères. L'arc de la ligne de vie ajoute une image de mouvement, sans indiquer une durée de vie ni annoncer un événement. Cette combinaison peut simplement ouvrir une réflexion sur la place que tu donnes à la sécurité et à l'élan dans tes choix actuels.",
             "guide_question": "Dans tes choix récents, où ressens-tu le mieux cet équilibre entre besoin de repères et envie d'avancer à ta manière ?",
         },
@@ -202,7 +211,7 @@ def test_palm_rejects_poor_visible_only_result(monkeypatch):
         A._explorer_photo_generate_once("palm", {}, b"normalized-jpeg")
     except A._PalmDiagnosticError as exc:
         assert exc.stage == "richness_validation"
-        assert exc.rule_id == "observation_description_too_short"
+        assert exc.rule_id == "observation_is_generic"
     else:
         raise AssertionError("a generic visible-only Palm result must be rejected")
 
@@ -213,7 +222,7 @@ def test_palm_rejects_poor_visible_only_result(monkeypatch):
         ("invalid_json", "json_parse", "invalid_json"),
         ("missing_field", "structure_validation", "required_fields_missing"),
         ("wrong_structure", "structure_validation", "top_level_wrong_type"),
-        ("poor_reading", "richness_validation", "hook_length_invalid"),
+        ("poor_reading", "richness_validation", "observation_is_generic"),
         ("safety", "safety_validation", "palm_claim_blocked"),
     ],
 )
@@ -231,7 +240,8 @@ def test_palm_diagnostic_logs_identify_failure_without_generated_content(
         elif case == "wrong_structure":
             payload["observations"] = [marker]
         elif case == "poor_reading":
-            payload["hook"] = "court {marker}"
+            payload["observations"]["heart_line"]["description"] = "visible"
+            payload["observations"]["heart_line"]["features"] = ["visible"]
         elif case == "safety":
             payload["reading"]["life_line"] = (
                 payload["reading"]["life_line"] + " Tu vivras longtemps."
@@ -332,7 +342,9 @@ def test_palm_route_correlates_persistence_and_rolls_back_quota(
         data={"idempotency_key": "palm-diagnostic-test", "photo": (io.BytesIO(b"x"), "palm.jpg")},
         content_type="multipart/form-data",
     )
-    assert response.status_code == 503
+    assert response.status_code == (422 if failure == "vision_validation" else 503)
+    if failure == "vision_validation":
+        assert response.get_json() == {"error": "palm_result_unusable"}
     assert connection.rollbacks == 1
     assert connection.commits == 0
     logs = capsys.readouterr().out
@@ -403,6 +415,60 @@ def test_palm_route_logs_persistence_success_with_same_request_id(monkeypatch, c
     assert "event=PALM_PERSISTENCE_START" in logs
     assert "event=PALM_PERSISTENCE_PASS" in logs
     assert "private@example.invalid" not in logs
+
+
+def test_palm_173_word_rich_result_is_accepted_in_one_vision_call(monkeypatch):
+    payload = _valid_palm_payload()
+    payload["hook"] = (
+        "Ta paume montre des courbes distinctes; leur contraste ouvre une lecture "
+        "singulière, sans figer qui tu es."
+    )
+    payload["reading"]["heart_line"] = (
+        "Ta ligne de cœur suit une courbe douce. Symboliquement, elle évoque une "
+        "approche sensible des liens."
+    )
+    payload["reading"]["head_line"] = (
+        "Le tracé central paraît incliné. Cette forme peut suggérer une réflexion "
+        "qui laisse une place à l'intuition."
+    )
+    payload["reading"]["life_line"] = (
+        "L'arc autour du pouce semble ouvert. Dans une lecture symbolique, il évoque "
+        "un élan gardant des repères."
+    )
+    payload["guide_summary"] += " dans tes choix du moment"
+    count = sum(len(text.split()) for text in A._iter_result_strings({
+        "hook": payload["hook"], "reading": payload["reading"],
+        "guide_summary": payload["guide_summary"],
+    }))
+    assert count == 173
+    calls = _mock_palm_vision(monkeypatch, json.dumps(payload, ensure_ascii=False))
+    result = A._explorer_photo_generate_once("palm", {}, b"normalized-jpeg")
+    assert result["quality_ok"] is True
+    assert result["reading"]["synthesis"]
+    assert result["reading"]["guide_question"].endswith("?")
+    assert len(calls) == 1
+
+
+def test_palm_300_word_repetitive_generic_result_is_rejected(monkeypatch):
+    payload = _valid_palm_payload()
+    generic = (
+        "Cette ligne visible et régulière évoque symboliquement une manière "
+        "personnelle d'avancer avec équilibre et confiance. "
+    ) * 4
+    for field in ("heart_line", "head_line", "life_line"):
+        payload["reading"][field] = generic
+    payload["hook"] = "Ta paume montre des lignes visibles et régulières, symboliquement."
+    payload["hook"] += " Le volume supplémentaire ne rend pas ces formules plus personnelles du tout."
+    total_words = sum(len(text.split()) for text in A._iter_result_strings({
+        "hook": payload["hook"], "reading": payload["reading"],
+        "guide_summary": payload["guide_summary"],
+    }))
+    assert total_words >= 300
+    _mock_palm_vision(monkeypatch, json.dumps(payload, ensure_ascii=False))
+    with pytest.raises(A._PalmDiagnosticError) as caught:
+        A._explorer_photo_generate_once("palm", {}, b"normalized-jpeg")
+    assert caught.value.stage == "richness_validation"
+    assert caught.value.rule_id == "line_readings_repetitive"
 
 
 @pytest.mark.parametrize(

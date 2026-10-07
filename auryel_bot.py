@@ -7417,6 +7417,8 @@ def _palm_diagnostic_log(request_id, event, **metadata):
                     "provider_or_response_access", "persistence_failure",
                     "medical_diagnosis", "cure_promise", "legal_advice",
                     "financial_advice", "human_claim",
+                    "json_parse", "structure_validation",
+                    "richness_validation", "safety_validation",
                     "vision_or_unclassified_failure", "invalid_photo_type",
                     "photo_required", "photo_too_large", "invalid_photo",
                     "photo_resolution_too_low", "photo_dimensions_too_large",
@@ -7432,6 +7434,111 @@ def _palm_diagnostic_fail(request_id, stage, rule_id, **metadata):
         request_id, f"PALM_{stage.upper()}_FAIL", rule_id=rule_id, **metadata
     )
     raise _PalmDiagnosticError(stage, rule_id, metadata.get("exception_class"))
+
+
+_PALM_GENERIC_TEXT = (
+    "visible", "ligne visible", "les lignes sont nettes", "les lignes sont visibles",
+    "cela indique des aspects de la personnalite et de la vie",
+    "les lignes indiquent des aspects de la personnalite et de la vie",
+)
+_PALM_OBSERVATION_ANCHORS = (
+    "courb", "arc", "trace", "trajectoire", "relief", "profond", "inclina",
+    "marque", "continu", "ramification", "interruption", "longueur", "ouvert",
+    "regulier", "droit", "paume", "ligne", "main",
+)
+_PALM_SYMBOLIC_CUES = (
+    "symbol", "evoqu", "sugger", "peut", "invite", "associe", "renvoie",
+    "image", "piste", "lecture", "tendance",
+)
+_PALM_CROSS_CUES = (
+    "ensemble", "contraste", "equilibre", "association", "tandis", "entre",
+    "croise", "relie", "dialogue", "coexiste", "articule", "en revanche",
+)
+_PALM_STOP_WORDS = {
+    "avec", "dans", "pour", "cette", "cette", "cela", "comme", "plus",
+    "moins", "ainsi", "aussi", "semble", "peut", "sont", "est", "les",
+    "des", "une", "qui", "que", "sur", "ta", "tes", "ton", "dans",
+    "elle", "elles", "ligne", "lignes", "main", "paume", "photo",
+}
+
+
+def _palm_normalized_text(value):
+    value = unicodedata.normalize("NFKD", str(value or "").lower())
+    return "".join(char for char in value if not unicodedata.combining(char))
+
+
+def _palm_is_generic_text(value):
+    normalized = " ".join(_palm_normalized_text(value).split()).strip(" .,!?:;-")
+    return (not normalized or normalized in _PALM_GENERIC_TEXT or
+            normalized in {"ligne du coeur", "ligne de tete", "ligne de vie"})
+
+
+def _palm_has_cue(value, cues):
+    normalized = _palm_normalized_text(value)
+    return any(cue in normalized for cue in cues)
+
+
+def _palm_content_tokens(value):
+    return {
+        token for token in re.findall(r"[a-z]+", _palm_normalized_text(value))
+        if len(token) > 3 and token not in _PALM_STOP_WORDS
+    }
+
+
+def _palm_substance_issue(result):
+    """Return a fixed rule/field when Palm text is empty, generic or untethered."""
+    hook = result.get("hook", "")
+    observations = result.get("observations", {})
+    reading = result.get("reading", {})
+    if _palm_is_generic_text(hook) or not _palm_has_cue(hook, _PALM_OBSERVATION_ANCHORS):
+        return "hook_not_personalized", "hook"
+
+    for field in ("heart_line", "head_line", "life_line"):
+        observation = observations[field]
+        description = observation["description"]
+        if _palm_is_generic_text(description):
+            return "observation_is_generic", field
+        if observation["visible"] and not _palm_has_cue(
+            description + " " + " ".join(observation["features"]),
+            _PALM_OBSERVATION_ANCHORS,
+        ):
+            return "observation_not_grounded", field
+        line_text = reading[field]
+        if _palm_is_generic_text(line_text):
+            return "line_reading_is_generic", field
+        if observation["visible"] and not _palm_has_cue(
+            line_text, _PALM_OBSERVATION_ANCHORS
+        ):
+            return "line_reading_not_grounded", field
+        if observation["visible"] and not _palm_has_cue(
+            line_text, _PALM_SYMBOLIC_CUES
+        ):
+            return "line_reading_lacks_interpretation", field
+
+    visible_readings = [
+        _palm_content_tokens(reading[field])
+        for field in ("heart_line", "head_line", "life_line")
+        if observations[field]["visible"]
+    ]
+    for index, first in enumerate(visible_readings):
+        for second in visible_readings[index + 1:]:
+            union = first | second
+            similarity = len(first & second) / len(union) if union else 1.0
+            if similarity >= 0.82:
+                return "line_readings_repetitive", "reading"
+
+    synthesis = reading["synthesis"]
+    if _palm_is_generic_text(synthesis):
+        return "synthesis_is_generic", "synthesis"
+    if not _palm_has_cue(synthesis, _PALM_CROSS_CUES):
+        return "synthesis_not_crossed", "synthesis"
+    guide_question = reading["guide_question"]
+    if _palm_is_generic_text(guide_question) or not guide_question.rstrip().endswith("?"):
+        return "guide_question_not_personalized", "guide_question"
+    guide_summary = result.get("guide_summary", "")
+    if _palm_is_generic_text(guide_summary):
+        return "guide_summary_is_generic", "guide_summary"
+    return None
 
 
 def _normalize_explorer_photo(upload):
@@ -7523,7 +7630,9 @@ def _explorer_photo_generate_once(experience_type, input_data, photo_jpeg,
             "mariage/divorce ou richesse. Produis une accroche personnelle de 2 phrases, une "
             "synthèse croisant vraiment les observations (sans juxtaposer des définitions), une "
             "question unique et spécifique pour le guide. Français naturel, tutoiement, chaleureux, "
-            "sans jargon ni répétitions; résultat total entre 220 et 420 mots, jamais un roman. "
+            "sans jargon ni répétitions; vise environ 250 à 400 mots lorsque la photo "
+            "fournit assez d'éléments, sans ajouter de remplissage pour atteindre cette "
+            "longueur. La pertinence prime toujours. "
             "Refuse les formules vides comme ‘visible’, ‘les lignes sont nettes’ ou ‘cela indique "
             "des aspects de ta personnalité’. Aucune clé ou section liée à la durée de vie."
         )
@@ -7759,30 +7868,15 @@ def _explorer_photo_generate_once(experience_type, input_data, photo_jpeg,
                                       "feature_invalid_or_too_long", field=field)
             normalized_features = [item.strip() for item in features if item.strip()]
             if observation["visible"]:
-                if len(description.strip()) < 24:
-                    _palm_diagnostic_fail(request_id, "richness_validation",
-                                          "observation_description_too_short",
-                                          field=field, length=len(description.strip()))
                 if not normalized_features:
                     _palm_diagnostic_fail(request_id, "richness_validation",
                                           "visible_line_features_missing", field=field)
-                if description.strip().lower() in ("visible", "ligne visible", "visible."):
-                    _palm_diagnostic_fail(request_id, "richness_validation",
-                                          "placeholder_observation", field=field)
             else:
                 normalized_features = []
             line_reading = reading.get(field)
             if len(line_reading.strip()) > 1000:
                 _palm_diagnostic_fail(request_id, "richness_validation",
                                       "line_reading_too_long", field=field,
-                                      length=len(line_reading.strip()))
-            if observation["visible"] and len(line_reading.strip()) < 70:
-                _palm_diagnostic_fail(request_id, "richness_validation",
-                                      "line_reading_too_short", field=field,
-                                      length=len(line_reading.strip()))
-            if not observation["visible"] and len(line_reading.strip()) < 24:
-                _palm_diagnostic_fail(request_id, "richness_validation",
-                                      "unseen_line_reading_too_short", field=field,
                                       length=len(line_reading.strip()))
             normalized_observations[field] = {
                 "visible": observation["visible"],
@@ -7791,44 +7885,38 @@ def _explorer_photo_generate_once(experience_type, input_data, photo_jpeg,
                 "confidence": float(line_confidence),
             }
             normalized_reading[field] = line_reading.strip()
-        for field, minimum, maximum in (
-            ("synthesis", 90, 1100), ("guide_question", 35, 320),
-        ):
+        for field, maximum in (("synthesis", 1100), ("guide_question", 320)):
             value = reading.get(field)
             length = len(value.strip())
-            if length < minimum or length > maximum:
-                rule_id = "synthesis_length_invalid" if field == "synthesis" else "guide_question_length_invalid"
+            if length > maximum:
+                rule_id = f"{field}_too_long"
                 _palm_diagnostic_fail(request_id, "richness_validation",
                                       rule_id, field=field, length=length)
             normalized_reading[field] = value.strip()
         hook_length = len(result["hook"].strip())
-        if not 70 <= hook_length <= 420:
+        if hook_length > 420:
             _palm_diagnostic_fail(request_id, "richness_validation",
-                                  "hook_length_invalid", field="hook",
+                                  "hook_too_long", field="hook",
                                   length=hook_length)
         summary_length = len(result["guide_summary"].strip())
         if not summary_length or summary_length > 400:
             _palm_diagnostic_fail(request_id, "richness_validation",
                                   "guide_summary_length_invalid",
                                   field="guide_summary", length=summary_length)
-        total_words = sum(len(text.split()) for text in _iter_result_strings({
-            "hook": result.get("hook", ""), "reading": reading,
-            "guide_summary": result.get("guide_summary", "")
-        }))
-        if total_words < 180 or total_words > 500:
-            _palm_diagnostic_fail(request_id, "richness_validation",
-                                  "total_word_count_invalid",
-                                  word_count=total_words)
-        _palm_diagnostic_log(request_id, "PALM_RICHNESS_VALIDATION_PASS",
-                             word_count=total_words)
         normalized = {
             "quality_ok": True,
-            "hook": _bounded_result_string(result, "hook", 420),
+            "hook": result["hook"].strip(),
             "observations": normalized_observations,
             "reading": normalized_reading,
             "guide_summary": _bounded_result_string(result, "guide_summary", 400),
             "confidence": float(confidence),
         }
+        substance_issue = _palm_substance_issue(normalized)
+        if substance_issue:
+            rule_id, field = substance_issue
+            _palm_diagnostic_fail(request_id, "richness_validation",
+                                  rule_id, field=field)
+        _palm_diagnostic_log(request_id, "PALM_RICHNESS_VALIDATION_PASS")
         _palm_diagnostic_log(request_id, "PALM_SAFETY_VALIDATION_START")
         palm_safety_category = _palm_safety_violation(normalized)
         if palm_safety_category:
@@ -8081,6 +8169,7 @@ def _structured_explorer_create(experience_type, photo_upload=None,
                         request_id, "PALM_QUOTA_ROLLBACK",
                         category=exc.stage, rule_id=exc.rule_id,
                     )
+                    return _auth_json({"error": "palm_result_unusable"}, 422)
                 else:
                     _palm_diagnostic_log(
                         request_id, "PALM_QUOTA_ROLLBACK",
