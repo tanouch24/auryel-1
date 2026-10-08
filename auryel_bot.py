@@ -10181,6 +10181,49 @@ def api_app_support():
 # Réponse idempotente ; aucune promesse de modération humaine.
 
 _AI_REPORT_REASONS = ("inappropriate", "unsafe", "misleading", "other")
+
+# Signalement d'un résultat Explorer (exigence Google Play / Apple : tout
+# contenu généré par l'IA doit pouvoir être signalé, pas seulement le chat).
+# experience_type -> (table, colonne de type éventuelle). Aucune colonne
+# ajoutée à ai_reports : la référence de la lecture est portée en tête du
+# commentaire, consultation_id / message_id restent NULL.
+_AI_REPORT_EXPLORER_TABLES = {
+    "palm": ("explorer_structured_readings", "experience_type"),
+    "coffee": ("explorer_structured_readings", "experience_type"),
+    "dreams": ("explorer_structured_readings", "experience_type"),
+    "compatibility": ("explorer_structured_readings", "experience_type"),
+    "crystal_ball": ("crystal_ball_readings", None),
+    "tarot": ("tirages", None),
+}
+
+
+def _ai_report_explorer_tag(experience_type, reading_id):
+    """Préfixe stable du commentaire : sert de clé d'idempotence et permet au
+    back-office de retrouver la lecture signalée."""
+    return f"[explorer:{experience_type} reading={reading_id}]"
+
+
+def _ai_report_explorer_owned(user_id, experience_type, reading_id):
+    """True si la lecture existe ET appartient au compte (SELECT strict)."""
+    spec = _AI_REPORT_EXPLORER_TABLES.get(experience_type)
+    if spec is None or not _is_uuid(str(reading_id)):
+        return False
+    table, type_col = spec
+    query = f"SELECT 1 FROM {table} WHERE id=%s AND user_id=%s"
+    args = [str(reading_id), str(user_id)]
+    if type_col is not None:
+        query += f" AND {type_col}=%s"
+        args.append(experience_type)
+    conn = get_conn()
+    try:
+        c = conn.cursor()
+        c.execute(query, tuple(args))
+        return c.fetchone() is not None
+    finally:
+        try:
+            conn.close()
+        except Exception:
+            pass
 _AI_REPORT_COMMENT_MAX = 1000
 
 
@@ -10199,6 +10242,10 @@ def api_app_ai_report():
       utilisateur). Le consultation_id est alors dérivé du message.
     - sans `message_id` : `consultation_id` requis, vérifié appartenir au
       compte -> 404 sinon.
+    - résultat Explorer : `reading_id` + `experience_type` (palm, coffee,
+      dreams, compatibility, crystal_ball, tarot), lecture vérifiée
+      appartenir au compte -> 404 reading_not_found sinon. La référence est
+      portée en tête du commentaire (aucune colonne ajoutée).
     - ni l'un ni l'autre -> 400 invalid_request.
     - `comment` facultatif : borné (_AI_REPORT_COMMENT_MAX) et échappé.
     Réponses : 200 {"status":"received"} (succès ET rejeu idempotent) ;
@@ -10223,9 +10270,12 @@ def api_app_ai_report():
 
     raw_mid = data.get("message_id")
     raw_cid = data.get("consultation_id")
+    raw_rid = data.get("reading_id")
+    raw_exp = data.get("experience_type")
 
     mid = None
     cid = None
+    explorer_tag = None
 
     if raw_mid is not None:
         try:
@@ -10277,6 +10327,14 @@ def api_app_ai_report():
         if row is None:
             return _auth_json({"error": "consultation_not_found"}, 404)
         cid = str(raw_cid)
+    elif raw_rid is not None:
+        exp = str(raw_exp or "")
+        if exp not in _AI_REPORT_EXPLORER_TABLES:
+            return _auth_json({"error": "invalid_request"}, 400)
+        if not _ai_report_explorer_owned(user_id, exp, raw_rid):
+            return _auth_json({"error": "reading_not_found"}, 404)
+        explorer_tag = _ai_report_explorer_tag(exp, str(raw_rid))
+        comment = f"{explorer_tag} {comment or ''}".strip()
     else:
         return _auth_json({"error": "invalid_request"}, 400)
 
@@ -10291,6 +10349,13 @@ def api_app_ai_report():
                 "SELECT 1 FROM ai_reports "
                 "WHERE user_id=%s AND message_id=%s AND reason=%s",
                 (str(user_id), mid, reason),
+            )
+        elif explorer_tag is not None:
+            c.execute(
+                "SELECT 1 FROM ai_reports "
+                "WHERE user_id=%s AND consultation_id IS NULL "
+                "AND message_id IS NULL AND reason=%s AND comment LIKE %s",
+                (str(user_id), reason, explorer_tag.replace("%", "") + "%"),
             )
         else:
             c.execute(
