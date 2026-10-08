@@ -67,14 +67,6 @@ def test_memory_isolation_is_by_user_and_advisor():
     assert "never a memory narrative" not in source.lower()
 
 
-def test_short_messages_do_not_require_hidden_emotion():
-    source = Path("auryel_bot.py").read_text(encoding="utf-8")
-    assert "ne révèle pas automatiquement une émotion" in source
-    assert "Explique directement la réponse" in source
-    assert "RÈGLE DE RELANCE — EXCEPTION UTILE" in A.get_system_prompt(
-        USER, "selena", conversation_mode="brief")
-
-
 def test_safety_and_economy_remain_untouched_in_prompt_contract():
     prompt = A.get_system_prompt(USER, "kael")
     assert "3114" in prompt

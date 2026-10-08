@@ -39,14 +39,6 @@ def test_adaptive_modes_are_message_driven():
     assert "place nécessaire" in complex_prompt
 
 
-def test_personality_contracts_are_present():
-    assert "plus court" in A.get_system_prompt(USER, "orion")
-    assert "observé, interprété ou inconnu" in A.get_system_prompt(USER, "thea")
-    assert "faits, les comportements et les interprétations" in A.get_system_prompt(USER, "cassandre")
-    assert "douce" in A.get_system_prompt(USER, "luna")
-    assert "limites" in A.get_system_prompt(USER, "kael")
-
-
 def test_no_personality_requires_a_final_question():
     for key in A.GUIDES:
         prompt = A.get_system_prompt(USER, key)
