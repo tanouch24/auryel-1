@@ -43,12 +43,23 @@ def _jobs(age, advisor="thea", now=None):
     return store.personal_guidance_jobs(now)
 
 
-def test_only_j1_j3_j5_are_due_and_cycle_stops():
+def test_follow_ups_j3_j10_j17_weekly_then_stop():
+    # Plan produit 08/10/2026 : après 3 jours, une par semaine, 3 au maximum.
     assert _jobs(0) == []
-    assert len(_jobs(1)) == 1
+    assert _jobs(1) == []
     assert len(_jobs(3)) == 1
-    assert len(_jobs(5)) == 1
-    assert _jobs(6) == []
+    assert _jobs(5) == []
+    assert len(_jobs(10)) == 1
+    assert len(_jobs(17)) == 1
+    assert _jobs(24) == []
+
+
+def test_follow_up_copy_is_signed_by_guide_and_uses_tu():
+    job = _jobs(3, advisor="thea")[0]
+    assert job["title"] == "Théa"
+    for age in (3, 10, 17):
+        body = _jobs(age)[0]["body"]
+        assert "vous" not in body.lower() and "votre" not in body.lower()
 
 
 def test_personal_guidance_targets_last_advisor_and_has_stable_period():

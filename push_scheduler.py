@@ -66,6 +66,20 @@ _ADVISOR_NAMES = {
     "raphael": "Raphaël", "myriam": "Myriam", "kael": "Kaël",
 }
 
+# Notification du matin signée par le guide de la personne (plan produit du
+# 08/10/2026) : courte, intrigante, jamais anxiogène. Même texte pour toutes,
+# seul le prénom du guide change.
+GUIDE_MORNING_BODY = "Ta phrase du jour est prête. Viens la lire avec moi 🌙"
+
+# Relance douce (plan produit) : à partir de 3 jours sans activité, une par
+# semaine au maximum, arrêt après 3 relances sans réaction. Tutoiement,
+# signée par le guide, jamais de pression ni de peur.
+GUIDANCE_FOLLOW_UPS = {
+    3: "Ça fait un moment… j’ai quelque chose pour toi 🌙",
+    10: "Je suis là quand tu veux reprendre notre échange.",
+    17: "Je garde le fil de notre échange. Reviens quand tu veux.",
+}
+
 _WEEKDAYS = {"mon": 0, "tue": 1, "wed": 2, "thu": 3, "fri": 4, "sat": 5, "sun": 6}
 
 
@@ -204,12 +218,25 @@ def push_tick(now_utc, store, sender, schedule=None):
             user_ids = job.get("user_ids")
             if user_ids is None and hasattr(store, "recipients_for"):
                 user_ids = store.recipients_for(category, now_utc)
+            guides = (store.guides_for(user_ids)
+                      if category == "daily_thought" and user_ids
+                      and hasattr(store, "guides_for") else {})
             for uid in user_ids or []:
+                # Garde-fou détresse (prioritaire sur tout) : aucune
+                # notification, de quelque catégorie que ce soit, tant que le
+                # signal de détresse est actif (même règle que le marketing).
+                if (hasattr(store, "push_blocked_for_distress") and
+                        store.push_blocked_for_distress(uid, now_utc)):
+                    continue
                 if (category != "wellbeing_daily" and
                         hasattr(store, "global_push_allowed") and
                         not store.global_push_allowed(uid, now_utc)):
                     continue
                 dedupe_key = f"{category}:{uid}:{job_period}"
+                send_title, send_body = title, body
+                guide_name = _ADVISOR_NAMES.get(str(guides.get(uid) or ""))
+                if guide_name:
+                    send_title, send_body = f"{guide_name} ✨", GUIDE_MORNING_BODY
                 tokens = store.active_tokens(uid)
                 provisional = ("dry_run" if dry
                                else "sent" if tokens
@@ -228,11 +255,12 @@ def push_tick(now_utc, store, sender, schedule=None):
                 for tok in tokens:
                     data = job.get("data")
                     if data:
-                        res = sender.send(tok, category, title, body, data=data)
+                        res = sender.send(tok, category, send_title, send_body,
+                                          data=data)
                     else:
                         # Compatibilité avec les senders de test/intégrations
                         # existants qui ne connaissent que le payload minimal.
-                        res = sender.send(tok, category, title, body)
+                        res = sender.send(tok, category, send_title, send_body)
                     if res.outcome in ("sent", "dry_run"):
                         any_ok = True
                     elif res.outcome == "invalid_token":
@@ -370,6 +398,38 @@ class DbPushTickStore:
         finally:
             conn.close()
 
+    def push_blocked_for_distress(self, user_id, now_utc):
+        """True si le garde-fou détresse coupe les notifications de ce compte
+        (`_detresse_bloque_marketing` : signal aigu < 7 jours ou score >= 70).
+        En cas d'erreur de lecture : True (on préfère ne rien envoyer)."""
+        try:
+            import auryel_bot as _bot
+            profile = _bot.get_app_profile(user_id)
+            if not profile:
+                return False
+            blocked, _reason = _bot._detresse_bloque_marketing(
+                profile, maintenant=now_utc)
+            return bool(blocked)
+        except Exception:
+            return True
+
+    def guides_for(self, user_ids):
+        """{user_id: clé du guide} pour signer la notification du matin."""
+        ids = [str(u) for u in (user_ids or [])]
+        if not ids:
+            return {}
+        conn = self._get_conn()
+        try:
+            c = conn.cursor()
+            c.execute(
+                "SELECT user_id, guide FROM app_profiles WHERE user_id = ANY(%s)",
+                (ids,),
+            )
+            return {str(uid): str(g or "").strip().lower()
+                    for uid, g in c.fetchall()}
+        finally:
+            conn.close()
+
     def create_unread_event(self, user_id, category, event_type,
                             reference_key, dedupe_key):
         """Crée le badge interne après un envoi FCM confirmé, idempotent."""
@@ -415,7 +475,8 @@ class DbPushTickStore:
             conn.close()
 
     def personal_guidance_jobs(self, now_utc):
-        """Relances J+1/J+3/J+5 depuis la dernière activité réelle.
+        """Relances J+3 / J+10 / J+17 depuis la dernière activité réelle
+        (une par semaine au maximum, arrêt après 3 relances sans réaction).
 
         La consultation et son conseiller sont la seule source de vérité.
         Une consultation encore active n'est jamais relancée. La clé de
@@ -441,7 +502,7 @@ class DbPushTickStore:
                     activity = activity.replace(tzinfo=timezone.utc)
                 activity_day = activity.astimezone(PARIS).date()
                 age = (today - activity_day).days
-                if age not in (1, 3, 5):
+                if age not in GUIDANCE_FOLLOW_UPS:
                     continue
                 # Fenêtre active : la dernière activité est encore en cours.
                 if now_utc < activity + timedelta(minutes=5):
@@ -453,8 +514,8 @@ class DbPushTickStore:
                 activity_key = activity.astimezone(timezone.utc).isoformat()
                 jobs.append({
                     "period": f"guidance:{activity_key}:j{age}",
-                    "title": f"{name} aimerait reprendre votre échange ✨",
-                    "body": "Une question en tête ? Retrouvez-la dans Auryel.",
+                    "title": name,
+                    "body": GUIDANCE_FOLLOW_UPS[age],
                     "user_ids": [str(uid)],
                     "data": {"advisor": advisor},
                 })
