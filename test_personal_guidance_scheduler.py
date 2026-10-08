@@ -13,6 +13,7 @@ class _Cursor:
         self.rows = rows
         self.sql = ""
         self.content_rows = []
+        self.ledger_rows = []
 
     def execute(self, sql, params=None):
         self.sql = sql
@@ -22,6 +23,8 @@ class _Cursor:
     def fetchall(self):
         if "FROM content_recommendations r" in self.sql:
             return self.content_rows
+        if "FROM time_ledger l" in self.sql:
+            return self.ledger_rows
         return self.rows
 
 
@@ -88,3 +91,22 @@ def test_guidance_precedes_editorial_thought_for_global_daily_cap():
     assert [category for category, _ in due[:2]] == [
         "personal_guidance", "daily_thought"
     ]
+
+
+def test_free_time_ended_yesterday_gets_one_guide_signed_follow_up():
+    now = datetime(2026, 10, 9, 8, 30, tzinfo=timezone.utc)
+    conn = _Connection([])
+    conn.cursor_obj.ledger_rows = [
+        ("u9", now - timedelta(hours=20), "selena"),
+        ("u8", now - timedelta(hours=20), "inconnu"),
+    ]
+    jobs = DbPushTickStore(lambda: conn).personal_guidance_jobs(now)
+    assert len(jobs) == 1
+    job = jobs[0]
+    assert job["title"] == "Séléna"
+    assert job["user_ids"] == ["u9"]
+    assert job["period"] == "free-time-ended"
+    assert job["data"] == {"advisor": "selena"}
+    assert "Premium" in job["body"] and "tu" in job["body"]
+    # Fenêtre « hier » transmise à la requête, jamais aujourd'hui.
+    assert "HAVING MAX(l.created_at)>=" in conn.cursor_obj.sql

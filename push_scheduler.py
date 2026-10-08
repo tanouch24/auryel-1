@@ -80,6 +80,13 @@ GUIDANCE_FOLLOW_UPS = {
     17: "Je garde le fil de notre échange. Reviens quand tu veux.",
 }
 
+# Lendemain de la fin des minutes offertes (plan produit du 08/10/2026) :
+# UNE relance, signée par le guide, sans pression. Le premier envoi
+# rouvre la conversation, où l'offre Premium est présentée.
+FREE_TIME_ENDED_BODY = (
+    "Je garde le fil de notre échange. Avec Premium, on reprend quand tu veux 🌙"
+)
+
 _WEEKDAYS = {"mon": 0, "tue": 1, "wed": 2, "thu": 3, "fri": 4, "sat": 5, "sun": 6}
 
 
@@ -572,9 +579,56 @@ class DbPushTickStore:
                     "data": {"advisor": advisor},
                     "recommendation_id": str(rec_id),
                 })
+            jobs.extend(self._free_time_ended_jobs(c, now_utc))
             return jobs
         finally:
             conn.close()
+
+    def _free_time_ended_jobs(self, c, now_utc):
+        """Comptes dont les minutes offertes se sont ÉPUISÉES HIER (Paris),
+        toujours sans aucun temps ni Premium actif : une relance du guide.
+        Le dernier débit `first_free` du ledger date l'épuisement."""
+        today = now_utc.astimezone(PARIS).date()
+        today_start = datetime.combine(today, datetime.min.time(), tzinfo=PARIS)
+        yesterday_start = today_start - timedelta(days=1)
+        c.execute(
+            "SELECT l.user_id, MAX(l.created_at), MAX(p.guide) "
+            "FROM time_ledger l "
+            "JOIN accounts a ON a.user_id=l.user_id "
+            "JOIN push_devices d ON d.user_id=l.user_id "
+            "LEFT JOIN app_profiles p ON p.user_id=l.user_id "
+            "WHERE l.bucket='first_free' AND l.delta_seconds<0 "
+            "AND a.deleted_at IS NULL "
+            "AND COALESCE(a.first_free_seconds_remaining,0)=0 "
+            "AND COALESCE(a.earned_seconds_remaining,0)=0 "
+            "AND COALESCE(a.purchased_seconds_remaining,0)=0 "
+            "AND d.enabled=TRUE AND d.revoked_at IS NULL "
+            "AND d.invalid_at IS NULL "
+            "AND NOT EXISTS (SELECT 1 FROM consultation_allowance ca "
+            "WHERE ca.user_id=l.user_id AND ca.period_start<=%s "
+            "AND ca.period_end>%s) "
+            "GROUP BY l.user_id "
+            "HAVING MAX(l.created_at)>=%s AND MAX(l.created_at)<%s",
+            (now_utc, now_utc,
+             yesterday_start.astimezone(timezone.utc),
+             today_start.astimezone(timezone.utc)),
+        )
+        jobs = []
+        for uid, _ended_at, guide in c.fetchall():
+            advisor = str(guide or "").strip().lower()
+            name = _ADVISOR_NAMES.get(advisor)
+            if not name:
+                continue
+            jobs.append({
+                # Une seule fois par compte : les minutes offertes ne se
+                # rechargent pas.
+                "period": "free-time-ended",
+                "title": name,
+                "body": FREE_TIME_ENDED_BODY,
+                "user_ids": [str(uid)],
+                "data": {"advisor": advisor},
+            })
+        return jobs
 
     def mark_ebook_notification_sent(self, ebook_id):
         if ebook_id is None:
