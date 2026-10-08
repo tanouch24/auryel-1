@@ -6602,6 +6602,32 @@ def _app_profile_public(profile):
     }
 
 
+_APP_PERSON_IN_MIND_MAX = 40
+_APP_PERSON_IN_MIND_RE = re.compile(r"^[^\W\d_]+(?:[ '’-][^\W\d_]+)*$")
+
+
+def _merge_prenoms_importants(existing, prenom):
+    """Ajoute `prenom` à la liste « prenoms_importants » (séparée par des
+    virgules) sans doublon (insensible à la casse), en tête de liste."""
+    items = [p.strip() for p in (existing or "").split(",") if p.strip()]
+    items = [p for p in items if p.lower() != prenom.lower()]
+    return ", ".join([prenom] + items)[:500]
+
+
+def _validate_person_in_mind(value):
+    """Prénom facultatif saisi à l'onboarding (« une personne occupe tes
+    pensées ? »). Lettres, espaces, tirets, apostrophes ; 40 car. max.
+    Retourne (prenom|None, error|None) ; chaîne vide -> (None, None)."""
+    if not isinstance(value, str):
+        return None, "invalid_prenom_en_tete"
+    v = " ".join(value.split())
+    if not v:
+        return None, None
+    if len(v) > _APP_PERSON_IN_MIND_MAX or not _APP_PERSON_IN_MIND_RE.match(v):
+        return None, "invalid_prenom_en_tete"
+    return v, None
+
+
 def _validate_app_profile_patch(data):
     """Valide un body PATCH PARTIEL. Retourne (updates:dict, error:str|None).
     Champs acceptés ce lot : guide, prenom, date_naissance. Tout autre champ
@@ -6685,6 +6711,16 @@ def api_app_profile_patch():
     updates, err = _validate_app_profile_patch(data)
     if err is not None:
         return _auth_json({"error": err}, 400)
+    # Prénom de la personne en tête (onboarding, facultatif) : FUSIONNÉ dans
+    # prenoms_importants, que la mémoire émotionnelle du guide injecte déjà.
+    if "prenom_en_tete" in data:
+        person, perr = _validate_person_in_mind(data.get("prenom_en_tete"))
+        if perr is not None:
+            return _auth_json({"error": perr}, 400)
+        if person:
+            updates["prenoms_importants"] = _merge_prenoms_importants(
+                profile.get("prenoms_importants"), person
+            )
 
     if updates:
         update_app_profile(user_id, **updates)
