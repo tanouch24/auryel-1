@@ -1,6 +1,6 @@
-# Auryel — application mobile de guidance
+# Auryel — application de guide personnel et de bien-être
 
-> Auryel est une application mobile ciblant Android et iOS, actuellement en préparation. Elle est consacrée à la voyance, au tarot, à la guidance personnelle et au bien-être. Les liens de téléchargement seront ajoutés après publication officielle sur les stores.
+> Auryel est une application mobile de guide personnel et de bien-être, disponible sur Android (Google Play : https://play.google.com/store/apps/details?id=com.auryel.auryel). La version iPhone est en préparation. Chaque utilisateur reçoit un guide attitré qui garde le fil de ses échanges, le Réveil Auryel pour commencer la journée et six expériences Explorer : tarot, lignes de la main, marc de café, rêves, compatibilité et boule de cristal.
 
 ## Offre actuelle
 
@@ -10,7 +10,7 @@
 - Extra Hour ajoute 1 heure de consultation pour 1,99 €.
 - Les échanges restent accessibles dans l’historique de l’application.
 - Les messages sont illimités pendant chaque consultation.
-- Auryel propose 10 profils de guidance virtuels. Les réponses sont générées par une intelligence artificielle orientée par le profil choisi ; aucune intervention individuelle d’un conseiller humain n’est incluse ou garantie.
+- Auryel propose 10 guides virtuels ; un guide est attribué à l’inscription. Les réponses sont générées par une intelligence artificielle orientée par le guide ; aucune intervention individuelle d’un conseiller humain n’est incluse ou garantie.
 
 ## Positionnement et limites
 
@@ -21,7 +21,7 @@ Auryel présente la guidance comme un outil de réflexion personnelle, jamais co
 - Accueil : https://auryelvoyance.com/
 - Espace presse officiel : https://auryelvoyance.com/presse
 - Application : https://auryelvoyance.com/application
-- Conseillers : https://auryelvoyance.com/conseillers
+- Guides : https://auryelvoyance.com/conseillers
 - Comment ça marche : https://auryelvoyance.com/comment-ca-marche
 - Tarifs : https://auryelvoyance.com/tarifs
 - Blog : https://auryelvoyance.com/blog
@@ -43,18 +43,18 @@ Auryel présente la guidance comme un outil de réflexion personnelle, jamais co
 - Heure miroir : https://auryelvoyance.com/heure-miroir
 - Flamme jumelle : https://auryelvoyance.com/flamme-jumelle
 
-## Les 10 profils de guidance
+## Les 10 guides virtuels
 
-- Séléna — relations et sentiments.
-- Myriam — situations familiales et conflits relationnels.
-- Maïa — deuil, reconstruction et périodes difficiles.
-- Orion — parcours professionnel et décisions de vie.
-- Ezra — analyse de situation et regard objectif.
-- Luna — transitions, doutes et incertitudes.
-- Théa — amour, compatibilité et dynamiques de couple.
-- Cassandre — situations de crise et décisions difficiles.
-- Kaël — ruptures, changements et reconstruction.
-- Raphaël — grandes décisions, vie professionnelle et sens.
+- Séléna — amour et relations.
+- Luna — amour et rupture.
+- Maïa — décisions et situations confuses.
+- Théa — cycles et schémas qui se répètent (numérologie).
+- Cassandre — regard global.
+- Myriam — tarot.
+- Orion — décisions et prise de recul, vie professionnelle.
+- Ezra — vérité et décisions difficiles.
+- Kaël — transitions et changements.
+- Raphaël — relations et communication.
 
 ## Principales catégories du blog
 

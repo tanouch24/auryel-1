@@ -28,6 +28,12 @@
     Strict-Transport-Security = "max-age=31536000; includeSubDomains"
     Content-Security-Policy = "default-src 'self' https: data: 'unsafe-inline' 'unsafe-eval'; frame-ancestors 'none'"
 
+# ── Cache navigateur des images (1 semaine) ─────────────────────────────────
+[[headers]]
+  for = "/images/*"
+  [headers.values]
+    Cache-Control = "public, max-age=604800"
+
 # ── Blocage fichiers sensibles (wildcards) ──────────────────────────────────
 [[redirects]]
   from = "/*.py"
