@@ -3203,6 +3203,21 @@ def init_db():
             "Migration v77 (Explorer photo readings) échouée"
         ) from e
 
+    # Migration v78 — roue cadeau : marqueur à usage unique sur accounts.
+    try:
+        migration_path = os.path.join(
+            os.path.dirname(__file__), "migrations", "053_gift_wheel.sql"
+        )
+        with open(migration_path, "r", encoding="utf-8") as migration_file:
+            c.execute(migration_file.read())
+        conn.commit()
+    except Exception as e:
+        conn.rollback()
+        conn.close()
+        raise CriticalSchemaMigrationError(
+            "Migration v78 (roue cadeau) échouée"
+        ) from e
+
     conn.close()
 
 def reset_db():
@@ -8465,6 +8480,109 @@ def api_rewards_daily_share():
         return _auth_json({"error": "temporarily_unavailable"}, 503)
     finally:
         conn.close()
+
+
+# Roue cadeau (09/10/2026) : quand le temps GRATUIT est presque épuisé, l'app
+# propose une roue qui s'arrête toujours sur +3 minutes. Une fois par compte,
+# jamais pour un compte Premium, jamais si le garde-fou détresse bloque le
+# marketing. Le montant est fixé ici, jamais par le client.
+_GIFT_WHEEL_SECONDS = 180
+_GIFT_WHEEL_MAX_REMAINING_SECONDS = 60
+
+
+def _gift_wheel_distress_blocked(user_id, now):
+    """True si le garde-fou détresse coupe le marketing (True aussi en cas
+    d'erreur : on ne fait pas de marketing dans le doute)."""
+    try:
+        profile = get_app_profile(user_id)
+        if not profile:
+            return False
+        blocked, _ = _detresse_bloque_marketing(profile, maintenant=now)
+        return bool(blocked)
+    except Exception:
+        return True
+
+
+def _gift_wheel_eligibility_tx(cursor, user_id, now):
+    """(eligible, reason) — `accounts` DOIT être verrouillé par l'appelant."""
+    cursor.execute(
+        "SELECT gift_wheel_credited_at FROM accounts WHERE user_id=%s",
+        (user_id,),
+    )
+    row = cursor.fetchone()
+    if row is None:
+        return False, "unknown_account"
+    if row[0] is not None:
+        return False, "already_used"
+    if _explorer_premium_tx(cursor, user_id, now):
+        return False, "premium"
+    snap = _get_time_snapshot_tx(cursor, user_id, now)
+    if int(snap["total_remaining_seconds"]) > _GIFT_WHEEL_MAX_REMAINING_SECONDS:
+        return False, "time_left"
+    return True, None
+
+
+@app.route("/api/app/rewards/gift-wheel", methods=["POST"])
+@limiter.limit("20 per hour")
+@require_app_auth
+def api_rewards_gift_wheel():
+    """Body `{"check": true}` : dit seulement si la roue peut s'afficher.
+    Sans `check` : crédite +3 min (une fois) et renvoie le temps à jour.
+    Réponse : { eligible, credited, credited_seconds, reason[, time, quota] }."""
+    user_id = g.app_account["user_id"]
+    now = _utcnow()
+    body = request.get_json(silent=True) or {}
+    check_only = bool(body.get("check"))
+    if _gift_wheel_distress_blocked(user_id, now):
+        return _auth_json({"eligible": False, "credited": False,
+                           "credited_seconds": 0, "reason": "not_eligible"}, 200)
+    conn = get_conn()
+    try:
+        c = conn.cursor()
+        c.execute(
+            "SELECT user_id FROM accounts "
+            "WHERE user_id=%s AND deleted_at IS NULL FOR UPDATE",
+            (user_id,),
+        )
+        if c.fetchone() is None:
+            conn.rollback()
+            return _auth_json({"error": "unauthorized"}, 401)
+        eligible, reason = _gift_wheel_eligibility_tx(c, user_id, now)
+        if check_only or not eligible:
+            conn.rollback()
+            return _auth_json({"eligible": eligible, "credited": False,
+                               "credited_seconds": 0, "reason": reason}, 200)
+        c.execute(
+            "UPDATE accounts SET gift_wheel_credited_at=%s "
+            "WHERE user_id=%s AND gift_wheel_credited_at IS NULL",
+            (now, user_id),
+        )
+        credited = False
+        if c.rowcount == 1:
+            res = _credit_bonus_time_tx(
+                c, user_id, _GIFT_WHEEL_SECONDS, "gift_wheel",
+                f"gift_wheel:{user_id}", now,
+            )
+            credited = bool(res.get("credited"))
+        conn.commit()
+    except Exception as e:
+        conn.rollback()
+        print(f"[rewards] gift-wheel erreur {_user_hash(user_id)}: {type(e).__name__}")
+        return _auth_json({"error": "temporarily_unavailable"}, 503)
+    finally:
+        conn.close()
+    if credited:
+        log_event("gift_wheel_credited", user_hash=_user_hash(user_id))
+    out = {"eligible": credited, "credited": credited,
+           "credited_seconds": _GIFT_WHEEL_SECONDS if credited else 0,
+           "reason": None if credited else "already_used"}
+    try:
+        st = _state_with_time_settle(user_id)
+        out["time"] = _time_json(st)
+        out["quota"] = _quota_shim_json(st)
+    except Exception:
+        pass
+    return _auth_json(out, 200)
 
 
 @app.route("/api/app/rewards/share-progress", methods=["GET"])
