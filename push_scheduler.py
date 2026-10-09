@@ -58,7 +58,12 @@ MESSAGES = {
         "Ta séance Bien-être est prête ✨",
         "Tes 5 exercices du jour t’attendent dans Auryel.",
     ),
+    # Textes réels construits par `premium_offer_jobs` (nom du guide).
+    "premium_offer": ("Offre exceptionnelle", "Auryel Premium à 4,99 €/mois."),
 }
+
+# Catégories hors plafond « une notification éditoriale par jour ».
+_DAILY_CAP_EXEMPT = ("wellbeing_daily", "premium_offer")
 
 _ADVISOR_NAMES = {
     "selena": "Séléna", "cassandre": "Cassandre", "maia": "Maïa",
@@ -83,6 +88,26 @@ GUIDANCE_FOLLOW_UPS = {
 # Lendemain de la fin des minutes offertes (plan produit du 08/10/2026) :
 # UNE relance, signée par le guide, sans pression. Le premier envoi
 # rouvre la conversation, où l'offre Premium est présentée.
+# Relances « offre exceptionnelle » (décision de Nathanyel, 09/10/2026) :
+# comptes NON Premium dont les minutes offertes sont épuisées, à J+N de
+# l'épuisement, 19:00 Europe/Paris. Une fois par palier et par compte, arrêt
+# dès que le compte est Premium. Hors plafond quotidien (6 envois au total),
+# jamais en cas de détresse. Le tap ouvre la page Premium.
+PREMIUM_OFFER_STEPS = {
+    2: ("Offre exceptionnelle 🌙",
+        "Auryel Premium à 4,99 €/mois au lieu de 29,99 € : 4 h avec {name} chaque mois."),
+    6: ("{name} t’attend",
+        "Ton offre à 4,99 €/mois est toujours là : 4 h de consultation par mois, sans publicité."),
+    13: ("Offre exceptionnelle",
+         "Premium à 4,99 € au lieu de 29,99 € : retrouve {name} quand tu veux."),
+    30: ("{name} pense à toi ✨",
+         "Envie de reprendre là où on s’était arrêtés ? Premium : 4,99 €/mois au lieu de 29,99 €."),
+    60: ("Offre exceptionnelle 🌙",
+         "4 h par mois avec {name} pour 4,99 € au lieu de 29,99 €."),
+    90: ("{name}",
+         "Ta place est toujours là. Premium à 4,99 €/mois : 4 h de consultation chaque mois."),
+}
+
 FREE_TIME_ENDED_BODY = (
     "Je garde le fil de notre échange. Avec Premium, on reprend quand tu veux 🌙"
 )
@@ -127,6 +152,7 @@ class PushSchedule:
         self.session_days = _parse_days(
             env.get("PUSH_WELLBEING_SESSION_DAYS"), ("tue", "sat"))
         self.ebook_time = _parse_hhmm(env.get("PUSH_EBOOK_TIME"), (10, 15))
+        self.offer_time = _parse_hhmm(env.get("PUSH_OFFER_TIME"), (19, 0))
         self.catch_up_hours = catch_up_hours
 
     @classmethod
@@ -171,6 +197,8 @@ class PushSchedule:
             # Les ebooks sont développés par le store DB : la catégorie ne
             # sera envoyée que pour une publication active non déjà notifiée.
             due.append(("ebook_monthly", day_key))
+        if self._is_due(paris_now, every_day, *self.offer_time):
+            due.append(("premium_offer", day_key))
         return due
 
 
@@ -191,6 +219,8 @@ def push_tick(now_utc, store, sender, schedule=None):
         "ticked_at": now_utc.astimezone(timezone.utc).isoformat(),
         "due": due,
         "sent": 0, "skipped_no_device": 0, "failed": 0, "deduped": 0,
+        # Diagnostic sans donnée perso : où s'arrêtent les envois.
+        "candidates": 0, "blocked_distress": 0, "blocked_daily_cap": 0,
     }
     if not due:
         return summary
@@ -212,7 +242,9 @@ def push_tick(now_utc, store, sender, schedule=None):
             jobs = store.wellbeing_jobs(now_utc)
         elif category == "personal_guidance" and hasattr(store, "personal_guidance_jobs"):
             jobs = store.personal_guidance_jobs(now_utc)
-        elif category == "personal_guidance":
+        elif category == "premium_offer" and hasattr(store, "premium_offer_jobs"):
+            jobs = store.premium_offer_jobs(now_utc)
+        elif category in ("personal_guidance", "premium_offer"):
             jobs = []
         else:
             users = (store.recipients_for(category, now_utc)
@@ -229,15 +261,18 @@ def push_tick(now_utc, store, sender, schedule=None):
                       if category == "daily_thought" and user_ids
                       and hasattr(store, "guides_for") else {})
             for uid in user_ids or []:
+                summary["candidates"] += 1
                 # Garde-fou détresse (prioritaire sur tout) : aucune
                 # notification, de quelque catégorie que ce soit, tant que le
                 # signal de détresse est actif (même règle que le marketing).
                 if (hasattr(store, "push_blocked_for_distress") and
                         store.push_blocked_for_distress(uid, now_utc)):
+                    summary["blocked_distress"] += 1
                     continue
-                if (category != "wellbeing_daily" and
+                if (category not in _DAILY_CAP_EXEMPT and
                         hasattr(store, "global_push_allowed") and
                         not store.global_push_allowed(uid, now_utc)):
+                    summary["blocked_daily_cap"] += 1
                     continue
                 dedupe_key = f"{category}:{uid}:{job_period}"
                 send_title, send_body = title, body
@@ -396,7 +431,8 @@ class DbPushTickStore:
             c = conn.cursor()
             c.execute(
                 "SELECT COUNT(*) FROM notification_sends "
-                "WHERE user_id=%s AND category <> 'wellbeing_daily' "
+                "WHERE user_id=%s "
+                "AND category NOT IN ('wellbeing_daily', 'premium_offer') "
                 "AND status IN ('sent', 'dry_run') "
                 "AND created_at >= %s",
                 (str(user_id), day_start.astimezone(timezone.utc)),
@@ -583,6 +619,55 @@ class DbPushTickStore:
                     "recommendation_id": str(rec_id),
                 })
             jobs.extend(self._free_time_ended_jobs(c, now_utc))
+            return jobs
+        finally:
+            conn.close()
+
+    def premium_offer_jobs(self, now_utc):
+        """Offre exceptionnelle à J+2/6/13/30/60/90 de l'épuisement des
+        minutes offertes (dernier débit `first_free`), comptes sans Premium
+        actif, appareil actif. Une fois par palier (période `offer:jN`)."""
+        today = now_utc.astimezone(PARIS).date()
+        conn = self._get_conn()
+        try:
+            c = conn.cursor()
+            c.execute(
+                "SELECT l.user_id, MAX(l.created_at), MAX(p.guide) "
+                "FROM time_ledger l "
+                "JOIN accounts a ON a.user_id=l.user_id "
+                "JOIN push_devices d ON d.user_id=l.user_id "
+                "LEFT JOIN app_profiles p ON p.user_id=l.user_id "
+                "WHERE l.bucket='first_free' AND l.delta_seconds<0 "
+                "AND a.deleted_at IS NULL "
+                "AND COALESCE(a.first_free_seconds_remaining,0)=0 "
+                "AND d.enabled=TRUE AND d.revoked_at IS NULL "
+                "AND d.invalid_at IS NULL "
+                "AND NOT EXISTS (SELECT 1 FROM consultation_allowance ca "
+                "WHERE ca.user_id=l.user_id AND ca.period_start<=%s "
+                "AND ca.period_end>%s) "
+                "GROUP BY l.user_id",
+                (now_utc, now_utc),
+            )
+            jobs = []
+            for uid, ended_at, guide in c.fetchall():
+                if ended_at is None:
+                    continue
+                if ended_at.tzinfo is None:
+                    ended_at = ended_at.replace(tzinfo=timezone.utc)
+                age = (today - ended_at.astimezone(PARIS).date()).days
+                step = PREMIUM_OFFER_STEPS.get(age)
+                if step is None:
+                    continue
+                advisor = str(guide or "").strip().lower()
+                name = _ADVISOR_NAMES.get(advisor) or "Ton guide"
+                title, body = step
+                jobs.append({
+                    "period": f"offer:j{age}",
+                    "title": title.format(name=name),
+                    "body": body.format(name=name),
+                    "user_ids": [str(uid)],
+                    "data": {"advisor": advisor} if advisor in _ADVISOR_NAMES else {},
+                })
             return jobs
         finally:
             conn.close()

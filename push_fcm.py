@@ -35,7 +35,7 @@ INFORMATIVE_CHANNEL_ID = "auryel_default_v2"
 ALLOWED_TYPES = (
     "daily_thought", "daily_meditation", "personal_guidance",
     "weekly_sleep", "wellbeing_daily", "ebook_monthly",
-    "wellbeing_session",
+    "wellbeing_session", "premium_offer",
 )
 
 _PERMANENT_FCM_ERRORS = frozenset({
