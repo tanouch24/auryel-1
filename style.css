@@ -438,3 +438,5 @@ body:has(.product-page-hero img[src*="auryel-meditations"]) .specialized-visual 
   body:has(.product-page-hero img[src*="auryel-meditations"]) .specialized-visual .product-showcase__item:nth-child(2) .product-device{width:min(78vw,280px)}
   body:has(.product-page-hero img[src*="auryel-meditations"]) .specialized-visual .product-showcase__grid{padding:62px 0 48px}
 }
+/* Photos d’illustration : même teinte que l’univers Auryel */
+img[src*="images.unsplash.com"]{filter:saturate(.55) sepia(.18) brightness(.78) contrast(1.05)}
