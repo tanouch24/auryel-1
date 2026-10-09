@@ -11,7 +11,7 @@
     function gtag() { dataLayer.push(arguments); }
     window.gtag = gtag;
     gtag('js', new Date());
-    gtag('config', GA_ID);
+    gtag('config', GA_ID, { cookie_expires: 34128000 }); // 13 mois (CNIL)
   }
 
   function loadPixel() {
@@ -25,6 +25,14 @@
     fbq('init', PIXEL_ID);
     fbq('track', 'PageView');
   }
+
+  // Retrait / modification du consentement (page Cookies) : on oublie le
+  // choix et on recharge ; Google Analytics et le pixel ne sont plus chargés
+  // tant que la personne n'a pas de nouveau accepté.
+  window.auryelCookieReset = function () {
+    localStorage.removeItem('auryel_cookie_ok');
+    window.location.reload();
+  };
 
   var consent = localStorage.getItem('auryel_cookie_ok');
   if (consent === '1') { loadGA(); loadPixel(); return; }
