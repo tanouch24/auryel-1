@@ -88,3 +88,11 @@ def test_distress_lookup_error_fails_safe():
         assert store.push_blocked_for_distress("u1", MORNING) is True
     finally:
         bot.get_app_profile = original
+
+
+def test_guides_for_casts_uuid_to_text():
+    # Régression prod 09/10/2026 : « operator does not exist: uuid = text ».
+    import inspect
+    import push_scheduler as ps
+    src = inspect.getsource(ps.DbPushTickStore.guides_for)
+    assert "user_id::text = ANY(%s)" in src

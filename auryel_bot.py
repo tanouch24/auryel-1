@@ -3583,7 +3583,7 @@ def claim_onboarding_profile_intro(user_id):
         c = conn.cursor()
         c.execute(
             "UPDATE app_profiles SET onboarding_profile_status='presented' "
-            "WHERE user_id=%s AND onboarding_done=TRUE "
+            "WHERE user_id=%s "
             "AND COALESCE(onboarding_profile_status, 'pending')='pending' "
             "AND (COALESCE(chemin_de_vie, '') <> '' OR "
             "     COALESCE(signe_zodiaque, '') <> '')",
@@ -12625,6 +12625,7 @@ COMMENT TU PARLES
 - Tu réponds d'abord à ce qu'on vient de te dire, avec les mots de la personne. Pas de reformulation de tout son message, pas de « je comprends ce que tu ressens ». N'ouvre jamais par « Je ressens », « Je sens », « Je vois » ou « Je perçois ».
 - Message court : réponse courte (une à trois phrases). Situation lourde : tu prends la place nécessaire, sans pavé.
 - Tu poses UNE question seulement si elle fait vraiment avancer. Souvent, aucune. Un « oui », « ok » ou « pourquoi ? » se comprend avec l'échange précédent : réponds-y directement.
+- Tu ne fais JAMAIS allusion à quelque chose que la personne ne t'a pas dit (dans cet échange ou dans ta mémoire) : pas de « la personne dont tu m'avais parlé », pas de « il t'a répondu ? » inventés. Si un message est trop court pour être compris, demande simplement ce qu'elle veut dire.
 - Tu tutoies. Tu te souviens de ce qu'on t'a raconté et tu t'en sers, sans le réciter ; ne redemande pas une information déjà connue. Tu ne t'inventes jamais de souvenirs : si tu n'es pas certain, ne dis pas que tu t'en souviens.
 - Tu encourages seulement à partir de ce que la personne t'a vraiment dit : jamais de slogan, jamais de félicitations pour une action inconnue.
 
@@ -13739,8 +13740,14 @@ def get_reply_for_user_id(user_id, user_message, advisor_override=None, consulta
 
     user = _app_profile_to_user_dict(profile, account=account)
     guide_key = advisor_override or user.get("guide", "selena")
+    # 09/10/2026 : app_profiles.onboarding_done n'est jamais posé par l'app
+    # (héritage WhatsApp) -> la réponse à l'esquisse d'accueil ne s'activait
+    # jamais. Pour l'app, seul compte le statut du profil (pending).
+    # Uniquement le TOUT premier message du compte (l'app vient d'afficher
+    # l'esquisse) : un compte v10 avec déjà des échanges n'a jamais vu
+    # d'esquisse et ne doit pas être traité comme s'il y répondait.
     onboarding_profile_intro = (
-        bool(user.get("onboarding_done"))
+        int(user.get("nb_echanges") or 0) == 0
         and (user.get("onboarding_profile_status") or "pending") == "pending"
         and bool((user.get("chemin_de_vie") or "").strip()
                  or (user.get("signe_zodiaque") or "").strip())

@@ -429,7 +429,10 @@ class DbPushTickStore:
         try:
             c = conn.cursor()
             c.execute(
-                "SELECT user_id, guide FROM app_profiles WHERE user_id = ANY(%s)",
+                # user_id est un UUID : comparaison en texte, sinon Postgres
+                # refuse « uuid = text » et tout le tick plante (09/10/2026).
+                "SELECT user_id, guide FROM app_profiles "
+                "WHERE user_id::text = ANY(%s)",
                 (ids,),
             )
             return {str(uid): str(g or "").strip().lower()

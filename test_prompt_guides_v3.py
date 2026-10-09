@@ -151,3 +151,17 @@ def test_personality_is_always_saved_after_the_sketch():
     assert _maj(message="Bonjour !") is None
     # Hors tour d'accueil, une réponse libre ne devient pas le profil.
     assert _maj(message="bonjour", intro_du_tour=False) is None
+
+
+def test_sketch_reply_trigger_no_longer_needs_whatsapp_onboarding_flag():
+    import inspect
+    src = inspect.getsource(A.get_reply_for_user_id)
+    assert 'bool(user.get("onboarding_done"))' not in src
+    assert 'int(user.get("nb_echanges") or 0) == 0' in src
+    claim = inspect.getsource(A.claim_onboarding_profile_intro)
+    assert "onboarding_done=TRUE" not in claim
+
+
+def test_guide_never_invents_unsaid_context():
+    p = _p()
+    assert "Tu ne fais JAMAIS allusion à quelque chose que la personne ne t'a pas dit" in p
