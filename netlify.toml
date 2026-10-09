@@ -829,3 +829,10 @@
   from = "/backup_*"
   to = "/404"
   status = 404
+
+# Polices hébergées sur le site : cache long (fichiers immuables)
+[[headers]]
+  for = "/fonts/*"
+  [headers.values]
+    Cache-Control = "public, max-age=31536000, immutable"
+    Access-Control-Allow-Origin = "*"

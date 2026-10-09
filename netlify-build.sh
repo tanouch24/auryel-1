@@ -76,6 +76,7 @@ ROOT_FILES=(
 ROOT_DIRS=(
   blog
   images
+  fonts
 )
 # (videos/ retiré le 09/10/2026 : les démos montraient de mauvais écrans.)
 

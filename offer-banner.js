@@ -59,6 +59,12 @@
     ".aof-list li{position:relative;padding-left:20px;font-size:13.5px;line-height:1.45;color:#CFC6D6}" +
     ".aof-list li::before{content:'\\2726';position:absolute;left:0;top:1px;font-size:10px;color:#C6A24E}" +
     ".aof-legal{font-size:11px!important;color:#9A8FA6!important;margin-top:10px!important}" +
+    "@media(max-width:820px){.aof-ov{inset:auto 0 0 0;background:none;padding:0 10px 10px;align-items:flex-end;pointer-events:none}" +
+    ".aof-ov .aof-box{pointer-events:auto;max-width:520px;margin:0 auto;padding:16px 18px 12px;border-radius:22px;box-shadow:0 -10px 50px rgba(0,0,0,.55);transform:translateY(24px);transition:transform .3s ease}" +
+    ".aof-ov.on .aof-box{transform:none}" +
+    ".aof-ov .aof-hero,.aof-ov .aof-list,.aof-ov .aof-legal{display:none}" +
+    ".aof-ov h2{font-size:23px!important;margin:8px 0 6px!important}.aof-ov p{font-size:13px}.aof-ov .aof-big{font-size:18px!important;margin:6px 0 2px!important}" +
+    ".aof-ov .aof-cta{margin-top:12px;padding:13px 18px}.aof-ov .aof-no{margin-top:4px}}" +
     "@media(max-width:560px){.aof-bar{flex-wrap:nowrap;gap:7px;padding:8px 34px 8px 10px;font-size:11.5px;white-space:nowrap}" +
     ".aof-bar .aof-badge{display:none}.aof-extra{display:none}.aof-x{right:4px}.aof-box h2{font-size:26px}}";
 
@@ -84,13 +90,13 @@
     bar.querySelector(".aof-link").addEventListener("click", function () { track("offer_bar_click"); });
     document.body.insertBefore(bar, document.body.firstChild);
 
-    // Décale le menu fixé en haut et le contenu de la hauteur du bandeau.
+    // Décale seulement le menu fixé en haut, par une translation : le
+    // contenu ne bouge pas (pas de saut de mise en page, bon pour le SEO).
+    // Le bandeau recouvre le haut de l'en-tête, qui est vide à cet endroit.
     var shifted = [];
-    var basePad = parseFloat(getComputedStyle(document.body).paddingTop) || 0;
     function layout() {
       var h = bar.offsetHeight;
-      document.body.style.paddingTop = basePad + h + "px";
-      shifted.forEach(function (x) { x.el.style.top = x.top + h + "px"; });
+      shifted.forEach(function (x) { x.el.style.transform = "translateY(" + h + "px)"; });
     }
     Array.prototype.forEach.call(document.body.querySelectorAll("nav,header,[id=nav],.nav"), function (el) {
       var cs = getComputedStyle(el);
@@ -104,8 +110,7 @@
     bar.querySelector(".aof-x").addEventListener("click", function () {
       set(local, "aof_bar_hidden_until", String(Date.now() + 7 * 864e5));
       removeEventListener("resize", layout);
-      document.body.style.paddingTop = basePad ? basePad + "px" : "";
-      shifted.forEach(function (x) { x.el.style.top = ""; });
+      shifted.forEach(function (x) { x.el.style.transform = ""; });
       bar.remove();
     });
   }
@@ -149,7 +154,8 @@
     document.addEventListener("keydown", onKey);
     document.body.appendChild(ov);
     requestAnimationFrame(function () { ov.classList.add("on"); });
-    ov.querySelector(".aof-cta").focus();
+    if (!(window.matchMedia && window.matchMedia("(max-width:820px)").matches)) ov.querySelector(".aof-cta").focus();
+    else ov.setAttribute("aria-modal", "false");
   }
 
   function armWelcome() {
@@ -197,7 +203,8 @@
     document.addEventListener("keydown", onKey);
     document.body.appendChild(ov);
     requestAnimationFrame(function () { ov.classList.add("on"); });
-    ov.querySelector(".aof-cta").focus();
+    if (!(window.matchMedia && window.matchMedia("(max-width:820px)").matches)) ov.querySelector(".aof-cta").focus();
+    else ov.setAttribute("aria-modal", "false");
   }
 
   function armExit() {
