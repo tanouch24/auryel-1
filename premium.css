@@ -285,3 +285,10 @@ footer{background:transparent !important;border-top:1px solid var(--glass-b) !im
 :where(a:not([class])){color:var(--gold-b)}
 footer .ft{text-align:left}
 @media(max-width:640px){footer .ft{text-align:left}}
+
+/* ── En-têtes d'articles avec photo (09/10/2026) ── */
+.art-img img{width:100%;height:100%;object-fit:cover;display:block}
+section.art-hero>img:not(.art-hero-img){opacity:.75 !important;z-index:0}
+section.art-hero:has(>img:not(.art-hero-img)){min-height:520px;display:flex;align-items:flex-end;justify-content:center;padding-bottom:64px !important}
+section.art-hero:has(>img:not(.art-hero-img))::after{content:'';position:absolute;inset:0;z-index:0;background:linear-gradient(180deg,rgba(18,14,23,.45) 0%,rgba(18,14,23,.15) 40%,rgba(18,14,23,.9) 100%)}
+section.art-hero .art-hero-inner{z-index:1}
