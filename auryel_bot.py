@@ -6328,6 +6328,16 @@ def api_consultation_message():
     # interaction paid by a previously validated Rewarded entitlement.
     cid = flow["consultation"]["id"]
     advisor_real = flow["consultation"]["advisor_id"]   # figé si fenêtre active
+    if flow["status"] == "question":
+        # 09/10/2026 : une question offerte (roue / publicité) = UN seul
+        # message. Le guide ne doit pas la gâcher en répondant par une question.
+        tirage_context = (tirage_context or "") + (
+            "\n\n=== QUESTION UNIQUE OFFERTE ===\n"
+            "La personne utilise une question offerte : c'est ton SEUL message "
+            "avant la fin de son temps. Ne pose AUCUNE question. Donne "
+            "directement ta lecture, ce que tu perçois et une piste concrète, "
+            "en t'appuyant sur ce que tu sais déjà d'elle."
+        )
     _record_server_analytics(
         "consultation_started", account_id=user_id,
         properties={"advisor_id": str(advisor_real)[:80],

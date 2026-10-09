@@ -140,3 +140,9 @@ def test_message_route_resumes_the_exact_sentence():
                             "054_consultation_teasers.sql")).read()
     assert "CREATE TABLE IF NOT EXISTS consultation_teasers" in sql
     assert "054_consultation_teasers.sql" in inspect.getsource(A.init_db)
+
+
+def test_a_single_offered_question_is_never_answered_by_a_question():
+    import inspect
+    src = inspect.getsource(A.api_consultation_message)
+    assert "QUESTION UNIQUE OFFERTE" in src and "Ne pose AUCUNE question" in src
