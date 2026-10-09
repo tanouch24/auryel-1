@@ -4576,6 +4576,42 @@ def esquisse_personnalite(signe):
             f"{de}{premier}, {traits[1]} et {traits[2]}.")
 
 
+def profil_depuis_reponse_esquisse(*, statut, feedback, signe, deja_decrit,
+                                   intro_du_tour, message):
+    """Réponse à l'esquisse d'accueil -> mises à jour du profil global, ou None.
+
+    09/10/2026 : la personnalité est toujours enregistrée. « Oui » : l'esquisse
+    devient le profil. Réponse libre (pas une question) au tour d'accueil :
+    l'esquisse + ce que la personne ajoute. Une correction (« non… ») reste
+    gérée par le chemin existant (PROFIL À PRÉCISER).
+    """
+    esquisse = esquisse_personnalite(signe)
+    if statut != "presented" or not esquisse or (deja_decrit or "").strip():
+        if statut == "presented" and feedback == "confirmed":
+            return {"onboarding_profile_status": "confirmed"}
+        return None
+    traits = esquisse.split(". ", 1)[-1]
+    if feedback == "confirmed":
+        return {
+            "onboarding_profile_status": "confirmed",
+            "profile_self_description": ("Se reconnaît dans : " + traits)[:500],
+        }
+    texte = (message or "").strip()
+    # Une vraie phrase sur soi (pas « bonjour », pas une question).
+    if (feedback is None and intro_du_tour and "?" not in texte
+            and len(texte.split()) >= 3):
+        ajout = _sanitize_memory_summary(texte[:400])
+        if ajout:
+            return {
+                "onboarding_profile_status": "confirmed",
+                "profile_self_description": (
+                    "Esquisse d'accueil : " + traits
+                    + " Réponse de la personne : " + ajout
+                )[:500],
+            }
+    return None
+
+
 def detecter_pas_les_moyens(message):
     msg = message.lower()
     return any(w in msg for w in ["pas les moyens","trop cher","pas d'argent","pas assez","budget"])
@@ -12924,8 +12960,16 @@ def _reply_core(user, key, user_message, io, *, depuis_pub=False,
         _profile_now = user_fresh or user
         _profile_status = _profile_now.get("onboarding_profile_status") or "pending"
         _feedback = _onboarding_profile_feedback(user_message)
-        if _profile_status == "presented" and _feedback == "confirmed":
-            io["update_silent"](key, onboarding_profile_status="confirmed")
+        _maj_profil = profil_depuis_reponse_esquisse(
+            statut=_profile_status,
+            feedback=_feedback,
+            signe=_profile_now.get("signe_zodiaque"),
+            deja_decrit=(_profile_now.get("profile_self_description") or ""),
+            intro_du_tour=onboarding_profile_intro,
+            message=user_message,
+        )
+        if _maj_profil:
+            io["update_silent"](key, **_maj_profil)
         elif _profile_status == "presented" and _feedback == "corrected":
             io["update_silent"](key, onboarding_profile_status="corrected")
             onboarding_profile_feedback = True

@@ -123,3 +123,31 @@ def test_discovery_phase_only_when_asked():
     assert "PHASE DÉCOUVERTE" in p
     assert "jamais un questionnaire" in p
     assert "qu'est-ce qui l'amène aujourd'hui" in p
+
+
+def _maj(**kw):
+    base = dict(statut="presented", feedback=None, signe="Taureau",
+                deja_decrit="", intro_du_tour=True, message="")
+    base.update(kw)
+    return A.profil_depuis_reponse_esquisse(**base)
+
+
+def test_personality_is_always_saved_after_the_sketch():
+    oui = _maj(feedback="confirmed", message="oui")
+    assert oui["onboarding_profile_status"] == "confirmed"
+    assert "fidèle, patient et attaché à ce qui est vrai" in oui["profile_self_description"]
+    ajout = _maj(message="Oui, et je suis aussi très têtue")
+    assert "têtue" in ajout["profile_self_description"]
+    assert "fidèle" in ajout["profile_self_description"]
+    # Une vraie question n'est pas une description de soi.
+    assert _maj(message="Est-ce qu'il va revenir ?") is None
+    # Une correction reste gérée par le chemin « PROFIL À PRÉCISER ».
+    assert _maj(feedback="corrected", message="non") is None
+    # Déjà décrit : on ne réécrit pas, on confirme seulement.
+    assert _maj(feedback="confirmed", deja_decrit="x") == {
+        "onboarding_profile_status": "confirmed"
+    }
+    # « bonjour » n'est pas une description de soi.
+    assert _maj(message="Bonjour !") is None
+    # Hors tour d'accueil, une réponse libre ne devient pas le profil.
+    assert _maj(message="bonjour", intro_du_tour=False) is None
