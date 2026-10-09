@@ -8767,6 +8767,32 @@ def api_rewards_gift_wheel():
     return _auth_json(out, 200)
 
 
+@app.route("/api/app/rewards/offer-check", methods=["POST"])
+@limiter.limit("20 per hour")
+@require_app_auth
+def api_rewards_offer_check():
+    """Offre exceptionnelle à l'ouverture de l'app (09/10/2026) : `eligible`
+    seulement pour un compte non Premium sans aucun temps restant, et jamais
+    si le garde-fou détresse coupe le marketing. Lecture seule."""
+    user_id = g.app_account["user_id"]
+    now = _utcnow()
+    if _gift_wheel_distress_blocked(user_id, now):
+        return _auth_json({"eligible": False, "reason": "not_eligible"}, 200)
+    conn = get_conn()
+    try:
+        c = conn.cursor()
+        if _explorer_premium_tx(c, user_id, now):
+            return _auth_json({"eligible": False, "reason": "premium"}, 200)
+        snap = _get_time_snapshot_tx(c, user_id, now)
+        if int(snap["total_remaining_seconds"]) > 0:
+            return _auth_json({"eligible": False, "reason": "time_left"}, 200)
+    except Exception:
+        return _auth_json({"eligible": False, "reason": "unavailable"}, 200)
+    finally:
+        conn.close()
+    return _auth_json({"eligible": True, "reason": None}, 200)
+
+
 @app.route("/api/app/rewards/share-progress", methods=["GET"])
 @require_app_auth
 def api_rewards_share_progress():

@@ -154,3 +154,20 @@ def test_migration_is_wired():
     assert "ADD COLUMN IF NOT EXISTS gift_wheel_credited_at TIMESTAMPTZ" in sql
     import inspect
     assert "053_gift_wheel.sql" in inspect.getsource(A.init_db)
+
+
+def _check(client):
+    r = client.post("/api/app/rewards/offer-check", json={},
+                    headers={"Authorization": "Bearer x"})
+    return r.get_json()
+
+
+def test_open_offer_only_for_free_accounts_without_time(env):
+    db, client = env
+    assert _check(client) == {"eligible": True, "reason": None}
+    db["remaining"] = 120
+    assert _check(client)["reason"] == "time_left"
+    db["remaining"], db["premium"] = 0, True
+    assert _check(client)["reason"] == "premium"
+    db["premium"], db["distress"] = False, True
+    assert _check(client) == {"eligible": False, "reason": "not_eligible"}
