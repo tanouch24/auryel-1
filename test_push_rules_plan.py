@@ -96,3 +96,29 @@ def test_guides_for_casts_uuid_to_text():
     import push_scheduler as ps
     src = inspect.getsource(ps.DbPushTickStore.guides_for)
     assert "user_id::text = ANY(%s)" in src
+
+
+def test_distress_guard_reads_text_scores_from_app_profiles():
+    # Prod 09/10/2026 : niveau_detresse stocké en TEXTE dans app_profiles ;
+    # TypeError -> fail-safe -> AUCUNE push envoyée à personne.
+    import os
+    for k, v in {"SECRET_KEY": "t", "ADMIN_PASSWORD": "t",
+                 "DATABASE_URL": "postgresql://t:t@127.0.0.1:1/t"}.items():
+        os.environ.setdefault(k, v)
+    import auryel_bot as A
+    calm = {"niveau_detresse": "3", "detresse_maj_at": "2026-10-09T10:00:00",
+            "dernier_signal_aigu_at": ""}
+    assert A._detresse_bloque_marketing(calm) == (False, None)
+    assert A._detresse_bloque_marketing(A._app_profile_to_user_dict(calm)) == (False, None)
+    high = dict(calm, niveau_detresse="95", detresse_maj_at="")
+    assert A._detresse_bloque_marketing(high) == (True, "score")
+
+    store = ps.DbPushTickStore(lambda: None)
+    real = A.get_app_profile
+    try:
+        A.get_app_profile = lambda uid: calm
+        assert store.push_blocked_for_distress("u", MORNING) is False
+        A.get_app_profile = lambda uid: high
+        assert store.push_blocked_for_distress("u", MORNING) is True
+    finally:
+        A.get_app_profile = real

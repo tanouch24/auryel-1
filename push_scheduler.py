@@ -466,8 +466,9 @@ class DbPushTickStore:
             profile = _bot.get_app_profile(user_id)
             if not profile:
                 return False
+            # Profil app (champs texte) -> dict typé, comme pour le prompt.
             blocked, _reason = _bot._detresse_bloque_marketing(
-                profile, maintenant=now_utc)
+                _bot._app_profile_to_user_dict(profile), maintenant=now_utc)
             return bool(blocked)
         except Exception:
             return True

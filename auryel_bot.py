@@ -6033,7 +6033,8 @@ def _teaser_blocked_for_safety(profile, msg, now):
         u = detecter_contexte_emotionnel(msg, dict(_app_profile_to_user_dict(profile)))
         if u.get("signal_aigu"):
             return True
-        blocked, _ = _detresse_bloque_marketing(profile, maintenant=now)
+        blocked, _ = _detresse_bloque_marketing(
+            _app_profile_to_user_dict(profile), maintenant=now)
         return bool(blocked)
     except Exception:
         return True
@@ -8694,7 +8695,8 @@ def _gift_wheel_distress_blocked(user_id, now):
         profile = get_app_profile(user_id)
         if not profile:
             return False
-        blocked, _ = _detresse_bloque_marketing(profile, maintenant=now)
+        blocked, _ = _detresse_bloque_marketing(
+            _app_profile_to_user_dict(profile), maintenant=now)
         return bool(blocked)
     except Exception:
         return True
@@ -12790,7 +12792,12 @@ def _niveau_detresse_effectif(user, maintenant=None):
     tel quel, inchangé (pas de décroissance sans référence temporelle fiable).
     DOIT être utilisée partout où le niveau sert à décider (prompt + crons),
     sinon le score ne redescend jamais pour les gens silencieux qu'on veut relancer."""
-    score = user.get("niveau_detresse", 0) or 0
+    # 09/10/2026 : app_profiles stocke ce score en TEXTE ; une chaîne faisait
+    # lever TypeError et le garde-fou (fail-safe) coupait TOUTES les push.
+    try:
+        score = int(str(user.get("niveau_detresse", 0) or 0).strip() or 0)
+    except (TypeError, ValueError):
+        score = 0
     maj_dt = _parse_dt_paris(user.get("detresse_maj_at"))
     if maj_dt is None:
         return score
