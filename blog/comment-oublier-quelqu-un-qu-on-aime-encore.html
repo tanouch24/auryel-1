@@ -19,13 +19,13 @@
 <link rel="stylesheet" href="/style.css">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Cinzel:wght@400;600;700&family=Cinzel+Decorative:wght@400;700&family=Lora:ital,wght@0,300;0,400;0,500;1,300;1,400&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,400;0,500;0,600;1,400;1,500&family=Inter:wght@300;400;500;600&display=swap" rel="stylesheet">
 <style>
 *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
 html{scroll-behavior:smooth}
 body{background:var(--void);color:var(--cream);font-family:var(--fb);font-weight:300;line-height:1.8;overflow-x:hidden}
 body::after{content:'';position:fixed;inset:0;pointer-events:none;z-index:9998;opacity:.12;background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='200' height='200'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.75' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='200' height='200' filter='url(%23n)' opacity='1'/%3E%3C/svg%3E")}
-nav{position:fixed;top:0;left:0;right:0;z-index:100;display:flex;align-items:center;justify-content:space-between;padding:20px 64px;background:rgba(5,4,10,.92);backdrop-filter:blur(20px);border-bottom:1px solid var(--bdr)}
+nav{position:fixed;top:0;left:0;right:0;z-index:100;display:flex;align-items:center;justify-content:space-between;padding:20px 64px;background:rgba(16,12,22,.92);backdrop-filter:blur(20px);border-bottom:1px solid var(--bdr)}
 .n-logo{font-family:var(--fs);font-size:17px;letter-spacing:.5em;color:var(--gold);text-decoration:none;text-transform:uppercase}
 .n-links{display:flex;gap:36px;list-style:none;position:absolute;left:50%;transform:translateX(-50%)}
 .n-links a{font-family:var(--fb);font-size:11px;font-weight:400;letter-spacing:.18em;text-transform:uppercase;color:var(--cs);text-decoration:none;transition:color .3s}
@@ -34,7 +34,7 @@ nav{position:fixed;top:0;left:0;right:0;z-index:100;display:flex;align-items:cen
 .n-btn:hover{background:var(--gold-b)}
 .art-hero{position:relative;height:65vh;min-height:480px;overflow:hidden;margin-top:61px}
 .art-hero-img{width:100%;height:100%;object-fit:cover;object-position:center;filter:brightness(.45) saturate(.8)}
-.art-hero-overlay{position:absolute;inset:0;background:linear-gradient(to top,var(--void) 0%,rgba(5,4,10,.3) 50%,rgba(5,4,10,.2) 100%)}
+.art-hero-overlay{position:absolute;inset:0;background:linear-gradient(to top,var(--void) 0%,rgba(16,12,22,.3) 50%,rgba(16,12,22,.2) 100%)}
 .art-hero-content{position:absolute;bottom:0;left:0;right:0;padding:0 64px 56px;max-width:900px}
 .art-hero-cat{font-family:var(--fs);font-size:9px;letter-spacing:.5em;text-transform:uppercase;color:var(--gold);margin-bottom:16px;display:block}
 .art-hero-title{font-family:var(--fd);font-size:clamp(30px,4.5vw,54px);font-weight:400;line-height:1.1;color:var(--cream);margin-bottom:12px}
@@ -63,7 +63,7 @@ nav{position:fixed;top:0;left:0;right:0;z-index:100;display:flex;align-items:cen
 .art-cta-title em{font-style:italic;color:var(--gold-b)}
 .art-cta-sub{font-size:14px;color:var(--cs);margin-bottom:28px;line-height:1.7}
 .art-cta-btn{display:inline-block;background:linear-gradient(135deg,var(--gold),var(--gold-b));color:var(--void);padding:16px 48px;font-family:var(--fb);font-size:11px;font-weight:500;letter-spacing:.25em;text-transform:uppercase;text-decoration:none;transition:all .4s}
-.art-cta-btn:hover{filter:brightness(1.08);transform:translateY(-2px);box-shadow:0 16px 50px rgba(200,169,110,.3)}
+.art-cta-btn:hover{filter:brightness(1.08);transform:translateY(-2px);box-shadow:0 16px 50px rgba(198,162,78,.3)}
 .related{max-width:780px;margin:0 auto;padding:0 40px 80px}
 .related-title{font-family:var(--fs);font-size:10px;letter-spacing:.4em;text-transform:uppercase;color:var(--gold);margin-bottom:24px}
 .related-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:12px}
@@ -170,7 +170,7 @@ footer{background:var(--deep);border-top:1px solid var(--bdr);padding:40px 64px;
     <a href="/application" class="art-cta-btn">Découvrir l’application</a>
     <p style="font-size:11px;color:var(--cd);margin-top:14px">Découvrir Auryel &middot; Annulable &#224; tout moment</p>
   </div>
-<p style="font-size:13px;color:var(--cd);margin-top:20px;font-family:'Lora',serif">→ <a href="/voyance-amour" style="color:var(--gold);text-decoration:none">Guidance amoureuse — accompagnement pour avancer</a></p>
+<p style="font-size:13px;color:var(--cd);margin-top:20px;font-family:'Inter',system-ui,-apple-system,sans-serif">→ <a href="/voyance-amour" style="color:var(--gold);text-decoration:none">Guidance amoureuse — accompagnement pour avancer</a></p>
 </main>
 <section class="related">
   <p class="related-title">&#x2726; Articles similaires</p>
