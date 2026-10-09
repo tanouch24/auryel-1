@@ -20,7 +20,8 @@ def _p(key="selena", **kw):
 
 def test_prompt_is_short_and_app_native():
     p = _p()
-    assert len(p.split()) < 1400
+    # 09/10/2026 : ~1 750 mots avec les blocs lecture/voyance (contre ~3 900 avant v3).
+    assert len(p.split()) < 1900
     assert "application Auryel" in p
     assert "WhatsApp" not in p
     assert "Tu es Séléna" in p and "Camille" in p
@@ -114,7 +115,7 @@ def test_first_reply_knows_the_sketch_it_already_showed():
     p = A.get_system_prompt(user, "selena", onboarding_profile_intro=True)
     assert A.esquisse_personnalite("Taureau") in p
     assert "Ne refais pas d'esquisse" in p
-    assert "UNE question simple sur" in p
+    assert "Jamais de question sur son" in p
 
 
 def test_discovery_phase_only_when_asked():
@@ -175,3 +176,22 @@ def test_profil_astro_accepte_un_chemin_de_vie_entier():
     assert A._profil_astro_renseigne({"signe_zodiaque": "Lion"}) is True
     assert A._profil_astro_renseigne({"chemin_de_vie": None, "signe_zodiaque": ""}) is False
     assert A._profil_astro_renseigne({}) is False
+
+
+def test_guide_gives_a_reading_not_an_interrogation():
+    # 09/10/2026 : retours de Nathanyel « monotone, trop de questions, pas de
+    # solution, pas de voyance ».
+    p = _p()
+    assert "CE QUE TU APPORTES À CHAQUE MESSAGE" in p
+    assert "Jamais deux messages de suite qui finissent par une question" in p
+    assert "TA VOYANCE" in p and "N'invente jamais un tirage" in p
+    assert "au plus tard après deux questions" in p
+    assert "« ça dépendra de vous deux »" in p  # cité comme interdit
+    d = _p(phase_decouverte=True)
+    assert "pas par tes questions" in d
+    assert "avec qui elle vit, ce qui remplit ses journées" not in d
+
+
+def test_guide_examples_are_readings_not_questions():
+    for key, fiche in A._FICHES_GUIDES.items():
+        assert not any(e.rstrip().endswith("?") for e in fiche["exemples"]), key
