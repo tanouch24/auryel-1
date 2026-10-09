@@ -3233,6 +3233,21 @@ def init_db():
             "Migration v79 (réponse en suspens) échouée"
         ) from e
 
+    # Migration v80 — roue « question offerte ».
+    try:
+        migration_path = os.path.join(
+            os.path.dirname(__file__), "migrations", "055_question_wheel.sql"
+        )
+        with open(migration_path, "r", encoding="utf-8") as migration_file:
+            c.execute(migration_file.read())
+        conn.commit()
+    except Exception as e:
+        conn.rollback()
+        conn.close()
+        raise CriticalSchemaMigrationError(
+            "Migration v80 (roue question offerte) échouée"
+        ) from e
+
     conn.close()
 
 def reset_db():
@@ -8791,6 +8806,95 @@ def api_rewards_offer_check():
     finally:
         conn.close()
     return _auth_json({"eligible": True, "reason": None}, 200)
+
+
+# Roue « question offerte » (09/10/2026) : ouverte depuis la notification
+# gift_question (J+4 / J+20 après la fin des minutes offertes). Gagne UNE
+# question complète au guide (même solde que les publicités récompensées).
+_QUESTION_WHEEL_WINDOW_DAYS = 3
+
+
+def _question_wheel_eligibility_tx(cursor, user_id, now):
+    """(eligible, reason). `accounts` verrouillé par l'appelant."""
+    if _explorer_premium_tx(cursor, user_id, now):
+        return False, "premium"
+    cursor.execute(
+        "SELECT MAX(created_at) FROM notification_sends "
+        "WHERE user_id=%s AND category='gift_question' "
+        "AND status IN ('sent', 'dry_run') AND created_at > %s",
+        (str(user_id), now - timedelta(days=_QUESTION_WHEEL_WINDOW_DAYS)),
+    )
+    row = cursor.fetchone()
+    sent_at = row[0] if row else None
+    if sent_at is None:
+        return False, "no_gift"
+    cursor.execute(
+        "SELECT 1 FROM question_wheel_spins WHERE user_id=%s AND created_at >= %s "
+        "LIMIT 1",
+        (str(user_id), sent_at),
+    )
+    if cursor.fetchone() is not None:
+        return False, "already_used"
+    return True, None
+
+
+@app.route("/api/app/rewards/question-wheel", methods=["POST"])
+@limiter.limit("20 per hour")
+@require_app_auth
+def api_rewards_question_wheel():
+    """Body `{"check": true}` : la roue peut-elle s'afficher ? Sinon : tirage,
+    +1 question offerte (une fois par notification). Réponse :
+    { eligible, credited, questions_available, reason }."""
+    user_id = g.app_account["user_id"]
+    now = _utcnow()
+    check_only = bool((request.get_json(silent=True) or {}).get("check"))
+    if _gift_wheel_distress_blocked(user_id, now):
+        return _auth_json({"eligible": False, "credited": False,
+                           "reason": "not_eligible"}, 200)
+    conn = get_conn()
+    try:
+        c = conn.cursor()
+        c.execute(
+            "SELECT user_id FROM accounts "
+            "WHERE user_id=%s AND deleted_at IS NULL FOR UPDATE",
+            (user_id,),
+        )
+        if c.fetchone() is None:
+            conn.rollback()
+            return _auth_json({"error": "unauthorized"}, 401)
+        eligible, reason = _question_wheel_eligibility_tx(c, user_id, now)
+        if check_only or not eligible:
+            conn.rollback()
+            return _auth_json({"eligible": eligible, "credited": False,
+                               "reason": reason}, 200)
+        c.execute(
+            "INSERT INTO question_wheel_spins (id, user_id, created_at) "
+            "VALUES (%s, %s, %s)",
+            (str(uuid.uuid4()), str(user_id), now),
+        )
+        c.execute(
+            "INSERT INTO rewarded_entitlements (user_id) VALUES (%s) "
+            "ON CONFLICT (user_id) DO NOTHING",
+            (str(user_id),),
+        )
+        c.execute(
+            "UPDATE rewarded_entitlements "
+            "SET questions_available = questions_available + 1, updated_at=%s "
+            "WHERE user_id=%s RETURNING questions_available",
+            (now, str(user_id)),
+        )
+        row = c.fetchone()
+        conn.commit()
+    except Exception as e:
+        conn.rollback()
+        print(f"[rewards] question-wheel erreur {_user_hash(user_id)}: {type(e).__name__}")
+        return _auth_json({"error": "temporarily_unavailable"}, 503)
+    finally:
+        conn.close()
+    log_event("question_wheel_credited", user_hash=_user_hash(user_id))
+    return _auth_json({"eligible": True, "credited": True,
+                       "questions_available": int((row or (1,))[0] or 1),
+                       "reason": None}, 200)
 
 
 @app.route("/api/app/rewards/share-progress", methods=["GET"])

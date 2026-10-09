@@ -147,3 +147,23 @@ def test_db_jobs_pick_only_the_steps_and_sign_with_the_guide():
     assert jobs["u-j30"]["title"] == "Orion pense à toi ✨"
     assert jobs["u-noguide"]["title"] == "Ton guide t’attend"
     assert jobs["u-noguide"]["data"] == {}
+
+
+# --- Notification « question offerte » (J+4 / J+20, 13:00) ------------------
+
+def test_gift_question_due_at_13h_and_allowed():
+    noon = datetime(2026, 9, 17, 11, 5, tzinfo=timezone.utc)  # 13:05 Paris
+    due = ps.PushSchedule({}).due_categories(noon.astimezone(ps.PARIS))
+    assert ("gift_question", "2026-09-17") in due
+    assert "gift_question" in push_fcm.ALLOWED_TYPES
+    assert sorted(ps.GIFT_QUESTION_STEPS) == [4, 20]
+
+
+def test_gift_question_jobs_use_their_own_steps():
+    rows = [("u-j4", datetime(2026, 9, 13, 15, 0, tzinfo=timezone.utc), "luna"),
+            ("u-j2", datetime(2026, 9, 15, 15, 0, tzinfo=timezone.utc), "luna")]
+    store = ps.DbPushTickStore(lambda: _Conn(rows))
+    jobs = store.premium_offer_jobs(EVENING, ps.GIFT_QUESTION_STEPS, "gift")
+    assert [j["user_ids"][0] for j in jobs] == ["u-j4"]
+    assert jobs[0]["period"] == "gift:j4"
+    assert jobs[0]["title"] == "🎁 Luna t’a réservé un tirage"

@@ -60,10 +60,11 @@ MESSAGES = {
     ),
     # Textes réels construits par `premium_offer_jobs` (nom du guide).
     "premium_offer": ("Offre exceptionnelle", "Auryel Premium à 4,99 €/mois."),
+    "gift_question": ("Un tirage t’attend", "Une question à ton guide est offerte."),
 }
 
 # Catégories hors plafond « une notification éditoriale par jour ».
-_DAILY_CAP_EXEMPT = ("wellbeing_daily", "premium_offer")
+_DAILY_CAP_EXEMPT = ("wellbeing_daily", "premium_offer", "gift_question")
 
 _ADVISOR_NAMES = {
     "selena": "Séléna", "cassandre": "Cassandre", "maia": "Maïa",
@@ -106,6 +107,16 @@ PREMIUM_OFFER_STEPS = {
          "4 h par mois avec {name} pour 4,99 € au lieu de 29,99 €."),
     90: ("{name}",
          "Ta place est toujours là. Premium à 4,99 €/mois : 4 h de consultation chaque mois."),
+}
+
+# Notification « question offerte » (09/10/2026) : J+4 et J+20 après la fin
+# des minutes offertes, 13:00 Paris. L'appui ouvre la roue qui fait gagner
+# une question au guide (route /api/app/rewards/question-wheel).
+GIFT_QUESTION_STEPS = {
+    4: ("🎁 {name} t’a réservé un tirage",
+        "Lance la roue : une question à {name} t’est offerte."),
+    20: ("🎁 Un tirage t’attend",
+         "{name} t’offre une question. Lance la roue dans Auryel."),
 }
 
 FREE_TIME_ENDED_BODY = (
@@ -153,6 +164,7 @@ class PushSchedule:
             env.get("PUSH_WELLBEING_SESSION_DAYS"), ("tue", "sat"))
         self.ebook_time = _parse_hhmm(env.get("PUSH_EBOOK_TIME"), (10, 15))
         self.offer_time = _parse_hhmm(env.get("PUSH_OFFER_TIME"), (19, 0))
+        self.gift_time = _parse_hhmm(env.get("PUSH_GIFT_TIME"), (13, 0))
         self.catch_up_hours = catch_up_hours
 
     @classmethod
@@ -199,6 +211,8 @@ class PushSchedule:
             due.append(("ebook_monthly", day_key))
         if self._is_due(paris_now, every_day, *self.offer_time):
             due.append(("premium_offer", day_key))
+        if self._is_due(paris_now, every_day, *self.gift_time):
+            due.append(("gift_question", day_key))
         return due
 
 
@@ -244,7 +258,9 @@ def push_tick(now_utc, store, sender, schedule=None):
             jobs = store.personal_guidance_jobs(now_utc)
         elif category == "premium_offer" and hasattr(store, "premium_offer_jobs"):
             jobs = store.premium_offer_jobs(now_utc)
-        elif category in ("personal_guidance", "premium_offer"):
+        elif category == "gift_question" and hasattr(store, "premium_offer_jobs"):
+            jobs = store.premium_offer_jobs(now_utc, GIFT_QUESTION_STEPS, "gift")
+        elif category in ("personal_guidance", "premium_offer", "gift_question"):
             jobs = []
         else:
             users = (store.recipients_for(category, now_utc)
@@ -432,7 +448,7 @@ class DbPushTickStore:
             c.execute(
                 "SELECT COUNT(*) FROM notification_sends "
                 "WHERE user_id=%s "
-                "AND category NOT IN ('wellbeing_daily', 'premium_offer') "
+                "AND category NOT IN ('wellbeing_daily', 'premium_offer', 'gift_question') "
                 "AND status IN ('sent', 'dry_run') "
                 "AND created_at >= %s",
                 (str(user_id), day_start.astimezone(timezone.utc)),
@@ -623,7 +639,7 @@ class DbPushTickStore:
         finally:
             conn.close()
 
-    def premium_offer_jobs(self, now_utc):
+    def premium_offer_jobs(self, now_utc, steps=None, period_prefix="offer"):
         """Offre exceptionnelle à J+2/6/13/30/60/90 de l'épuisement des
         minutes offertes (dernier débit `first_free`), comptes sans Premium
         actif, appareil actif. Une fois par palier (période `offer:jN`)."""
@@ -655,14 +671,14 @@ class DbPushTickStore:
                 if ended_at.tzinfo is None:
                     ended_at = ended_at.replace(tzinfo=timezone.utc)
                 age = (today - ended_at.astimezone(PARIS).date()).days
-                step = PREMIUM_OFFER_STEPS.get(age)
+                step = (steps or PREMIUM_OFFER_STEPS).get(age)
                 if step is None:
                     continue
                 advisor = str(guide or "").strip().lower()
                 name = _ADVISOR_NAMES.get(advisor) or "Ton guide"
                 title, body = step
                 jobs.append({
-                    "period": f"offer:j{age}",
+                    "period": f"{period_prefix}:j{age}",
                     "title": title.format(name=name),
                     "body": body.format(name=name),
                     "user_ids": [str(uid)],
