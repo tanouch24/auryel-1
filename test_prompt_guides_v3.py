@@ -165,3 +165,13 @@ def test_sketch_reply_trigger_no_longer_needs_whatsapp_onboarding_flag():
 def test_guide_never_invents_unsaid_context():
     p = _p()
     assert "Tu ne fais JAMAIS allusion à quelque chose que la personne ne t'a pas dit" in p
+
+
+def test_profil_astro_accepte_un_chemin_de_vie_entier():
+    # Prod 09/10/2026 : chemin_de_vie stocké en int -> AttributeError .strip()
+    # sur le premier message de chaque nouveau compte.
+    assert A._profil_astro_renseigne({"chemin_de_vie": 7}) is True
+    assert A._profil_astro_renseigne({"chemin_de_vie": "7"}) is True
+    assert A._profil_astro_renseigne({"signe_zodiaque": "Lion"}) is True
+    assert A._profil_astro_renseigne({"chemin_de_vie": None, "signe_zodiaque": ""}) is False
+    assert A._profil_astro_renseigne({}) is False

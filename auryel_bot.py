@@ -13704,6 +13704,16 @@ def _app_persist_emotional_context(user_id, message):
     )
 
 
+def _profil_astro_renseigne(user: dict) -> bool:
+    """Chemin de vie ou signe connu (l'esquisse d'accueil a pu être affichée).
+
+    09/10/2026 : `chemin_de_vie` arrive parfois en entier depuis la base ;
+    `.strip()` sur un int faisait planter le tout premier message du compte.
+    """
+    return bool(str(user.get("chemin_de_vie") or "").strip()
+                or str(user.get("signe_zodiaque") or "").strip())
+
+
 def get_reply_for_user_id(user_id, user_message, advisor_override=None, consultation_id=None,
                           tirage_context=None,
                           rewarded_micro=False):
@@ -13749,8 +13759,7 @@ def get_reply_for_user_id(user_id, user_message, advisor_override=None, consulta
     onboarding_profile_intro = (
         int(user.get("nb_echanges") or 0) == 0
         and (user.get("onboarding_profile_status") or "pending") == "pending"
-        and bool((user.get("chemin_de_vie") or "").strip()
-                 or (user.get("signe_zodiaque") or "").strip())
+        and _profil_astro_renseigne(user)
         and claim_onboarding_profile_intro(user_id)
     )
     log_event("user_message_received", phone_hash=_user_hash(user_id), guide=guide_key)
