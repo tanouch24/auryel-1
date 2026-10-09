@@ -61,6 +61,7 @@ ROOT_FILES=(
   style.css
   premium.css
   cookie-consent.js
+  offer-banner.js
   favicon.svg
   sitemap.xml
   robots.txt
