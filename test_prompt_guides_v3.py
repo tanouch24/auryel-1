@@ -94,3 +94,32 @@ def test_first_turn_still_strips_competing_blocks():
     p = _p("ezra", premier_tour_post_onboarding=True)
     assert A.BLOC_PROFIL_AUTRE_PERSONNE not in p
     assert "Tu es Ezra" in p
+
+
+def test_sketch_matches_app_text_exactly():
+    # Mêmes phrases que test/personality_sketch_test.dart côté app.
+    assert A.esquisse_personnalite("Taureau") == (
+        "J’ai déjà quelques intuitions sur toi. Je te vois comme quelqu’un "
+        "de fidèle, patient et attaché à ce qui est vrai."
+    )
+    assert "quelqu’un d’attentionné, précis et toujours là" in (
+        A.esquisse_personnalite("Vierge")
+    )
+    assert len(A._ESQUISSES_SIGNE) == 12
+    assert A.esquisse_personnalite("inconnu") == ""
+
+
+def test_first_reply_knows_the_sketch_it_already_showed():
+    user = dict(USER, signe_zodiaque="Taureau", chemin_de_vie="7")
+    p = A.get_system_prompt(user, "selena", onboarding_profile_intro=True)
+    assert A.esquisse_personnalite("Taureau") in p
+    assert "Ne refais pas d'esquisse" in p
+    assert "UNE question simple sur" in p
+
+
+def test_discovery_phase_only_when_asked():
+    assert "PHASE DÉCOUVERTE" not in _p()
+    p = _p(phase_decouverte=True)
+    assert "PHASE DÉCOUVERTE" in p
+    assert "jamais un questionnaire" in p
+    assert "qu'est-ce qui l'amène aujourd'hui" in p

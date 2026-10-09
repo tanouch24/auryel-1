@@ -4546,6 +4546,36 @@ def calcul_signe(date_iso):
             break
     return signe
 
+# Esquisse de personnalité du message d'accueil (09/10/2026). ⚠️ DUPLIQUÉE
+# côté app (lib/data/personality_sketch.dart, kSignTraits) qui l'affiche avant
+# le premier message : mêmes signes, mêmes trois traits, à garder identiques.
+_ESQUISSES_SIGNE = {
+    "Bélier": ("direct", "courageux", "plein d’élan"),
+    "Taureau": ("fidèle", "patient", "attaché à ce qui est vrai"),
+    "Gémeaux": ("curieux", "vif", "attentif aux autres"),
+    "Cancer": ("sensible", "protecteur", "très attentionné"),
+    "Lion": ("chaleureux", "généreux", "loyal"),
+    "Vierge": ("attentionné", "précis", "toujours là pour les autres"),
+    "Balance": ("doux", "juste", "à l’écoute"),
+    "Scorpion": ("intense", "fidèle", "plus sensible qu’il n’y paraît"),
+    "Sagittaire": ("optimiste", "sincère", "épris de liberté"),
+    "Capricorne": ("solide", "responsable", "plus tendre qu’on ne le croit"),
+    "Verseau": ("indépendant", "original", "profondément humain"),
+    "Poissons": ("intuitif", "gentil", "très empathique"),
+}
+
+
+def esquisse_personnalite(signe):
+    """Phrase exacte affichée par l'app pour ce signe, ou "" si inconnu."""
+    traits = _ESQUISSES_SIGNE.get(str(signe or "").strip())
+    if not traits:
+        return ""
+    premier = traits[0]
+    de = "d’" if re.match(r"^[aeiouyhâàéèêîïôûAEIOUYH]", premier) else "de "
+    return ("J’ai déjà quelques intuitions sur toi. Je te vois comme quelqu’un "
+            f"{de}{premier}, {traits[1]} et {traits[2]}.")
+
+
 def detecter_pas_les_moyens(message):
     msg = message.lower()
     return any(w in msg for w in ["pas les moyens","trop cher","pas d'argent","pas assez","budget"])
@@ -12156,7 +12186,8 @@ _FICHES_GUIDES = {
 def get_system_prompt(user, guide_key, premier_tour_post_onboarding=False,
                       proposer_rituel_concret=False, conversation_mode=None,
                       onboarding_profile_intro=False,
-                      onboarding_profile_feedback=False):
+                      onboarding_profile_feedback=False,
+                      phase_decouverte=False):
     guide = GUIDES.get(guide_key, GUIDES["selena"])
     prenom = user.get("prenom", "")
     genre = user.get("genre", "")
@@ -12283,15 +12314,45 @@ Cette personne traverse une période difficile depuis plusieurs échanges, mais 
     if onboarding_profile_intro:
         chemin = user.get("chemin_de_vie") or "non renseigné"
         signe = user.get("signe_zodiaque") or "non renseigné"
+        esquisse = esquisse_personnalite(signe)
+        if esquisse:
+            # 09/10/2026 : l'esquisse est DÉJÀ affichée par l'app dans ton
+            # message d'accueil ; ce premier message de la personne y répond.
+            PROMPT_MAITRE += (
+                "\n\n=== PREMIÈRE PRISE DE CONTACT — RÉPONSE À TON ESQUISSE ===\n"
+                f"Ton message d'accueil, déjà affiché, disait : « {esquisse} » "
+                "puis « Est-ce que ça te correspond ? Tu veux ajouter quelque "
+                f"chose ? » (signe {signe}, chemin de vie {chemin}).\n"
+                "Le message de la personne est sa réponse. Accueille-la en une ou "
+                "deux phrases : si elle se reconnaît, rebondis sur un trait ; si "
+                "elle corrige ou complète, prends ce qu'elle dit comme la "
+                "référence, sans défendre ton esquisse. Ne refais pas d'esquisse. "
+                "Puis commence à faire connaissance avec UNE question simple sur "
+                "son quotidien (par exemple avec qui elle vit, ou ce qui remplit "
+                "ses journées). Si elle arrive plutôt avec une vraie question ou "
+                "une émotion forte, réponds d'abord à ça et garde la découverte "
+                "pour plus tard."
+            )
+        else:
+            PROMPT_MAITRE += (
+                "\n\n=== PREMIÈRE PRISE DE CONTACT — PROFIL D'INSCRIPTION ===\n"
+                f"Données issues de l'inscription : chemin de vie {chemin}, signe {signe}.\n"
+                "Présente brièvement ce qui se dessine comme une HYPOTHÈSE, dans ta "
+                "propre voix. Ne dis jamais « tu es », « je sais que tu » ou « ta "
+                "personnalité est ». Puis demande naturellement si cela correspond "
+                "à la personne. Cette étape n'arrive qu'une fois."
+            )
+    if phase_decouverte:
         PROMPT_MAITRE += (
-            "\n\n=== PREMIÈRE PRISE DE CONTACT — PROFIL D'INSCRIPTION ===\n"
-            f"Données issues de l'inscription : chemin de vie {chemin}, signe {signe}.\n"
-            "Présente brièvement ce qui se dessine comme une HYPOTHÈSE, dans ta "
-            "propre voix et sans formulation identique aux autres conseillers. "
-            "Ne dis jamais « tu es », « je sais que tu » ou « ta personnalité est ». "
-            "Dis plutôt ce qui semble ressortir, puis demande naturellement si cela "
-            "correspond à la personne. Cette étape n'arrive qu'une fois et ne doit "
-            "pas être répétée lors des messages suivants."
+            "\n\n=== PHASE DÉCOUVERTE (début de votre relation) ===\n"
+            "Vous faites encore connaissance. Après avoir répondu à son message, "
+            "pose UNE question simple et chaleureuse sur son environnement, "
+            "sans redemander ce que tu sais déjà : avec qui elle vit, ce qui "
+            "remplit ses journées (travail, études), les personnes qui comptent "
+            "pour elle. Une seule question, jamais un questionnaire. Si elle "
+            "arrive avec une vraie question, une inquiétude ou une émotion, "
+            "réponds d'abord à ça. Au troisième échange de découverte, termine "
+            "plutôt par : qu'est-ce qui l'amène aujourd'hui ?"
         )
     if onboarding_profile_feedback:
         PROMPT_MAITRE += (
@@ -12937,6 +12998,13 @@ def _reply_core(user, key, user_message, io, *, depuis_pub=False,
         conversation_mode=_conversation_mode(user_message),
         onboarding_profile_intro=onboarding_profile_intro,
         onboarding_profile_feedback=onboarding_profile_feedback,
+        # Échanges 2 et 3 du compte (le 1er répond à l'esquisse d'accueil).
+        phase_decouverte=(
+            channel == "app"
+            and not moment_grave
+            and not onboarding_profile_intro
+            and 2 <= int(nb_echanges_actuel or 0) <= 3
+        ),
     )
     # B7 — mémoire inter-session par conseiller (chemin APP uniquement : l'accessor
     # est absent du _io legacy). Bloc de CONTINUITÉ compact, placé AVANT les blocs
