@@ -9,6 +9,9 @@
  *    quitte la page par le haut (ordinateur) ou après 40 s et la moitié de la
  *    page lue (mobile). Jamais sur les pages légales ni de paiement.
  *
+ * 3. Fenêtre de bienvenue « 20 minutes offertes » (une fois par jour, après
+ *    un temps de lecture), sans doublon avec la fenêtre « avant de partir ».
+ *
  * Aucun cookie, aucune donnée transmise : seulement localStorage /
  * sessionStorage pour ne pas réafficher.
  */
@@ -27,6 +30,7 @@
   function get(s, k) { try { return s ? s.getItem(k) : null; } catch (e) { return null; } }
   function set(s, k, v) { try { if (s) s.setItem(k, v); } catch (e) {} }
 
+  var shown = false;
   function track(name) {
     try { if (typeof window.gtag === "function") window.gtag("event", name, { offer: "premium_499" }); } catch (e) {}
   }
@@ -48,6 +52,13 @@
     ".aof-big{font-size:22px!important;margin:12px 0 4px!important}" +
     ".aof-cta{display:block;margin-top:18px;padding:15px 20px;border-radius:30px;background:linear-gradient(180deg,#E4CE88,#C6A24E);color:#120E17;font-weight:700;font-size:15px;text-decoration:none}" +
     ".aof-no{display:inline-block;margin-top:10px;background:none;border:0;color:#9A8FA6;font-size:13px;cursor:pointer;padding:6px}" +
+    ".aof-hero{display:flex;justify-content:center;margin:-6px 0 6px}" +
+    ".aof-phone{width:118px;border-radius:20px;padding:5px;background:linear-gradient(150deg,#2b2148,#100c16 70%);border:1px solid rgba(198,162,78,.35);box-shadow:0 18px 40px rgba(0,0,0,.5)}" +
+    ".aof-phone img{display:block;width:100%;height:150px;object-fit:cover;object-position:top;border-radius:15px}" +
+    ".aof-list{list-style:none;margin:14px 0 4px;padding:0;text-align:left;display:grid;gap:7px}" +
+    ".aof-list li{position:relative;padding-left:20px;font-size:13.5px;line-height:1.45;color:#CFC6D6}" +
+    ".aof-list li::before{content:'\\2726';position:absolute;left:0;top:1px;font-size:10px;color:#C6A24E}" +
+    ".aof-legal{font-size:11px!important;color:#9A8FA6!important;margin-top:10px!important}" +
     "@media(max-width:560px){.aof-bar{flex-wrap:nowrap;gap:7px;padding:8px 34px 8px 10px;font-size:11.5px;white-space:nowrap}" +
     ".aof-bar .aof-badge{display:none}.aof-extra{display:none}.aof-x{right:4px}.aof-box h2{font-size:26px}}";
 
@@ -99,8 +110,60 @@
     });
   }
 
+  // ── 2 bis. Fenêtre de bienvenue (09/10/2026) ────────────────────────────
+  // Comme dans l'appli : télécharger Auryel et profiter des 20 minutes
+  // offertes. Une fois par jour au plus, après un temps de lecture ; si elle
+  // a été vue, la fenêtre « avant de partir » ne s'affiche pas en plus.
+  function showWelcome() {
+    if (Number(get(local, "aof_welcome_until") || 0) > Date.now()) return;
+    if (get(session, "aof_exit_shown") || document.querySelector(".aof-ov")) return;
+    set(local, "aof_welcome_until", String(Date.now() + 864e5));
+    set(session, "aof_exit_shown", "1");
+    shown = true;
+    track("offer_welcome_shown");
+    var ov = document.createElement("div");
+    ov.className = "aof-ov";
+    ov.setAttribute("role", "dialog");
+    ov.setAttribute("aria-modal", "true");
+    ov.setAttribute("aria-label", "20 minutes offertes dans l’application Auryel");
+    ov.innerHTML =
+      '<div class="aof-box">' +
+      '<div class="aof-hero"><div class="aof-phone"><img src="/images/app/auryel-application-accueil.webp" alt="" width="540" height="1084"></div></div>' +
+      '<span class="aof-badge">20 MINUTES OFFERTES</span>' +
+      "<h2>Votre guide vous attend</h2>" +
+      "<p>Téléchargez l’application Auryel : vos 20 premières minutes de consultation sont offertes.</p>" +
+      '<ul class="aof-list"><li>Un guide attitré qui garde le fil de vos échanges</li><li>La pensée du jour et le réveil Auryel</li><li>L’Explorer : tarot, rêves, compatibilité…</li></ul>' +
+      '<a class="aof-cta" href="' + PLAY_URL + '" target="_blank" rel="noopener noreferrer">Télécharger sur Google Play</a>' +
+      '<button class="aof-no" type="button">Plus tard</button>' +
+      '<p class="aof-legal">Une seule fois par compte, sans moyen de paiement. Les réponses des guides sont générées par une IA.</p>' +
+      "</div>";
+    function close() {
+      ov.classList.remove("on");
+      setTimeout(function () { ov.remove(); }, 250);
+      document.removeEventListener("keydown", onKey);
+    }
+    function onKey(e) { if (e.key === "Escape") close(); }
+    ov.addEventListener("click", function (e) { if (e.target === ov) close(); });
+    ov.querySelector(".aof-no").addEventListener("click", close);
+    ov.querySelector(".aof-cta").addEventListener("click", function () { track("offer_welcome_click"); });
+    document.addEventListener("keydown", onKey);
+    document.body.appendChild(ov);
+    requestAnimationFrame(function () { ov.classList.add("on"); });
+    ov.querySelector(".aof-cta").focus();
+  }
+
+  function armWelcome() {
+    var start = Date.now(), done = false;
+    function tryShow() {
+      if (done) return;
+      var read = (scrollY + innerHeight) / Math.max(1, document.documentElement.scrollHeight);
+      if (Date.now() - start > 9000 && (read > 0.25 || Date.now() - start > 20000)) { done = true; showWelcome(); }
+    }
+    addEventListener("scroll", tryShow, { passive: true });
+    setTimeout(tryShow, 20500);
+  }
+
   // ── 2. Fenêtre avant de partir ──────────────────────────────────────────
-  var shown = false;
   function showExit() {
     if (shown || get(session, "aof_exit_shown")) return;
     if (document.querySelector(".aof-ov")) return;
@@ -155,6 +218,7 @@
   function init() {
     addStyle();
     showBar();
+    armWelcome();
     armExit();
   }
   if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", init);
