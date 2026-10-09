@@ -23,7 +23,7 @@
 .pc:hover{background:var(--card-h);border-bottom-color:var(--gold)}
 .pc.feat{background:linear-gradient(160deg,#1C1626,#241C30);border:1px solid rgba(198,162,78,.25)}
 .pc-badge{position:absolute;top:0;left:50%;transform:translateX(-50%);background:linear-gradient(135deg,var(--gold),var(--gold-b));color:var(--void);font-family:'Inter',system-ui,-apple-system,sans-serif;font-size:8px;letter-spacing:.3em;text-transform:uppercase;padding:7px 18px;font-weight:700;white-space:nowrap}
-.pc-trial{display:inline-block;background:rgba(93,206,160,.15);border:1px solid rgba(93,206,160,.3);color:#5DCEA0;font-size:10px;font-family:var(--fb);letter-spacing:.15em;text-transform:uppercase;padding:5px 14px;margin-bottom:20px}
+.pc-trial{display:inline-block;background:rgba(198,162,78,.15);border:1px solid rgba(198,162,78,.3);color:#E4CE88;font-size:10px;font-family:var(--fb);letter-spacing:.15em;text-transform:uppercase;padding:5px 14px;margin-bottom:20px}
 .pc-period{font-family:'Inter',system-ui,-apple-system,sans-serif;font-size:10px;letter-spacing:.35em;text-transform:uppercase;color:var(--gold);margin-bottom:24px}
 .pc-amount{display:flex;align-items:flex-start;margin-bottom:6px}
 .pc-curr{font-family:var(--fd);font-size:20px;color:var(--gold-b);margin-top:10px;margin-right:2px}
@@ -31,11 +31,11 @@
 .pc-dec{font-family:var(--fd);font-size:26px;color:var(--cream);align-self:flex-end;margin-bottom:6px}
 .pc-lbl{font-size:11px;color:var(--cd);margin-bottom:4px}
 .pc-eq{font-family:var(--fd);font-style:italic;font-size:13px;color:var(--gold);margin-bottom:6px}
-.pc-spread{font-family:'Inter',system-ui,-apple-system,sans-serif;font-size:11px;color:rgba(93,206,160,.75);margin-bottom:16px;letter-spacing:.02em}
+.pc-spread{font-family:'Inter',system-ui,-apple-system,sans-serif;font-size:11px;color:rgba(198,162,78,.75);margin-bottom:16px;letter-spacing:.02em}
 .pc-note{font-size:11px;color:var(--cd);margin-bottom:32px;line-height:1.6}
 .pc-cta{width:100%;padding:15px;background:linear-gradient(135deg,var(--gold),var(--gold-b));color:var(--void);border:none;font-family:var(--fb);font-size:10px;font-weight:500;letter-spacing:.22em;text-transform:uppercase;cursor:pointer;transition:all .3s;text-decoration:none;display:block;text-align:center;margin-top:auto}
 .pr-note{text-align:center;font-size:13px;color:var(--cd);line-height:1.8;max-width:600px;margin:0 auto}
-.pr-first-consult{display:inline-block;background:rgba(93,206,160,.12);border:1px solid rgba(93,206,160,.3);color:#5DCEA0;font-family:'Inter',system-ui,-apple-system,sans-serif;font-size:13px;letter-spacing:.05em;padding:10px 22px;margin-top:8px}
+.pr-first-consult{display:inline-block;background:rgba(198,162,78,.12);border:1px solid rgba(198,162,78,.3);color:#E4CE88;font-family:'Inter',system-ui,-apple-system,sans-serif;font-size:13px;letter-spacing:.05em;padding:10px 22px;margin-top:8px}
 @media(max-width:1100px){.pr-wrap{padding:40px 32px 80px}.pr-grid{grid-template-columns:1fr;gap:16px}.pc{border:1px solid var(--bdr)}}
 @keyframes orbFloat{0%,100%{transform:translate(0,0) scale(1)}50%{transform:translate(12px,-16px) scale(1.06)}}
 .o1{animation:orbFloat 14s ease-in-out infinite}
@@ -57,6 +57,7 @@
 </style>
 <!-- Google Analytics — chargé après consentement RGPD -->
 <script src="/cookie-consent.js"></script>
+<link rel="stylesheet" href="/premium.css">
 </head><body>
 <div class="cursor" id="cur"></div>
 <nav id="nav"><a href="/" class="n-logo">Auryel</a><ul class="n-links"><li><a href="/">Accueil</a></li><li><a href="/application">Application</a></li><li><a href="/guidance-spirituelle">Guidance</a></li><li><a href="/bien-etre">Bien-être</a></li><li><a href="/conseillers">Guides virtuels</a></li><li><a href="/tarifs" class="active">Tarifs</a></li><li><a href="/blog">Blog</a></li></ul><a href="/application" class="n-btn">Découvrir Auryel →</a><button class="n-ham" onclick="document.getElementById('nmob').classList.toggle('open')" aria-label="Menu"><span></span><span></span><span></span></button></nav>

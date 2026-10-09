@@ -1,0 +1,182 @@
+/* ══════════════════════════════════════════════════════════════════════
+   Auryel — couche premium commune (oct. 2026)
+   Chargée en dernier sur toutes les pages. Reprend l'univers de l'appli :
+   nuit violette, or doux, Cormorant Garamond pour l'affichage, Inter pour
+   le texte. Ne change ni les textes ni les liens.
+   ══════════════════════════════════════════════════════════════════════ */
+:root{
+  --void:#120E17;--deep:#171120;--surface:#1C1626;--card:#1C1626;--card-h:#241C30;
+  --gold:#C6A24E;--gold-b:#E4CE88;--gold-m:#A9863A;
+  --cream:#F0E9DA;--cs:#CFC6D6;--cd:#9A8FA6;
+  --bdr:rgba(198,162,78,.12);--bdrm:rgba(198,162,78,.28);
+  --glass:rgba(255,255,255,.04);--glass-b:rgba(255,255,255,.08);
+  --serif:'Cormorant Garamond',Georgia,serif;
+  --sans:'Inter',system-ui,-apple-system,'Segoe UI',sans-serif;
+  --radius:20px;
+}
+
+/* ── Fond : ciel de nuit discret, comme NightSkyBackground ── */
+body{
+  background:
+    radial-gradient(1200px 700px at 85% -10%,rgba(59,42,122,.42),transparent 60%),
+    radial-gradient(900px 600px at -10% 40%,rgba(59,42,122,.22),transparent 60%),
+    var(--void) !important;
+  background-attachment:fixed !important;
+  color:var(--cream);
+  font-family:var(--sans) !important;
+  -webkit-font-smoothing:antialiased;
+  text-rendering:optimizeLegibility;
+}
+body::before{
+  content:'';position:fixed;inset:0;pointer-events:none;z-index:-1;opacity:.55;
+  background-image:
+    radial-gradient(1px 1px at 12% 18%,rgba(228,206,136,.7),transparent 60%),
+    radial-gradient(1px 1px at 72% 12%,rgba(240,233,218,.6),transparent 60%),
+    radial-gradient(1.5px 1.5px at 38% 64%,rgba(228,206,136,.5),transparent 60%),
+    radial-gradient(1px 1px at 88% 48%,rgba(240,233,218,.5),transparent 60%),
+    radial-gradient(1px 1px at 22% 86%,rgba(240,233,218,.45),transparent 60%),
+    radial-gradient(1.5px 1.5px at 62% 82%,rgba(228,206,136,.4),transparent 60%),
+    radial-gradient(1px 1px at 52% 32%,rgba(240,233,218,.4),transparent 60%);
+  background-size:620px 620px;
+}
+body::after{opacity:.05 !important}
+.cursor,#cur{display:none !important}
+::selection{background:rgba(198,162,78,.35);color:var(--cream)}
+
+/* ── Typographie ── */
+h1,h2,h3,.pg-title,.art-title,.art-hero-title,.hd,.app-title,.rel-title,.related-title,
+.art-cta-title,.pg-link-title,.related-card-title,.bc-title,.feature h2,.feature h3,
+.press-card h3,.hiw-title,.step-title,.faq-q-title,.art-faq-title,.rs-title{
+  font-family:var(--serif) !important;
+  font-weight:500;
+  letter-spacing:-.005em !important;
+  color:var(--cream);
+}
+h1,.pg-title,.art-title,.art-hero-title,.app-title{font-weight:400 !important;line-height:1.08 !important}
+h1 em,h2 em,h3 em,.hd em,.pg-title em,.app-title em,.art-title em{
+  font-family:var(--serif) !important;font-style:italic;font-weight:400;color:var(--gold-b) !important;
+}
+p,li,dd,td,th,blockquote,.bt,.pg-lead,.pg-sub,.art-intro,.art-lead,.art-body,.app-lead,
+.faq-a p,.feature p,.pr-note,.bc-desc,.bc-ex{
+  font-family:var(--sans) !important;
+  font-style:normal;
+}
+.art-body p,.art-body li,.lb p,.lb li,.pg-sec p,.pg-sec li,.about-section p{
+  font-size:16.5px;line-height:1.8;color:var(--cs);
+}
+.art-intro,.art-lead,.pg-lead,.pg-sub,.app-lead,.h-t2{font-size:18px !important;line-height:1.75 !important;color:var(--cs) !important;font-weight:300}
+strong,b{color:var(--cream);font-weight:600}
+a{text-underline-offset:3px}
+.art-body a,.lb a,.pg-sec p a,.about-section a,.faq-a a{color:var(--gold-b);text-decoration:underline;text-decoration-color:rgba(228,206,136,.35)}
+
+/* Sur-titres (petites capitales espacées) */
+.ey,.eyebrow,.press-eyebrow,.art-cat,.art-hero-cat,.rel-cat,.related-card-cat,.pg-link-cat,
+.bc-cat,.bc-cat-pill,.app-kicker,.feature-num,.day-when,.art-cta-label{
+  font-family:var(--sans) !important;
+  font-size:11px !important;font-weight:500 !important;
+  letter-spacing:.24em !important;text-transform:uppercase;color:var(--gold) !important;
+}
+.rule{height:1px;width:56px;background:linear-gradient(to right,var(--gold),transparent) !important;border:0}
+
+/* Citations / encadrés */
+.hl,.pg-hl,.art-hl,blockquote{
+  font-family:var(--serif) !important;font-style:italic;font-size:22px !important;line-height:1.5 !important;
+  color:var(--cream) !important;border-left:1px solid var(--gold) !important;
+  background:linear-gradient(90deg,rgba(198,162,78,.07),transparent) !important;
+  padding:18px 24px !important;border-radius:0 14px 14px 0;
+}
+
+/* ── Menu ── */
+nav,#nav{
+  backdrop-filter:blur(18px);-webkit-backdrop-filter:blur(18px);
+}
+nav.sc,nav.solid,#nav.sc{background:rgba(18,14,23,.82) !important;border-bottom:1px solid var(--glass-b) !important}
+.n-logo{font-family:var(--serif) !important;font-size:17px !important;letter-spacing:.32em !important;color:var(--gold-b) !important}
+.n-links a{font-family:var(--sans) !important;font-size:12px !important;letter-spacing:.06em !important;text-transform:none !important;font-weight:400;white-space:nowrap}
+.n-links a.active,.n-links a:hover{color:var(--gold-b) !important}
+.n-mob{background:rgba(18,14,23,.97) !important;backdrop-filter:blur(24px)}
+.n-mob a{font-family:var(--serif) !important;font-size:28px !important;letter-spacing:0 !important;text-transform:none !important;color:var(--cream) !important}
+.n-mob-close{border-radius:999px !important;font-family:var(--sans) !important;font-size:12px !important;letter-spacing:.08em !important}
+
+/* ── Boutons : pilule dorée / contour ── */
+.n-btn,.nav-cta,.cta-p,.btn-gold,.art-cta-btn,.pc-cta,.sticky-mob-btn,.ac-sel-btn,.tarot-choice-cta,.pg-cta a.btn,.pg-cta-box a{
+  font-family:var(--sans) !important;font-size:12px !important;font-weight:600 !important;
+  letter-spacing:.1em !important;text-transform:uppercase;
+  border-radius:999px !important;
+  background:linear-gradient(135deg,#E7D08A,#C6A24E 55%,#A9863A) !important;
+  color:#1A1320 !important;border:0 !important;
+  padding:13px 26px !important;
+  box-shadow:0 10px 30px rgba(198,162,78,.18);
+  transition:transform .25s ease,box-shadow .25s ease !important;
+}
+.n-btn:hover,.cta-p:hover,.btn-gold:hover,.art-cta-btn:hover{transform:translateY(-1px);box-shadow:0 14px 40px rgba(198,162,78,.28)}
+.n-btn{padding:10px 20px !important;font-size:11px !important}
+.cta-g,.btn-bk,.cat-btn,.ac-cta a{
+  font-family:var(--sans) !important;font-size:12px !important;font-weight:500 !important;letter-spacing:.08em !important;
+  border-radius:999px !important;border:1px solid var(--bdrm) !important;background:transparent !important;color:var(--cream) !important;
+  padding:12px 22px !important;
+}
+.la,.rel-read,.bc-read{font-family:var(--sans) !important;font-size:12px !important;letter-spacing:.12em !important;text-transform:uppercase;color:var(--gold-b) !important}
+
+/* ── Cartes : verre, bords fins, coins arrondis ── */
+.feature,.pg-link-card,.rel-card,.related-card,.bc,.press-card,.hiw-card,.rs-tile,.pg-cta-box,
+.art-cta,.art-cta-box,.wellbeing-visual-card,.about-note,.tm-stat,.lb,.faq-item,.art-faq .faq-item{
+  border-radius:var(--radius) !important;
+}
+.feature,.pg-link-card,.rel-card,.related-card,.bc,.press-card,.hiw-card,.rs-tile,.wellbeing-visual-card{
+  background:var(--glass) !important;border:1px solid var(--glass-b) !important;overflow:hidden;
+  transition:border-color .3s ease,transform .3s ease,background .3s ease !important;
+}
+.feature:hover,.pg-link-card:hover,.rel-card:hover,.related-card:hover,.bc:hover,.press-card:hover{
+  border-color:var(--bdrm) !important;background:rgba(255,255,255,.06) !important;transform:translateY(-2px);
+}
+.pg-cta-box,.art-cta,.art-cta-box{
+  background:radial-gradient(circle at 50% 0%,rgba(59,42,122,.5),transparent 70%),var(--surface) !important;
+  border:1px solid var(--bdrm) !important;
+}
+.about-note{background:var(--glass) !important;border:1px solid var(--bdrm) !important;padding:20px 24px !important}
+.related-card-img,.bc-img,.art-hero-img{overflow:hidden}
+
+/* Questions fréquentes */
+.faq-item{background:var(--glass);border:1px solid var(--glass-b) !important;margin-bottom:10px;padding:0 22px}
+.faq-q,.faq-q-item button{font-family:var(--sans) !important;font-size:15px !important;letter-spacing:0 !important;text-transform:none !important;color:var(--cream) !important;font-weight:500}
+.faq-icon{color:var(--gold) !important}
+
+/* ── Articles ── */
+.art-hero-img img,.art-hero img{filter:saturate(.55) sepia(.18) brightness(.6) contrast(1.05)}
+.art-hero-overlay,.art-hero-ov{background:linear-gradient(to top,var(--void) 5%,rgba(18,14,23,.55) 55%,rgba(18,14,23,.25)) !important}
+.art-wrap,.art-body{max-width:720px;margin-left:auto;margin-right:auto}
+.art-body h2{font-size:clamp(28px,3vw,36px) !important;margin:56px 0 18px !important;line-height:1.15}
+.art-body h3{font-size:24px !important;margin:36px 0 12px !important}
+.art-body ul li::marker{color:var(--gold)}
+
+/* ── Pages légales ── */
+.lb{background:var(--glass);border:1px solid var(--glass-b);padding:28px 32px !important;margin-bottom:14px}
+.lb h2{font-family:var(--sans) !important;font-size:12px !important;letter-spacing:.2em !important;text-transform:uppercase;color:var(--gold) !important;margin-bottom:14px}
+
+/* ── Captures de l'appli ── */
+.product-device{border-radius:36px !important;box-shadow:0 40px 100px rgba(59,42,122,.45),0 0 0 1px rgba(198,162,78,.25) !important;overflow:hidden}
+
+/* ── Pied de page ── */
+footer{background:transparent !important;border-top:1px solid var(--glass-b) !important}
+.ft-trust{background:rgba(255,255,255,.02) !important}
+.fl2,.ft-logo{font-family:var(--serif) !important;letter-spacing:.3em !important;color:var(--gold-b) !important}
+.fct{font-family:var(--sans) !important;font-size:11px !important;letter-spacing:.2em !important;color:var(--gold) !important}
+.fli a,.ft-links a,.ft-legal a,.fdi a{font-family:var(--sans) !important;font-size:13px !important;color:var(--cd) !important;letter-spacing:0 !important;text-transform:none !important}
+.fli a:hover,.ft-links a:hover{color:var(--cream) !important}
+.ftag,.fcp{font-family:var(--sans) !important;color:var(--cd) !important}
+
+/* ── Animations discrètes ── */
+@media (prefers-reduced-motion:reduce){*{animation:none !important;transition:none !important}}
+
+/* ── Téléphone ── */
+@media(max-width:640px){
+  .art-body p,.art-body li,.lb p,.lb li,.pg-sec p,.pg-sec li{font-size:16px}
+  .lb{padding:22px 18px !important}
+  .hl,.pg-hl,.art-hl,blockquote{font-size:19px !important}
+}
+
+/* ── Tarifs ── */
+.pc{border-radius:24px !important;border:1px solid var(--bdrm) !important;background:radial-gradient(circle at 50% 0%,rgba(59,42,122,.45),transparent 70%),var(--surface) !important;box-shadow:0 30px 80px rgba(0,0,0,.35)}
+.pc-trial{border-radius:999px !important;color:var(--gold-b) !important;background:rgba(198,162,78,.1) !important;border:1px solid var(--bdrm) !important}
+.pc-amount,.pc-int{font-family:var(--serif) !important}
