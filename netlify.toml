@@ -289,15 +289,30 @@
   to = "/presse.html"
   status = 200
 
+# Anciennes pages du paiement en ligne (Stripe) -> application (09/10/2026)
 [[redirects]]
   from = "/success"
-  to = "/success.html"
-  status = 200
+  to = "/application"
+  status = 301
+  force = true
+
+[[redirects]]
+  from = "/success.html"
+  to = "/application"
+  status = 301
+  force = true
 
 [[redirects]]
   from = "/payer"
-  to = "/payer.html"
-  status = 200
+  to = "/application"
+  status = 301
+  force = true
+
+[[redirects]]
+  from = "/payer.html"
+  to = "/application"
+  status = 301
+  force = true
 
 # ── Clean URLs : pages légales (200 rewrite) ────────────────────────────────
 # ── Doublons SEO blog : /blog/<slug>.html → /blog/<slug> (301 forcé, AVANT les rewrites 200) ─

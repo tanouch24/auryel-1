@@ -75,8 +75,8 @@ ROOT_FILES=(
 ROOT_DIRS=(
   blog
   images
-  videos
 )
+# (videos/ retiré le 09/10/2026 : les démos montraient de mauvais écrans.)
 
 # 1. Repartir d'un _site/ propre. On ne supprime QUE le dossier genere.
 rm -rf "$OUT"
