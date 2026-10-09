@@ -180,3 +180,108 @@ footer{background:transparent !important;border-top:1px solid var(--glass-b) !im
 .pc{border-radius:24px !important;border:1px solid var(--bdrm) !important;background:radial-gradient(circle at 50% 0%,rgba(59,42,122,.45),transparent 70%),var(--surface) !important;box-shadow:0 30px 80px rgba(0,0,0,.35)}
 .pc-trial{border-radius:999px !important;color:var(--gold-b) !important;background:rgba(198,162,78,.1) !important;border:1px solid var(--bdrm) !important}
 .pc-amount,.pc-int{font-family:var(--serif) !important}
+
+/* ── Écrans de l'appli dans des téléphones (09/10/2026) ──
+   .phones > figure.phone (+ .phone--lead au centre). Défilement horizontal
+   sur mobile, sans débordement de la page. */
+.app-peek{padding:110px 24px 120px;position:relative;overflow:hidden;background:radial-gradient(700px 420px at 50% 62%,rgba(59,42,122,.38),transparent 70%)}
+.app-peek .sec-hd{margin-bottom:64px}
+.app-peek .sec-hd p{font-size:15px;line-height:1.75;color:var(--cs);margin-top:18px}
+.phones{display:flex;justify-content:center;align-items:flex-end;gap:40px;max-width:1080px;margin:0 auto}
+.phone{flex:0 0 auto;width:240px;margin:0;text-align:center}
+.phone-frame{border-radius:38px;padding:9px;background:linear-gradient(150deg,#2b2148,#100c16 70%);border:1px solid rgba(198,162,78,.32);box-shadow:0 38px 90px rgba(0,0,0,.55),0 0 70px rgba(59,42,122,.28)}
+.phone-frame img{display:block;width:100%;height:auto;border-radius:30px}
+.phone--lead{width:280px}
+.phone--lead .phone-frame{box-shadow:0 46px 110px rgba(0,0,0,.6),0 0 110px rgba(198,162,78,.16)}
+.phone figcaption{margin-top:26px;font-family:var(--serif);font-size:22px;color:var(--cream);line-height:1.2}
+.phone figcaption span{display:block;margin-top:8px;font-family:var(--sans);font-size:13px;color:var(--cd);line-height:1.6}
+@media(max-width:820px){
+  .app-peek{padding:80px 0 90px}
+  .app-peek .sec-hd{padding:0 24px;margin-bottom:40px}
+  .phones{justify-content:flex-start;align-items:flex-start;overflow-x:auto;scroll-snap-type:x mandatory;gap:20px;padding:4px 16vw 12px;scrollbar-width:none}
+  .phones::-webkit-scrollbar{display:none}
+  .phone,.phone--lead{width:68vw;max-width:280px;scroll-snap-align:center}
+  .phone--lead{order:-1}
+}
+
+/* ── Formules (page Tarifs, 09/10/2026) ── */
+.plans{display:grid;grid-template-columns:repeat(3,1fr);gap:22px;max-width:1040px;margin:0 auto;align-items:stretch}
+.plan{position:relative;display:flex;flex-direction:column;padding:38px 32px 34px;border-radius:24px;background:rgba(255,255,255,.035);border:1px solid rgba(255,255,255,.08)}
+.plan--lead{background:linear-gradient(165deg,rgba(59,42,122,.55),rgba(28,22,38,.9) 60%);border:1px solid rgba(198,162,78,.45);box-shadow:0 30px 90px rgba(0,0,0,.45),0 0 80px rgba(198,162,78,.08)}
+.plan-badge{position:absolute;top:-12px;left:50%;transform:translateX(-50%);padding:6px 16px;border-radius:999px;background:linear-gradient(135deg,var(--gold),var(--gold-b));color:var(--void);font-family:var(--sans);font-size:10px;font-weight:700;letter-spacing:.18em;text-transform:uppercase;white-space:nowrap}
+.plan-name{font-family:var(--sans);font-size:11px;letter-spacing:.26em;text-transform:uppercase;color:var(--gold)}
+.plan-price{margin:18px 0 4px;font-family:var(--serif);font-size:58px;line-height:1;color:var(--cream)}
+.plan-price small{font-size:20px;color:var(--cd);margin-left:6px;white-space:nowrap}
+.plan-price{white-space:nowrap}
+.plan-sub{font-size:13px;color:var(--cd);min-height:20px}
+.plan ul{list-style:none;margin:26px 0 30px;padding:0;display:flex;flex-direction:column;gap:12px;flex:1}
+.plan li{margin:0}
+.plan li{position:relative;padding-left:24px;font-size:14px;line-height:1.55;color:var(--cs)}
+.plan li::before{content:'✦';position:absolute;left:0;top:1px;font-size:11px;color:var(--gold)}
+.plan-cta{display:block;text-align:center;padding:14px 20px;border-radius:999px;border:1px solid var(--bdrm);color:var(--gold-b);font-family:var(--sans);font-size:11px;font-weight:600;letter-spacing:.16em;text-transform:uppercase;text-decoration:none;transition:background .3s,color .3s}
+.plan-cta:hover{background:rgba(198,162,78,.12)}
+.plan--lead .plan-cta{background:linear-gradient(135deg,var(--gold),var(--gold-b));color:var(--void);border:0}
+.plans-foot{max-width:760px;margin:30px auto 0;text-align:center;font-size:13px;line-height:1.7;color:var(--cd)}
+.plans-foot a{color:var(--gold)}
+.faq-list{max-width:760px;margin:0 auto;display:grid;gap:12px}
+.faq-list details{border-radius:16px;background:rgba(255,255,255,.035);border:1px solid rgba(255,255,255,.08);padding:0 24px}
+.faq-list summary{cursor:pointer;list-style:none;padding:20px 30px 20px 0;position:relative;font-size:15px;color:var(--cream)}
+.faq-list summary::-webkit-details-marker{display:none}
+.faq-list summary::after{content:'+';position:absolute;right:0;top:16px;font-size:22px;color:var(--gold);transition:transform .25s}
+.faq-list details[open] summary::after{transform:rotate(45deg)}
+.faq-list details p{margin:0 0 20px;font-size:14px;line-height:1.75;color:var(--cs)}
+.faq-list details a{color:var(--gold)}
+.sec-title{font-family:var(--serif);font-size:clamp(30px,4vw,44px);font-weight:400;color:var(--cream);text-align:center;margin:0 0 36px}
+.sec-title em{color:var(--gold-b)}
+@media(max-width:900px){.plans{grid-template-columns:1fr;max-width:440px}.plan--lead{order:-1}}
+
+/* ── Cartes guides (page Guides) : au survol, le bouton remplace la
+   description au lieu de s'y superposer (09/10/2026) ── */
+.ac-desc{transition:opacity .3s}
+.ac:hover .ac-desc{opacity:0 !important}
+.ac-cta a,.ac-cta .btn-bk{background:rgba(18,14,23,.82);backdrop-filter:blur(6px)}
+
+/* ── Visuel d'en-tête des pages de contenu (09/10/2026) ──
+   section.has-media + figure.hero-media (arche photo ou téléphone). */
+.has-media{display:grid !important;grid-template-columns:minmax(0,1fr) auto;align-items:center;column-gap:72px;max-width:1240px !important;margin-left:auto !important;margin-right:auto !important}
+.hero-media{margin:0;position:relative;z-index:1;justify-self:end}
+.hero-media::before{content:'✦';position:absolute;top:-34px;left:50%;transform:translateX(-50%);color:var(--gold-b);font-size:18px;text-shadow:0 0 18px rgba(228,206,136,.6)}
+.hero-arch{width:320px;aspect-ratio:3/4;border-radius:999px 999px 28px 28px;overflow:hidden;border:1px solid rgba(198,162,78,.45);box-shadow:0 40px 100px rgba(0,0,0,.5),0 0 90px rgba(59,42,122,.45)}
+.hero-arch img{width:100%;height:100%;object-fit:cover;display:block}
+.hero-media .phone-frame{width:250px}
+@media(max-width:900px){
+  .has-media{grid-template-columns:1fr;row-gap:56px}
+  .hero-media{justify-self:center}
+  .hero-arch{width:230px}
+  .hero-media .phone-frame{width:210px}
+}
+/* Bande d'écrans au milieu d'un long texte */
+.inline-peek{margin:64px 0;padding:44px 0 36px;border-top:1px solid var(--bdr);border-bottom:1px solid var(--bdr);text-align:center}
+.inline-peek .ip-ey{font-family:var(--sans);font-size:11px;letter-spacing:.26em;text-transform:uppercase;color:var(--gold)}
+.inline-peek .ip-title{font-family:var(--serif);font-size:30px;color:var(--cream);margin:10px 0 34px;line-height:1.2}
+.inline-peek .ip-title em{color:var(--gold-b)}
+.inline-peek .phones{gap:22px}
+.inline-peek .phone{width:190px}.inline-peek .phone--lead{width:215px}
+.inline-peek .phone figcaption{font-size:18px;margin-top:16px}
+@media(max-width:820px){.inline-peek .phones{margin:0 -20px}.inline-peek .phone,.inline-peek .phone--lead{width:60vw}}
+
+/* ── Pied de page plus compact (09/10/2026) ── */
+.inline-peek .ip-title{font-family:var(--serif) !important;font-weight:400}
+@media(min-width:1101px){
+  footer{padding:80px 64px 40px !important}
+  .ft{grid-template-columns:1.6fr repeat(5,1fr) !important;gap:40px !important;margin-bottom:56px !important}
+}
+@media(min-width:641px) and (max-width:1100px){.ft{grid-template-columns:repeat(3,1fr) !important;gap:36px !important}}
+@media(max-width:640px){.ft{grid-template-columns:1fr 1fr !important;gap:32px 20px !important}.ft>div:first-child{grid-column:1/-1}}
+.fli li{margin-bottom:10px}
+.fli a{font-size:13px}
+/* Bandeau de confiance (accueil) plus lisible */
+.ft-ti-label{font-size:10px !important;letter-spacing:.22em !important}
+.ft-ti-val{font-size:13px !important;color:var(--cs) !important}
+.ft-store{display:inline-block;margin-top:22px}
+.ft-store img{display:block;width:150px;height:auto;opacity:.92;transition:opacity .3s}
+.ft-store:hover img{opacity:1}
+/* Liens sans style : or au lieu du bleu du navigateur (spécificité nulle) */
+:where(a:not([class])){color:var(--gold-b)}
+footer .ft{text-align:left}
+@media(max-width:640px){footer .ft{text-align:left}}
