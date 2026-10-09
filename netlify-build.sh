@@ -59,6 +59,7 @@ ROOT_FILES=(
   inscription.html
   404.html
   style.css
+  premium.css
   cookie-consent.js
   favicon.svg
   sitemap.xml

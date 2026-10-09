@@ -117,14 +117,14 @@
 <link rel="icon" href="favicon.svg" type="image/svg+xml">
 <link rel="stylesheet" href="style.css">
 <link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Cinzel:wght@400;500&family=Cinzel+Decorative:wght@400&family=Lora:ital,wght@0,400;0,500;1,400&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,400;0,500;0,600;1,400;1,500&family=Inter:wght@300;400;500;600&display=swap" rel="stylesheet">
 <script src="/cookie-consent.js" defer></script>
 <style>
 .pg-hero{padding:180px 64px 80px;position:relative;overflow:hidden}
-.pg-hero::before{content:"";position:absolute;inset:0;background:radial-gradient(ellipse 60% 60% at 50% 100%,rgba(107,33,168,.18) 0%,transparent 60%)}
+.pg-hero::before{content:"";position:absolute;inset:0;background:radial-gradient(ellipse 60% 60% at 50% 100%,rgba(59,42,122,.18) 0%,transparent 60%)}
 .orb{position:absolute;border-radius:50%;filter:blur(80px);pointer-events:none}
-.o1{width:500px;height:500px;background:radial-gradient(circle,rgba(107,33,168,.12),transparent 70%);bottom:-100px;left:-80px}
-.o2{width:350px;height:350px;background:radial-gradient(circle,rgba(212,175,55,.07),transparent 70%);top:5%;right:-50px}
+.o1{width:500px;height:500px;background:radial-gradient(circle,rgba(59,42,122,.12),transparent 70%);bottom:-100px;left:-80px}
+.o2{width:350px;height:350px;background:radial-gradient(circle,rgba(198,162,78,.07),transparent 70%);top:5%;right:-50px}
 .pg-hero-in{max-width:800px;position:relative;z-index:1}
 .pg-badge{font-size:10px;letter-spacing:.35em;text-transform:uppercase;color:var(--gold);margin-bottom:20px;display:block}
 .pg-h1{font-family:var(--fd);font-size:clamp(40px,5.5vw,72px);font-weight:400;line-height:1.1;color:var(--cream);margin-bottom:24px}
@@ -136,7 +136,7 @@
 .pg-sec p{font-family:var(--fs);font-size:15.5px;color:var(--cs);line-height:1.9;margin-bottom:16px}
 .pg-sec ul{margin:0 0 20px 20px}
 .pg-sec li{font-family:var(--fs);font-size:15px;color:var(--cs);line-height:1.85;margin-bottom:8px}
-.pg-hl{background:rgba(212,175,55,.07);border-left:3px solid var(--gold);padding:20px 24px;border-radius:0 4px 4px 0;margin:28px 0}
+.pg-hl{background:rgba(198,162,78,.07);border-left:3px solid var(--gold);padding:20px 24px;border-radius:0 4px 4px 0;margin:28px 0}
 .pg-hl p{margin:0;color:var(--cream);font-style:italic;font-family:var(--fs)}
 .pg-faq{max-width:860px;margin:0 auto;padding:0 64px 40px}
 .pg-faq h2{font-family:var(--fd);font-size:20px;font-weight:400;color:var(--cream);margin-bottom:28px;letter-spacing:.04em}
@@ -145,22 +145,23 @@
 .faq-q{font-family:var(--fd);font-size:15px;color:var(--gold-b);margin-bottom:10px;letter-spacing:.02em}
 .faq-a{font-family:var(--fs);font-size:14.5px;color:var(--cs);line-height:1.88}
 .pg-cta{max-width:860px;margin:0 auto;padding:0 64px 60px}
-.pg-cta-box{background:linear-gradient(135deg,rgba(107,33,168,.22),rgba(212,175,55,.07));border:1px solid var(--bdr);border-radius:8px;padding:48px 40px;text-align:center}
+.pg-cta-box{background:linear-gradient(135deg,rgba(59,42,122,.22),rgba(198,162,78,.07));border:1px solid var(--bdr);border-radius:8px;padding:48px 40px;text-align:center}
 .pg-cta-box h3{font-family:var(--fd);font-size:24px;font-weight:400;color:var(--cream);margin-bottom:12px}
 .pg-cta-box p{font-family:var(--fs);font-size:15px;color:var(--cs);margin-bottom:28px}
-.pg-cta-box a{display:inline-block;background:linear-gradient(135deg,var(--gold),var(--gold-b));color:var(--void);font-family:var(--fd);font-size:12px;letter-spacing:.15em;padding:16px 40px;border-radius:2px;font-weight:600;text-decoration:none}
+.pg-cta-box a{display:inline-block;background:linear-gradient(135deg,var(--gold),var(--gold-b));color:var(--void);font-family:'Inter',system-ui,-apple-system,sans-serif;font-size:12px;letter-spacing:.15em;padding:16px 40px;border-radius:2px;font-weight:600;text-decoration:none}
 .pg-links{max-width:860px;margin:0 auto;padding:0 64px 80px}
-.pg-links h2{font-family:var(--fd);font-size:12px;letter-spacing:.25em;text-transform:uppercase;color:var(--cd);margin-bottom:24px}
+.pg-links h2{font-family:'Inter',system-ui,-apple-system,sans-serif;font-size:12px;letter-spacing:.25em;text-transform:uppercase;color:var(--cd);margin-bottom:24px}
 .pg-links-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:16px}
 .pg-link-card{border:1px solid var(--bdr);border-radius:6px;padding:20px;text-decoration:none;display:block;transition:border-color .2s}
 .pg-link-card:hover{border-color:var(--gold)}
-.pg-link-cat{font-size:9px;letter-spacing:.3em;text-transform:uppercase;color:var(--gold);display:block;margin-bottom:8px;font-family:var(--fd)}
+.pg-link-cat{font-size:9px;letter-spacing:.3em;text-transform:uppercase;color:var(--gold);display:block;margin-bottom:8px;font-family:'Inter',system-ui,-apple-system,sans-serif}
 .pg-link-title{font-family:var(--fd);font-size:13px;color:var(--cream);line-height:1.4}
 .reveal{opacity:0;transform:translateY(20px);transition:opacity .6s ease,transform .6s ease}
 .reveal.visible{opacity:1;transform:none}
 @media(max-width:1100px){.pg-hero{padding:160px 32px 60px}.pg-wrap,.pg-faq,.pg-cta,.pg-links{padding-left:32px;padding-right:32px}}
 @media(max-width:640px){.pg-hero{padding:130px 20px 48px}.pg-wrap,.pg-faq,.pg-cta,.pg-links{padding-left:20px;padding-right:20px}.pg-links-grid{grid-template-columns:1fr}.pg-h1{font-size:36px}}
 </style>
+<link rel="stylesheet" href="/premium.css">
 </head>
 <body>
 <div class="cursor" id="cur"></div>
@@ -172,7 +173,7 @@
 <div class="pg-hero-in">
 <span class="pg-badge">Tchat · Messagerie · Confidentialité</span>
 <h1 class="pg-h1">Voyance par chat :<br><em>une guidance écrite, à votre rythme</em></h1>
-<p class="pg-lead">Vous avez besoin d'un regard extérieur sur ce que vous traversez — en amour, au travail, ou dans votre vie intérieure. Dans l’application Auryel, vous choisissez un profil virtuel et échangez par messages pendant une consultation privée dont le temps est décompté selon l’utilisation réelle.</p>
+<p class="pg-lead">Vous avez besoin d'un regard extérieur sur ce que vous traversez — en amour, au travail, ou dans votre vie intérieure. Dans l’application Auryel, vous choisissez un guide virtuel et échangez par messages pendant une consultation privée dont le temps est décompté selon l’utilisation réelle.</p>
 </div>
 </section>
 
@@ -220,7 +221,7 @@
 <p>Les questions professionnelles — changer d'emploi ou rester en poste, lancer un projet ou attendre, faire confiance à un associé ou rester sur ses gardes — sont parmi les consultations les plus fréquentes, après les questions sentimentales. Ces décisions engagent parfois des années de vie, et l'incertitude peut être paralysante quand les analyses purement rationnelles ne donnent pas de réponse claire.</p>
 <p>La guidance professionnelle par chat ne remplace pas un coaching de carrière ni une analyse de marché. Elle apporte une perspective complémentaire : une lecture des énergies en jeu, une évaluation intuitive du timing, une clarification sur ce que vous désirez vraiment derrière l'objectif apparent. Parfois, ce que nous croyons vouloir professionnellement cache un besoin plus profond — reconnaissance, liberté, stabilité. La voyance peut aider à nommer ce besoin avant de prendre une décision.</p>
 <p>Le format chat est ici aussi un avantage. Vous pouvez préparer votre message avec soin, exposer le contexte et décrire les options que vous envisagez. La réponse reçue sera d’autant plus contextualisée que votre description est précise. Vous pouvez ensuite relire cette guidance au moment où vous êtes confronté à la décision.</p>
-<p>Si vous êtes à un carrefour professionnel — hésitation entre deux chemins, projet qui attire mais peur qui retient, transition difficile à gérer — une consultation par tchat peut offrir la clarté que les tableaux de pour/contre ne donnent pas toujours. <a href="/application" style="color:var(--gold-b);text-decoration:none">Utilisez les 20 minutes offertes au premier démarrage</a> pour poser votre question à un profil virtuel spécialisé.</p>
+<p>Si vous êtes à un carrefour professionnel — hésitation entre deux chemins, projet qui attire mais peur qui retient, transition difficile à gérer — une consultation par tchat peut offrir la clarté que les tableaux de pour/contre ne donnent pas toujours. <a href="/application" style="color:var(--gold-b);text-decoration:none">Utilisez les 20 minutes offertes au premier démarrage</a> pour poser votre question à un guide virtuel spécialisé.</p>
 </div>
 
 <div class="pg-sec reveal">
@@ -255,7 +256,7 @@
 <div class="pg-sec reveal">
 <h2>Comment bien démarrer sa première guidance par tchat</h2>
 <p>Si vous n'avez jamais consulté un voyant par chat, voici comment tirer le meilleur parti de votre première expérience.</p>
-<p>Commencez par <a href="/conseillers" style="color:var(--gold-b);text-decoration:none">choisir le profil de votre choix</a>. Lisez attentivement les descriptions — chaque profil virtuel a une spécialité et un style de réponse. Séléna pour les questions sentimentales directes, Orion pour les décisions professionnelles, Luna pour les périodes de transition, Cassandre pour les situations de crise. Ne choisissez pas au hasard : le bon conseiller pour votre question n'est pas forcément le même que pour une autre.</p>
+<p>Commencez par <a href="/conseillers" style="color:var(--gold-b);text-decoration:none">choisir le profil de votre choix</a>. Lisez attentivement les descriptions — chaque guide virtuel a une spécialité et un style de réponse. Séléna pour les questions sentimentales directes, Orion pour les décisions professionnelles, Luna pour les périodes de transition, Cassandre pour les situations de crise. Ne choisissez pas au hasard : le bon conseiller pour votre question n'est pas forcément le même que pour une autre.</p>
 <p>Rédigez votre premier message avec soin. Prenez le temps de décrire votre situation avec précision — le contexte, ce que vous ressentez, ce que vous cherchez à comprendre. Évitez les questions trop vagues comme "qu'est-ce que l'avenir me réserve ?" au profit de questions ciblées : "comment interpréter le comportement de X depuis deux semaines ?", "est-ce le bon moment pour prendre cette décision ?", "que lisez-vous dans cette relation ?".</p>
 <p>Attendez la réponse dans un état d'ouverture. La guidance est parfois confortable, parfois inconfortable. Les deux sont utiles. Une réponse qui confirme ce que vous espériez peut être rassurante. Une réponse qui propose une perspective différente de la vôtre peut être plus précieuse encore — si vous lui laissez la place d'être entendue.</p>
 <p>Votre 20 minutes offertes au premier démarrage est proposée une fois par compte. Ensuite, l’abonnement <a href="/tarifs" style="color:var(--gold-b);text-decoration:none">Premium</a> coûte 4,99 €/mois et comprend 4 heures de consultation par mois.</p>
@@ -281,7 +282,7 @@
 <div class="pg-cta">
 <div class="pg-cta-box">
 <h3>Consulter par chat dès ce soir</h3>
-<p>Voyance par chat dans l’application — 10 profils virtuels, avec 20 minutes offertes au premier démarrage, puis Premium à 4,99 €/mois.</p>
+<p>Voyance par chat dans l’application — 10 guides virtuels, avec 20 minutes offertes au premier démarrage, puis Premium à 4,99 €/mois.</p>
 <a href="/application">Découvrir l’application →</a>
 </div>
 </div>

@@ -37,39 +37,41 @@
       window.removeEventListener('resize', syncBannerOffset);
     }
     function syncBannerOffset() {
-      document.documentElement.style.setProperty('--cookie-banner-offset', banner.offsetHeight + 'px');
+      document.documentElement.style.setProperty('--cookie-banner-offset', (banner.offsetHeight + 24) + 'px');
     }
     var banner = document.createElement('div');
     banner.id = 'cookie-banner';
     banner.style.cssText = [
-      'position:fixed;bottom:0;left:0;right:0',
-      'background:#0D0918',
-      'border-top:1px solid rgba(200,169,110,0.18)',
-      'padding:14px 24px',
+      'position:fixed;bottom:12px;left:12px;right:12px',
+      'max-width:760px;margin:0 auto',
+      'background:rgba(28,22,38,0.97)',
+      'border:1px solid rgba(198,162,78,0.28)',
+      'border-radius:18px',
+      'padding:16px 20px',
       'z-index:99999',
-      'box-shadow:0 -4px 32px rgba(0,0,0,0.5)'
+      'box-shadow:0 20px 60px rgba(0,0,0,0.55)'
     ].join(';');
     banner.innerHTML = [
       '<div style="max-width:900px;margin:0 auto;display:flex;align-items:center;',
       'gap:20px;flex-wrap:wrap;justify-content:space-between">',
-      '<p style="margin:0;font-size:13px;font-family:Lora,Georgia,serif;',
-      'color:#9C8E7A;line-height:1.55;flex:1;min-width:220px">',
+      '<p style="margin:0;font-size:13px;font-family:Inter,system-ui,sans-serif;',
+      'color:#CFC6D6;line-height:1.55;flex:1;min-width:220px">',
       'Nous utilisons Google Analytics et le pixel Meta (Facebook/Instagram) pour mesurer ',
       'l\'audience du site et l\'efficacité de nos campagnes publicitaires. ',
-      '<a href="/confidentialite" style="color:#C8A96E;text-decoration:none">',
+      '<a href="/confidentialite" style="color:#E4CE88;text-decoration:underline">',
       'En savoir plus</a>.',
       '</p>',
       '<div style="display:flex;gap:10px;flex-shrink:0">',
       '<button id="cb-accept" style="',
-      'background:linear-gradient(135deg,#C8A96E,#E2C98A);',
-      'color:#04020A;border:none;padding:9px 22px;',
-      'font-family:Cinzel,serif;font-size:11px;letter-spacing:1.5px;',
-      'cursor:pointer;font-weight:700">ACCEPTER</button>',
+      'background:transparent;color:#F0E9DA;',
+      'border:1px solid rgba(198,162,78,0.6);border-radius:999px;padding:10px 22px;',
+      'font-family:Inter,system-ui,sans-serif;font-size:12px;letter-spacing:.08em;',
+      'cursor:pointer;font-weight:600">Accepter</button>',
       '<button id="cb-refuse" style="',
-      'background:transparent;color:#5E5247;',
-      'border:1px solid rgba(200,169,110,0.2);padding:9px 22px;',
-      'font-family:Cinzel,serif;font-size:11px;letter-spacing:1.5px;',
-      'cursor:pointer">REFUSER</button>',
+      'background:transparent;color:#F0E9DA;',
+      'border:1px solid rgba(198,162,78,0.6);border-radius:999px;padding:10px 22px;',
+      'font-family:Inter,system-ui,sans-serif;font-size:12px;letter-spacing:.08em;',
+      'cursor:pointer;font-weight:600">Refuser</button>',
       '</div></div>'
     ].join('');
     document.body.appendChild(banner);
