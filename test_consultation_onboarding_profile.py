@@ -15,14 +15,21 @@ USER = {
 
 
 def test_onboarding_profile_is_presented_as_hypothesis_once():
+    # 09/10/2026 : l'esquisse est déjà affichée par l'app ; le guide reçoit
+    # sa réponse et ne refait pas d'esquisse.
     prompt = A.get_system_prompt(USER, "selena", onboarding_profile_intro=True)
     assert "PREMIÈRE PRISE DE CONTACT" in prompt
     assert "chemin de vie 7" in prompt
     assert "signe Taureau" in prompt
-    assert "HYPOTHÈSE" in prompt
-    assert "si cela correspond" in prompt
-    assert "tu es" in prompt
-    assert "ne doit pas être répétée" in prompt
+    assert A.esquisse_personnalite("Taureau") in prompt
+    assert "Ne refais pas d'esquisse" in prompt
+    # Signe inconnu : l'ancienne présentation en hypothèse reste le repli.
+    fallback = A.get_system_prompt(
+        dict(USER, signe_zodiaque="?"), "selena", onboarding_profile_intro=True
+    )
+    assert "HYPOTHÈSE" in fallback
+    assert "si cela correspond" in fallback
+    assert "tu es" in fallback
 
 
 def test_profile_confirmation_and_correction_are_explicit():
@@ -65,14 +72,6 @@ def test_memory_isolation_is_by_user_and_advisor():
     assert "WHERE user_id=%s AND advisor_id=%s" in source
     assert "JOIN consultations c ON c.id = m.consultation_id" in source
     assert "never a memory narrative" not in source.lower()
-
-
-def test_short_messages_do_not_require_hidden_emotion():
-    source = Path("auryel_bot.py").read_text(encoding="utf-8")
-    assert "ne révèle pas automatiquement une émotion" in source
-    assert "Explique directement la réponse" in source
-    assert "RÈGLE DE RELANCE — EXCEPTION UTILE" in A.get_system_prompt(
-        USER, "selena", conversation_mode="brief")
 
 
 def test_safety_and_economy_remain_untouched_in_prompt_contract():

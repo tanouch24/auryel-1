@@ -635,6 +635,9 @@ class _GuidanceCursor:
         if "FROM consultations c" in compact:
             self.one = (1,) if self.state.get("active_consultation") else None
             return
+        if "FROM time_ledger l" in compact:
+            # Relance « fin des minutes offertes » : aucun compte concerné ici.
+            return
         raise AssertionError(f"SQL guidance non couvert: {compact}")
 
     def fetchall(self):

@@ -13,6 +13,7 @@ class _Cursor:
         self.rows = rows
         self.sql = ""
         self.content_rows = []
+        self.ledger_rows = []
 
     def execute(self, sql, params=None):
         self.sql = sql
@@ -22,6 +23,8 @@ class _Cursor:
     def fetchall(self):
         if "FROM content_recommendations r" in self.sql:
             return self.content_rows
+        if "FROM time_ledger l" in self.sql:
+            return self.ledger_rows
         return self.rows
 
 
@@ -43,12 +46,23 @@ def _jobs(age, advisor="thea", now=None):
     return store.personal_guidance_jobs(now)
 
 
-def test_only_j1_j3_j5_are_due_and_cycle_stops():
+def test_follow_ups_j3_j10_j17_weekly_then_stop():
+    # Plan produit 08/10/2026 : après 3 jours, une par semaine, 3 au maximum.
     assert _jobs(0) == []
-    assert len(_jobs(1)) == 1
+    assert _jobs(1) == []
     assert len(_jobs(3)) == 1
-    assert len(_jobs(5)) == 1
-    assert _jobs(6) == []
+    assert _jobs(5) == []
+    assert len(_jobs(10)) == 1
+    assert len(_jobs(17)) == 1
+    assert _jobs(24) == []
+
+
+def test_follow_up_copy_is_signed_by_guide_and_uses_tu():
+    job = _jobs(3, advisor="thea")[0]
+    assert job["title"] == "Théa"
+    for age in (3, 10, 17):
+        body = _jobs(age)[0]["body"]
+        assert "vous" not in body.lower() and "votre" not in body.lower()
 
 
 def test_personal_guidance_targets_last_advisor_and_has_stable_period():
@@ -77,3 +91,22 @@ def test_guidance_precedes_editorial_thought_for_global_daily_cap():
     assert [category for category, _ in due[:2]] == [
         "personal_guidance", "daily_thought"
     ]
+
+
+def test_free_time_ended_yesterday_gets_one_guide_signed_follow_up():
+    now = datetime(2026, 10, 9, 8, 30, tzinfo=timezone.utc)
+    conn = _Connection([])
+    conn.cursor_obj.ledger_rows = [
+        ("u9", now - timedelta(hours=20), "selena"),
+        ("u8", now - timedelta(hours=20), "inconnu"),
+    ]
+    jobs = DbPushTickStore(lambda: conn).personal_guidance_jobs(now)
+    assert len(jobs) == 1
+    job = jobs[0]
+    assert job["title"] == "Séléna"
+    assert job["user_ids"] == ["u9"]
+    assert job["period"] == "free-time-ended"
+    assert job["data"] == {"advisor": "selena"}
+    assert "Premium" in job["body"] and "tu" in job["body"]
+    # Fenêtre « hier » transmise à la requête, jamais aujourd'hui.
+    assert "HAVING MAX(l.created_at)>=" in conn.cursor_obj.sql
