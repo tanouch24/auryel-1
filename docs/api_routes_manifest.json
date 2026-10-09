@@ -17,6 +17,7 @@
     { "method": "DELETE", "path": "/api/app/account" },
 
     { "method": "POST",   "path": "/api/consultation/message" },
+    { "method": "POST",   "path": "/api/consultation/teaser" },
     { "method": "GET",    "path": "/api/consultation/messages" },
     { "method": "GET",    "path": "/api/consultation/state" },
     { "method": "GET",    "path": "/api/consultation/list" },

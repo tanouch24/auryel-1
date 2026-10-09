@@ -3218,6 +3218,21 @@ def init_db():
             "Migration v78 (roue cadeau) échouée"
         ) from e
 
+    # Migration v79 — réponse en suspens (aperçu de la 1re phrase).
+    try:
+        migration_path = os.path.join(
+            os.path.dirname(__file__), "migrations", "054_consultation_teasers.sql"
+        )
+        with open(migration_path, "r", encoding="utf-8") as migration_file:
+            c.execute(migration_file.read())
+        conn.commit()
+    except Exception as e:
+        conn.rollback()
+        conn.close()
+        raise CriticalSchemaMigrationError(
+            "Migration v79 (réponse en suspens) échouée"
+        ) from e
+
     conn.close()
 
 def reset_db():
@@ -5939,6 +5954,156 @@ def _consultation_json(slot_consultation, opened_now, state):
     }
 
 
+# ── Réponse en suspens (09/10/2026) ─────────────────────────────────────
+# Temps épuisé : le guide prépare sa réponse, l'app n'en reçoit QUE la 1re
+# phrase (le reste n'est jamais transmis). Une fois par jour et par compte.
+# Jamais en cas de détresse (message ou profil) : on ne verrouille pas une
+# réponse à quelqu'un qui va mal.
+_TEASER_MAX_CHARS = 220
+
+
+def _teaser_first_sentence(reply):
+    """1re phrase d'une réponse ; `None` si la réponse tient en une phrase
+    (montrer la phrase reviendrait à tout donner)."""
+    text = re.sub(r"\s+", " ", (reply or "").strip())
+    parts = re.split(r"(?<=[.!?…])\s+", text)
+    parts = [p for p in parts if p.strip()]
+    if len(parts) < 2:
+        return None
+    first = parts[0].strip()
+    if len(first) > _TEASER_MAX_CHARS:
+        first = first[:_TEASER_MAX_CHARS].rsplit(" ", 1)[0] + "…"
+    return first
+
+
+def _load_open_teaser(user_id, teaser_id):
+    conn = get_conn()
+    try:
+        c = conn.cursor()
+        c.execute(
+            "SELECT first_sentence FROM consultation_teasers "
+            "WHERE id=%s AND user_id=%s AND consumed_at IS NULL "
+            "AND created_at > NOW() - INTERVAL '7 days'",
+            (str(teaser_id), str(user_id)),
+        )
+        row = c.fetchone()
+        return row[0] if row else None
+    except Exception:
+        return None
+    finally:
+        conn.close()
+
+
+def _consume_teaser(user_id, teaser_id):
+    conn = get_conn()
+    try:
+        c = conn.cursor()
+        c.execute(
+            "UPDATE consultation_teasers SET consumed_at=NOW() "
+            "WHERE id=%s AND user_id=%s AND consumed_at IS NULL",
+            (str(teaser_id), str(user_id)),
+        )
+        conn.commit()
+    except Exception:
+        conn.rollback()
+    finally:
+        conn.close()
+
+
+def _teaser_blocked_for_safety(profile, msg, now):
+    """True si détresse (profil ou message courant) ou moment grave."""
+    try:
+        if detecter_moment_grave(msg):
+            return True
+        u = detecter_contexte_emotionnel(msg, dict(_app_profile_to_user_dict(profile)))
+        if u.get("signal_aigu"):
+            return True
+        blocked, _ = _detresse_bloque_marketing(profile, maintenant=now)
+        return bool(blocked)
+    except Exception:
+        return True
+
+
+@app.route("/api/consultation/teaser", methods=["POST"])
+@limiter.limit("10 per hour")
+@require_app_auth
+def api_consultation_teaser():
+    """Body {message}. Réponse {eligible, reason, teaser_id, first_sentence,
+    advisor_id}. Ne débite rien, ne persiste aucun message."""
+    data = request.get_json(silent=True) or {}
+    msg = data.get("message")
+    if not isinstance(msg, str) or not msg.strip():
+        return _auth_json({"error": "invalid_request"}, 400)
+    msg = msg.strip()
+    if len(msg) > _APP_MESSAGE_MAX_LEN:
+        return _auth_json({"error": "message_too_long"}, 400)
+    user_id = g.app_account["user_id"]
+    _gate = _adult_gate_check(user_id)
+    if _gate is not None:
+        return _auth_json(_gate[0], _gate[1])
+
+    def no(reason):
+        return _auth_json({"eligible": False, "reason": reason}, 200)
+
+    profile = get_or_create_app_profile(user_id)
+    if profile is None:
+        return _auth_json({"error": "unauthorized"}, 401)
+    now = _utcnow()
+    if _teaser_blocked_for_safety(profile, msg, now):
+        return no("not_eligible")
+    conn = get_conn()
+    try:
+        c = conn.cursor()
+        snap = _get_time_snapshot_tx(c, user_id, now)
+        if int(snap["total_remaining_seconds"]) > 0:
+            return no("time_left")
+        from zoneinfo import ZoneInfo
+        day_start = datetime.combine(
+            _wellbeing_day(now), datetime.min.time(),
+            tzinfo=ZoneInfo("Europe/Paris"),
+        )
+        c.execute(
+            "SELECT COUNT(*) FROM consultation_teasers "
+            "WHERE user_id=%s AND created_at >= %s",
+            (str(user_id), day_start),
+        )
+        if int(c.fetchone()[0] or 0) >= 1:
+            return no("daily_limit")
+    finally:
+        conn.close()
+
+    advisor = (profile.get("guide") or "selena")
+    user = _app_profile_to_user_dict(profile)
+    history = get_history_for_user_id(user_id, limit=12)
+    llm_messages = ([{"role": "system", "content": get_system_prompt(user, advisor)}]
+                    + history + [{"role": "user", "content": msg}])
+    reply = call_llm(llm_messages, temperature=0.85, max_tokens=320)
+    if llm_last_outcome() != "success":
+        return no("unavailable")
+    first = _teaser_first_sentence(reply)
+    if not first:
+        return no("too_short")
+    teaser_id = str(uuid.uuid4())
+    conn = get_conn()
+    try:
+        c = conn.cursor()
+        c.execute(
+            "INSERT INTO consultation_teasers "
+            "(id, user_id, advisor_id, first_sentence, created_at) "
+            "VALUES (%s, %s, %s, %s, %s)",
+            (teaser_id, str(user_id), str(advisor), first, now),
+        )
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        return no("unavailable")
+    finally:
+        conn.close()
+    log_event("consultation_teaser_shown", user_hash=_user_hash(user_id))
+    return _auth_json({"eligible": True, "reason": None, "teaser_id": teaser_id,
+                       "first_sentence": first, "advisor_id": advisor}, 200)
+
+
 @app.route("/api/consultation/message", methods=["POST"])
 @limiter.limit("30 per 10 minutes")
 @require_app_auth
@@ -6080,6 +6245,21 @@ def api_consultation_message():
         )
         tirage_context = (tirage_context or "") + explorer_context
 
+    # Réponse en suspens : après Premium, le message repart avec `teaser_id`
+    # et le guide reprend EXACTEMENT la 1re phrase déjà montrée.
+    teaser_id = data.get("teaser_id")
+    teaser_sentence = None
+    if teaser_id is not None:
+        if _is_uuid(teaser_id):
+            teaser_sentence = _load_open_teaser(user_id, teaser_id)
+        if teaser_sentence:
+            tirage_context = (tirage_context or "") + (
+                "\n\n=== RÉPONSE DÉJÀ COMMENCÉE ===\n"
+                f"Tu avais déjà commencé à lui répondre par : « {teaser_sentence} »\n"
+                "Commence ta réponse EXACTEMENT par cette phrase, mot pour mot, "
+                "puis continue naturellement."
+            )
+
     # conseiller PRÉFÉRÉ (profil) — sert à ouvrir/reprendre ; une fois la
     # consultation choisie, c'est SON advisor_id RÉEL qui prime (figé si la
     # fenêtre est active, cf. règle conseiller A.3c-1).
@@ -6192,6 +6372,8 @@ def api_consultation_message():
             rewarded_micro=rewarded_micro,
         )
         recommendation = llm_last_recommendation()
+        if teaser_sentence:
+            _consume_teaser(user_id, teaser_id)
     except Exception:
         if flow.get("question_reservation_id"):
             _finish_rewarded_question(user_id, flow["question_reservation_id"], "released")
