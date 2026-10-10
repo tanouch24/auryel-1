@@ -1112,7 +1112,8 @@ document.addEventListener("DOMContentLoaded",function(){
   document.querySelectorAll(".bc").forEach(function(el){el.style.opacity="0";el.style.transform="translateY(20px)";el.style.transition="opacity .6s ease,transform .6s ease";io.observe(el)});
 });
 </script>
-<script>
+<script>/* attend le chargement différé de GSAP (09/10/2026) */document.addEventListener('DOMContentLoaded',function(){if(!window.gsap)return;
+
 gsap.registerPlugin(ScrollTrigger);
 gsap.fromTo('.ey',{opacity:0,y:10},{opacity:1,y:0,duration:.8,delay:.1,ease:'power3.out'});
 gsap.fromTo('.blog-h1',{opacity:0,y:40},{opacity:1,y:0,duration:1.1,delay:.2,ease:'power3.out'});
@@ -1123,5 +1124,6 @@ gsap.utils.toArray('.bc').forEach((el,i)=>{
     scrollTrigger:{trigger:el,start:'top 87%'}
   });
 });
-</script>
+
+});</script>
 </body></html>
