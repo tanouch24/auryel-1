@@ -656,6 +656,7 @@ class DbPushTickStore:
                 "LEFT JOIN app_profiles p ON p.user_id=l.user_id "
                 "WHERE l.bucket='first_free' AND l.delta_seconds<0 "
                 "AND a.deleted_at IS NULL "
+                "AND COALESCE(a.push_offers_enabled, TRUE) "
                 "AND COALESCE(a.first_free_seconds_remaining,0)=0 "
                 "AND d.enabled=TRUE AND d.revoked_at IS NULL "
                 "AND d.invalid_at IS NULL "

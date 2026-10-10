@@ -40,6 +40,8 @@
     { "method": "POST",   "path": "/api/app/rewards/gift-wheel" },
     { "method": "POST",   "path": "/api/app/rewards/offer-check" },
     { "method": "POST",   "path": "/api/app/rewards/question-wheel" },
+    { "method": "GET",    "path": "/api/app/push/offers" },
+    { "method": "POST",   "path": "/api/app/push/offers" },
     { "method": "GET",    "path": "/api/app/rewards/share-progress" },
     { "method": "GET",    "path": "/api/app/rewards/wallet" },
     { "method": "POST",   "path": "/api/app/rewards/claim" },

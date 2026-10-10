@@ -3248,6 +3248,21 @@ def init_db():
             "Migration v80 (roue question offerte) échouée"
         ) from e
 
+    # Migration v81 — interrupteur « Offres » des notifications.
+    try:
+        migration_path = os.path.join(
+            os.path.dirname(__file__), "migrations", "056_push_offers_pref.sql"
+        )
+        with open(migration_path, "r", encoding="utf-8") as migration_file:
+            c.execute(migration_file.read())
+        conn.commit()
+    except Exception as e:
+        conn.rollback()
+        conn.close()
+        raise CriticalSchemaMigrationError(
+            "Migration v81 (interrupteur Offres) échouée"
+        ) from e
+
     conn.close()
 
 def reset_db():
@@ -10953,6 +10968,43 @@ def api_app_push_register():
     log_event("app_push_registered", user_hash=_user_hash(user_id),
               platform=platform)
     return _auth_json({"status": "registered"}, 200)
+
+
+@app.route("/api/app/push/offers", methods=["GET", "POST"])
+@limiter.limit("30 per hour")
+@require_app_auth
+def api_push_offers_pref():
+    """Interrupteur « Offres » (10/10/2026). GET -> {enabled}. POST {enabled:
+    bool} -> {enabled}. Coupe premium_offer et gift_question pour ce compte."""
+    user_id = g.app_account["user_id"]
+    conn = get_conn()
+    try:
+        c = conn.cursor()
+        if request.method == "POST":
+            body = request.get_json(silent=True) or {}
+            if not isinstance(body.get("enabled"), bool):
+                return _auth_json({"error": "invalid_request"}, 400)
+            c.execute(
+                "UPDATE accounts SET push_offers_enabled=%s "
+                "WHERE user_id=%s AND deleted_at IS NULL RETURNING push_offers_enabled",
+                (body["enabled"], user_id),
+            )
+        else:
+            c.execute(
+                "SELECT push_offers_enabled FROM accounts "
+                "WHERE user_id=%s AND deleted_at IS NULL",
+                (user_id,),
+            )
+        row = c.fetchone()
+        conn.commit()
+        if row is None:
+            return _auth_json({"error": "unauthorized"}, 401)
+        return _auth_json({"enabled": bool(row[0])}, 200)
+    except Exception:
+        conn.rollback()
+        return _auth_json({"error": "temporarily_unavailable"}, 503)
+    finally:
+        conn.close()
 
 
 @app.route("/api/app/push/unregister", methods=["POST"])

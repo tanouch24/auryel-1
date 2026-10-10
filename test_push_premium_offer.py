@@ -167,3 +167,9 @@ def test_gift_question_jobs_use_their_own_steps():
     assert [j["user_ids"][0] for j in jobs] == ["u-j4"]
     assert jobs[0]["period"] == "gift:j4"
     assert jobs[0]["title"] == "🎁 Luna t’a réservé un tirage"
+
+
+def test_offer_jobs_respect_the_offers_switch():
+    import inspect
+    src = inspect.getsource(ps.DbPushTickStore.premium_offer_jobs)
+    assert "push_offers_enabled" in src

@@ -108,3 +108,10 @@ def test_refusals(env, field, value, reason):
 def test_migration_is_wired():
     import inspect
     assert "055_question_wheel.sql" in inspect.getsource(A.init_db)
+
+
+def test_offers_switch_route_and_migration():
+    import inspect
+    src = inspect.getsource(A.api_push_offers_pref)
+    assert "push_offers_enabled" in src and "isinstance(body.get(\"enabled\"), bool)" in src
+    assert "056_push_offers_pref.sql" in inspect.getsource(A.init_db)
