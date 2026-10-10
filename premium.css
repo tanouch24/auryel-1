@@ -300,3 +300,11 @@ section.art-hero>img:not(.art-hero-img){opacity:.75 !important;z-index:0}
 section.art-hero:has(>img:not(.art-hero-img)){min-height:520px;display:flex;align-items:flex-end;justify-content:center;padding-bottom:64px !important}
 section.art-hero:has(>img:not(.art-hero-img))::after{content:'';position:absolute;inset:0;z-index:0;background:linear-gradient(180deg,rgba(18,14,23,.45) 0%,rgba(18,14,23,.15) 40%,rgba(18,14,23,.9) 100%)}
 section.art-hero .art-hero-inner{z-index:1}
+.plan-was{margin-top:14px;font-family:var(--serif);font-size:22px;color:var(--cd);line-height:1}
+.plan-was+.plan-price{margin-top:4px}
+
+/* ── Articles : citations et renvois (10/10/2026) ── */
+.art-body blockquote{margin:28px 0;padding:18px 24px;border-left:2px solid var(--gold);background:rgba(198,162,78,.06);border-radius:0 14px 14px 0;font-family:var(--serif);font-size:21px;font-style:italic;line-height:1.5;color:var(--cream)}
+.art-body a{color:var(--gold-b);text-underline-offset:3px}
+.see-also{margin:28px 0;font-size:14px;color:var(--cd)}
+.see-also a{color:var(--gold-b);text-underline-offset:3px}
